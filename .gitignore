@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+backend/.venv/
+backend/uv.lock
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Data (runtime, not source)
+data/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Large source assets (tracked via LFS or not at all)
+Icon-iOS-Default-1024x1024@1x.png

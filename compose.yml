@@ -1,0 +1,32 @@
+# Alpha — the duck in the machine
+# Two services: the app and Redis for session metadata.
+
+services:
+  alpha:
+    build: .
+    ports:
+      - "18010:18010"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - ALPHA_CWD=/app
+      - SSL_CERTFILE=/certs/primer.tail8bd569.ts.net.crt
+      - SSL_KEYFILE=/certs/primer.tail8bd569.ts.net.key
+    volumes:
+      # Claude auth — r/w so claude can refresh OAuth tokens
+      - ${HOME}/.claude/.credentials.json:/home/alpha/.claude/.credentials.json
+      # Session JSONL files
+      - ./data/claude:/home/alpha/.claude/projects
+      # Pondside access (read-only)
+      - /Pondside:/Pondside:ro
+      # TLS certs
+      - /Pondside/Basement/Files/certs:/certs:ro
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  redis:
+    image: redis:alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - ./data/redis:/data
+    restart: unless-stopped
