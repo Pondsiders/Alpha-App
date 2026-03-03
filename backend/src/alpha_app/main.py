@@ -2,8 +2,9 @@
 
 The mannequin's throat. Haiku speaks through here.
 
-One process. One client. Lazy initialization:
-no client at startup, first chat request creates it.
+Phase 1: Chat + Holster internals. The Holster pre-warms a claude subprocess
+on startup so the first message is instant. Single-chat mode — one active
+conversation at a time, same WebSocket protocol as before.
 """
 
 import logging
@@ -17,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from alpha_app.client import client
+from alpha_app.chat import Chat, ChatState, Holster
 from alpha_app.routes.sessions import router as sessions_router
 from alpha_app.routes.ws import router as ws_router
 
@@ -32,11 +33,23 @@ log = logging.getLogger("alpha")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """App lifespan — just cleanup on shutdown."""
-    log.info("Starting up... (client will connect on first request)")
+    """App lifespan — holster warmup on startup, clean shutdown."""
+    # Startup
+    holster = Holster()
+    app.state.holster = holster
+    app.state.active_chat = None
+
+    log.info("Warming holster (one in the chamber)...")
+    await holster.warm()
+
     yield
+
+    # Shutdown
     log.info("Shutting down...")
-    await client.shutdown()
+    chat: Chat | None = app.state.active_chat
+    if chat and chat.state != ChatState.DEAD:
+        await chat.reap()
+    await holster.shutdown()
     log.info("Goodbye.")
 
 
@@ -62,16 +75,20 @@ app.include_router(ws_router)
 
 
 @app.get("/health")
-async def health() -> dict[str, str | None]:
+async def health() -> dict:
     """Health check endpoint."""
+    chat: Chat | None = app.state.active_chat
+    holster: Holster = app.state.holster
     return {
         "status": "healthy",
-        "client_connected": str(client.connected),
-        "current_session": client.current_session_id[:8] + "..." if client.current_session_id else None,
+        "holster_ready": holster.ready,
+        "active_chat": chat.id if chat else None,
+        "chat_state": chat.state.value if chat else None,
+        "session": (chat.session_uuid[:8] + "...") if chat and chat.session_uuid else None,
     }
 
 
-# ── Static file serving ──
+# -- Static file serving --------------------------------------------------
 # Docker: built frontend lives at /app/frontend/dist
 # Bare metal: built frontend lives at ../frontend/dist relative to backend/
 _DOCKER_DIST = Path("/app/frontend/dist")

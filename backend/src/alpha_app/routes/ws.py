@@ -1,20 +1,21 @@
 """WebSocket route — bidirectional conversation pipe.
 
-Replaces the POST+SSE pattern with a persistent connection.
-Either side can send at any time. No request-response. Just an open line.
+Phase 1: Single-chat mode with Chat + Holster internals.
+Same WebSocket protocol as before (no chatId yet). Same behavior. Different guts.
 
-Client → Server messages:
-  { "type": "send", "content": "Hello" }
+Client -> Server messages:
+  { "type": "send", "content": "Hello", "sessionId": "..." }
   { "type": "send", "content": [{ "type": "text", "text": "Hello" }, ...] }
   { "type": "interrupt" }
 
-Server → Client messages:
+Server -> Client messages:
   { "type": "text-delta", "data": "chunk" }
   { "type": "thinking-delta", "data": "chunk" }
   { "type": "tool-call", "data": { "toolCallId", "toolName", "args", "argsText" } }
   { "type": "session-id", "data": "abc-123..." }
   { "type": "error", "data": "something broke" }
   { "type": "done" }
+  { "type": "interrupted" }
 """
 
 import asyncio
@@ -27,11 +28,70 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from alpha_sdk import AssistantEvent, ResultEvent, ErrorEvent, StreamEvent
 
-from alpha_app.client import client
+from alpha_app.chat import Chat, ChatState, Holster, generate_chat_id
 
 log = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+# -- Session logic --------------------------------------------------------
+
+
+async def _ensure_chat(
+    current: Chat | None,
+    holster: Holster,
+    session_id: str | None,
+) -> Chat:
+    """Ensure we have a Chat connected to the right session.
+
+    Phase 1 session logic (matches MannekinClient behavior):
+    - session_id=None, no chat    -> new session (claim from holster)
+    - session_id matches chat     -> reuse (resurrect if DEAD)
+    - session_id=None, chat fresh -> reuse (first turn, no UUID yet)
+    - session_id mismatch         -> reap old, create new
+    """
+    # No active chat — create one
+    if current is None:
+        if session_id:
+            # Resuming a previous session (page reload, etc.)
+            chat = Chat(id=generate_chat_id())
+            await chat.resurrect(session_id)
+            return chat
+        else:
+            # Brand new conversation
+            client = await holster.claim()
+            return Chat.from_holster(id=generate_chat_id(), client=client)
+
+    # Active chat matches the requested session — reuse
+    if session_id is not None and session_id == current.session_uuid:
+        if current.state == ChatState.DEAD:
+            await current.resurrect()
+        return current
+
+    # First turn of an existing chat (no UUID yet, session_id=None)
+    if session_id is None and current.session_uuid is None and current.state != ChatState.DEAD:
+        return current
+
+    # Session mismatch — reap old, create new
+    log.info(
+        "Session change: %s -> %s",
+        current.session_uuid[:8] if current.session_uuid else "None",
+        session_id[:8] if session_id else "None",
+    )
+    if current.state != ChatState.DEAD:
+        await current.reap()
+
+    if session_id:
+        chat = Chat(id=generate_chat_id())
+        await chat.resurrect(session_id)
+        return chat
+    else:
+        client = await holster.claim()
+        return Chat.from_holster(id=generate_chat_id(), client=client)
+
+
+# -- Redis persistence ----------------------------------------------------
 
 
 async def _upsert_session_redis(session_id: str, title: str) -> None:
@@ -57,13 +117,19 @@ async def _upsert_session_redis(session_id: str, title: str) -> None:
         log.warning("Redis upsert failed (non-fatal): %s", e)
 
 
-async def _stream_kernel_events(ws: WebSocket, user_text: str) -> None:
-    """Read events from the kernel and push them to the browser.
+# -- Event streaming ------------------------------------------------------
 
-    Runs until the kernel emits a ResultEvent (turn complete).
+
+async def _stream_chat_events(ws: WebSocket, chat: Chat, user_text: str) -> None:
+    """Read events from the Chat and push them to the browser.
+
+    Runs until the Chat emits a ResultEvent (turn complete) or errors out.
+    If streaming ends abnormally, the chat gets reaped to prevent stuck BUSY state.
     """
+    turn_completed = False
+
     try:
-        async for event in client.events():
+        async for event in chat.events():
             if isinstance(event, StreamEvent):
                 if event.delta_type == "text_delta":
                     text = event.delta_text
@@ -88,26 +154,31 @@ async def _stream_kernel_events(ws: WebSocket, user_text: str) -> None:
                         })
 
             elif isinstance(event, ResultEvent):
-                sid = event.session_id
-                client.update_session_id(sid)
-                log.info("Result: session=%s cost=$%.4f", sid[:8] if sid else "?", event.cost_usd)
+                sid = chat.session_uuid
                 await ws.send_json({"type": "session-id", "data": sid})
 
                 if sid:
                     asyncio.create_task(_upsert_session_redis(sid, user_text))
 
-                # Turn complete — break out of event loop
+                turn_completed = True
                 break
 
             elif isinstance(event, ErrorEvent):
                 await ws.send_json({"type": "error", "data": event.message})
 
     except Exception as e:
-        log.exception("Kernel streaming error: %s", e)
+        log.exception("Chat streaming error: %s", e)
         try:
             await ws.send_json({"type": "error", "data": str(e)})
         except Exception:
             pass
+
+    finally:
+        # If the turn didn't complete normally, the chat might be stuck in BUSY.
+        # Reap it so it doesn't block future sends.
+        if not turn_completed and chat.state == ChatState.BUSY:
+            log.warning("Chat %s: streaming ended without turn completion, reaping", chat.id)
+            await chat.reap()
 
     # Signal turn complete
     try:
@@ -116,15 +187,21 @@ async def _stream_kernel_events(ws: WebSocket, user_text: str) -> None:
         pass
 
 
+# -- WebSocket handler ----------------------------------------------------
+
+
 @router.websocket("/ws")
 async def websocket_chat(ws: WebSocket) -> None:
     """Bidirectional chat over WebSocket.
 
+    Phase 1: Single-chat mode. Same protocol as before.
     The connection stays open for the lifetime of the tab.
     Client sends messages, server pushes events.
     """
     await ws.accept()
     log.info("WebSocket connected")
+
+    holster: Holster = ws.app.state.holster
 
     try:
         while True:
@@ -158,10 +235,12 @@ async def websocket_chat(ws: WebSocket) -> None:
                 )
 
                 try:
-                    await client.ensure_session(session_id)
-                    await client.send(content)
-                    # Stream kernel events to the browser
-                    await _stream_kernel_events(ws, user_text)
+                    ws.app.state.active_chat = await _ensure_chat(
+                        ws.app.state.active_chat, holster, session_id,
+                    )
+                    chat = ws.app.state.active_chat
+                    await chat.send(content)
+                    await _stream_chat_events(ws, chat, user_text)
                 except Exception as e:
                     log.exception("Chat error: %s", e)
                     await ws.send_json({"type": "error", "data": str(e)})
@@ -169,12 +248,16 @@ async def websocket_chat(ws: WebSocket) -> None:
 
             elif msg_type == "interrupt":
                 log.info("Interrupt requested")
-                try:
-                    await client.shutdown()
+                chat = ws.app.state.active_chat
+                if chat:
+                    try:
+                        await chat.interrupt()
+                        await ws.send_json({"type": "interrupted"})
+                    except Exception as e:
+                        log.exception("Interrupt error: %s", e)
+                        await ws.send_json({"type": "error", "data": str(e)})
+                else:
                     await ws.send_json({"type": "interrupted"})
-                except Exception as e:
-                    log.exception("Interrupt error: %s", e)
-                    await ws.send_json({"type": "error", "data": str(e)})
 
             else:
                 log.warning("Unknown message type: %s", msg_type)
