@@ -112,13 +112,15 @@ def test_echo_deterministic(page: Page, base_url: str) -> None:
 def test_streaming_survives_backend_restart(
     page: Page, base_url: str, backend
 ) -> None:
-    """THE test. Send a message, restart the backend, send another.
+    """THE test. Same window, no refresh, send after backend restart.
 
-    This is the test that catches the reliability bug: after a backend
-    restart, the WebSocket reconnects but streaming stops working.
-    The browser shows no output from the model.
+    This tests the actual failure mode Jeffery found: backend restarts,
+    WebSocket reconnects, user sends a message to a chat whose subprocess
+    is dead. The backend must load the chat from Redis, resurrect it
+    (new subprocess with --resume), and stream the response.
 
-    If this test passes, the app is resilient to backend restarts.
+    NO page refresh. NO navigation. Same window, same chat. If this
+    passes, the full resurrection path works end-to-end.
     """
     _enter_chat(page, base_url)
 
@@ -126,32 +128,44 @@ def test_streaming_survives_backend_restart(
     input_box = page.locator(INPUT_SELECTOR)
     expect(input_box).to_be_visible(timeout=NAV_TIMEOUT)
 
-    input_box.fill("First message before restart")
+    input_box.fill("§echo:Before the storm")
     input_box.press("Enter")
 
     first_msg = page.locator(ASSISTANT_MSG_SELECTOR).first
     expect(first_msg).to_be_visible(timeout=MODEL_TIMEOUT)
-    expect(first_msg).not_to_be_empty()
+    expect(first_msg).to_contain_text("Before the storm")
+
+    _screenshot(page, "04_before_restart")
 
     # --- Kill and restart the backend ---
     backend.restart()
 
     # Wait for the WebSocket to reconnect.
-    # useWebSocket has exponential backoff: 1s, 2s, 4s, 8s, 16s.
-    page.wait_for_timeout(5_000)
+    # useWebSocket has exponential backoff: 1s, 2s, 4s, 8s.
+    # Give it plenty of time — reconnection is not the part we're testing.
+    page.wait_for_timeout(8_000)
 
-    # --- Second message: this is where the bug lives ---
-    # After restart, the old chat is dead (subprocess gone).
-    # Navigate to /chat to trigger auto-create of a fresh chat.
-    _enter_chat(page, base_url)
+    _screenshot(page, "05_after_restart")
 
+    # --- Second message: same window, same chat, no navigation ---
+    # The old chat's subprocess is dead. The backend must:
+    # 1. Load chat metadata from Redis (DEAD, has session_uuid)
+    # 2. Resurrect (start new subprocess, --resume session)
+    # 3. Send the message
+    # 4. Stream the response back through the new WebSocket
     input_box = page.locator(INPUT_SELECTOR)
     expect(input_box).to_be_visible(timeout=NAV_TIMEOUT)
 
-    input_box.fill("Second message after restart")
+    input_box.fill("§echo:After the storm")
     input_box.press("Enter")
 
-    # THIS IS THE ASSERTION THAT MATTERS
-    second_msg = page.locator(ASSISTANT_MSG_SELECTOR).first
-    expect(second_msg).to_be_visible(timeout=MODEL_TIMEOUT)
-    expect(second_msg).not_to_be_empty()
+    # THIS IS THE ASSERTION THAT MATTERS.
+    # Wait for the SECOND assistant message — the first ("Before the storm")
+    # is still in the DOM from before the restart.
+    # Generous timeout: resurrection = subprocess startup + session resume + drain.
+    RESTART_TIMEOUT = 30_000
+    second_msg = page.locator(ASSISTANT_MSG_SELECTOR).nth(1)
+    expect(second_msg).to_be_visible(timeout=RESTART_TIMEOUT)
+    expect(second_msg).to_contain_text("After the storm")
+
+    _screenshot(page, "06_survived_restart")

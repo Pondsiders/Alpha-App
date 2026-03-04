@@ -146,6 +146,8 @@ def base_url(backend: Backend) -> str:
 
 
 @pytest.fixture(scope="session")
-def browser_type_launch_args():
-    """Playwright browser launch args — headless, no sandbox for CI."""
-    return {"headless": True}
+def browser_type_launch_args(request):
+    """Playwright browser launch args — respects --headed flag from CLI."""
+    # pytest-playwright sets this based on --headed flag
+    headed = request.config.getoption("--headed", default=False)
+    return {"headless": not headed}
