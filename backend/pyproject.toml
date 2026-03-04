@@ -22,3 +22,17 @@ allow-direct-references = true
 
 [tool.uv]
 extra-index-url = ["https://pondsiders.github.io/Alpha-SDK/simple/"]
+
+[tool.uv.sources]
+alpha-sdk = { path = "../../alpha_sdk-next", editable = true }
+
+[dependency-groups]
+dev = [
+    "pytest-playwright>=0.7.2",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "e2e: end-to-end browser tests (require backend + built frontend)",
+]

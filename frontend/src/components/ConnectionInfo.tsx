@@ -4,7 +4,7 @@
  * Shows at a glance:
  *   - Connection status (human-readable)
  *   - Model name
- *   - Full session ID (wraps at hyphens)
+ *   - Chat ID
  *   - Token usage (raw numbers behind the ContextMeter percentage)
  *
  * Uses Radix HoverCard for hover-triggered display with nice open/close delays.
@@ -20,10 +20,12 @@ import {
 export interface ConnectionInfoProps {
   /** The connection dot element */
   children: ReactNode;
-  /** Full session UUID, or null if disconnected */
-  sessionId: string | null;
-  /** Whether an API request is in flight */
+  /** Whether WebSocket is connected */
+  connected: boolean;
+  /** Whether the active chat is busy */
   isRunning: boolean;
+  /** Active chat ID, or null */
+  chatId: string | null;
   /** Current model name, e.g. "claude-opus-4-6" */
   model: string | null;
   /** Raw token count for current context */
@@ -33,10 +35,10 @@ export interface ConnectionInfoProps {
 }
 
 function getStatusLabel(
-  sessionId: string | null,
+  connected: boolean,
   isRunning: boolean
 ): { text: string; color: string } {
-  if (!sessionId) return { text: "Disconnected", color: "var(--theme-muted)" };
+  if (!connected) return { text: "Disconnected", color: "var(--theme-muted)" };
   if (isRunning) return { text: "Connected \u00b7 Streaming", color: "var(--theme-success)" };
   return { text: "Connected \u00b7 Idle", color: "var(--theme-primary)" };
 }
@@ -78,13 +80,14 @@ function InfoRow({
 
 export function ConnectionInfo({
   children,
-  sessionId,
+  connected,
   isRunning,
+  chatId,
   model,
   tokenCount,
   tokenLimit,
 }: ConnectionInfoProps) {
-  const status = getStatusLabel(sessionId, isRunning);
+  const status = getStatusLabel(connected, isRunning);
   const tokenDisplay =
     tokenLimit > 0
       ? `${formatTokens(tokenCount)} / ${formatTokens(tokenLimit)}`
@@ -105,10 +108,10 @@ export function ConnectionInfo({
             mono
           />
 
-          {/* Session ID */}
+          {/* Chat ID */}
           <InfoRow
-            label="Session"
-            value={sessionId ?? "\u2014"}
+            label="Chat"
+            value={chatId ?? "\u2014"}
             mono
           />
 

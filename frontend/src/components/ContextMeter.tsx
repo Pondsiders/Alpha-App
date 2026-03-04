@@ -6,21 +6,24 @@
  *   65–75% amber  (warming up)
  *   > 75%  red    (hot, compaction approaching at ~85%)
  *
- * Click to copy the percentage string to clipboard.
- * Shows a tooltip "Copied!" on click instead of swapping the text.
+ * Hover opens a card with model name and raw token counts.
  */
 
-import { useState, useCallback } from "react";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@/components/ui/hover-card";
 
 interface ContextMeterProps {
   /** Context usage as a percentage (0–100). */
   percent: number;
+  /** Current model name, e.g. "claude-opus-4-6" */
+  model?: string | null;
+  /** Raw token count for current context */
+  tokenCount?: number;
+  /** Max token limit for the model */
+  tokenLimit?: number;
 }
 
 function getMeterColor(percent: number): string {
@@ -29,50 +32,80 @@ function getMeterColor(percent: number): string {
   return "var(--theme-muted)";
 }
 
-export function ContextMeter({ percent }: ContextMeterProps) {
-  const [copied, setCopied] = useState(false);
+function formatTokens(count: number): string {
+  if (count === 0) return "0";
+  if (count >= 1_000_000) return (count / 1_000_000).toFixed(1) + "M";
+  if (count >= 1_000) return (count / 1_000).toFixed(1) + "k";
+  return count.toLocaleString();
+}
+
+export function ContextMeter({ percent, model, tokenCount, tokenLimit }: ContextMeterProps) {
   const color = getMeterColor(percent);
   const display = percent.toFixed(1) + "%";
 
-  const handleClick = useCallback(async () => {
-    await navigator.clipboard.writeText(display);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  }, [display]);
+  const tokenDisplay =
+    tokenLimit && tokenLimit > 0
+      ? `${formatTokens(tokenCount ?? 0)} / ${formatTokens(tokenLimit)}`
+      : null;
 
   return (
-    <TooltipProvider>
-      <Tooltip open={copied}>
-        <TooltipTrigger asChild>
+    <HoverCard openDelay={200} closeDelay={100}>
+      <HoverCardTrigger asChild>
+        <div className="inline-flex items-center gap-2 cursor-default select-none">
+          {/* Progress bar track */}
           <div
-            className="inline-flex items-center gap-2 cursor-pointer select-none"
-            onClick={handleClick}
+            className="w-20 h-1 rounded-full overflow-hidden"
+            style={{ backgroundColor: "var(--theme-border)" }}
           >
-            {/* Progress bar track */}
             <div
-              className="w-20 h-1 rounded-full overflow-hidden"
-              style={{ backgroundColor: "var(--theme-border)" }}
-            >
-              <div
-                className="h-full rounded-full transition-all duration-500 ease-out"
-                style={{
-                  width: `${Math.min(percent, 100)}%`,
-                  backgroundColor: color,
-                }}
-              />
-            </div>
+              className="h-full rounded-full transition-all duration-500 ease-out"
+              style={{
+                width: `${Math.min(percent, 100)}%`,
+                backgroundColor: color,
+              }}
+            />
+          </div>
 
-            {/* Percentage readout — always shows the number, never swaps text */}
-            <span
-              className="font-mono text-[11px] tabular-nums transition-colors duration-500"
-              style={{ color }}
-            >
+          {/* Percentage readout */}
+          <span
+            className="font-mono text-[11px] tabular-nums transition-colors duration-500"
+            style={{ color }}
+          >
+            {display}
+          </span>
+        </div>
+      </HoverCardTrigger>
+      <HoverCardContent side="top" align="end" className="w-auto min-w-[160px]">
+        <div className="space-y-1.5">
+          {/* Context percentage */}
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="text-[11px] text-muted shrink-0">Context</span>
+            <span className="text-[11px] font-mono" style={{ color }}>
               {display}
             </span>
           </div>
-        </TooltipTrigger>
-        <TooltipContent side="top">Copied!</TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+
+          {/* Token usage */}
+          {tokenDisplay && (
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="text-[11px] text-muted shrink-0">Tokens</span>
+              <span className="text-[11px] font-mono">
+                {tokenDisplay}
+              </span>
+            </div>
+          )}
+
+          {/* Model */}
+          {model && (
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="text-[11px] text-muted shrink-0">Model</span>
+              <span className="text-[11px] font-mono" style={{ overflowWrap: "anywhere" }}>
+                {model}
+              </span>
+            </div>
+          )}
+        </div>
+      </HoverCardContent>
+    </HoverCard>
   );
 }

@@ -10,6 +10,7 @@ See KERNEL.md for the full design.
 import asyncio
 import logging
 import secrets
+import time
 from enum import Enum
 from typing import AsyncIterator
 
@@ -54,6 +55,8 @@ class Chat:
         self.session_uuid: str | None = None
         self.state = ChatState.IDLE if client else ChatState.DEAD
         self.title: str = ""
+        self.created_at: float = time.time()
+        self.updated_at: float = time.time()
 
         self._client = client
         self._reap_task: asyncio.Task | None = None
@@ -66,6 +69,42 @@ class Chat:
         log.info("Chat %s: born IDLE (from holster)", id)
         return chat
 
+    @classmethod
+    def from_redis(cls, chat_id: str, data: dict[str, str]) -> "Chat":
+        """Restore a Chat from Redis metadata. Born DEAD (no subprocess)."""
+        chat = cls(id=chat_id)
+        chat.session_uuid = data.get("session_uuid") or None
+        chat.title = data.get("title", "")
+        chat.state = ChatState.DEAD
+        chat.created_at = float(data.get("created_at", 0) or 0)
+        chat.updated_at = float(data.get("updated_at", 0) or 0)
+        return chat
+
+    @property
+    def token_count(self) -> int:
+        """Current input token count. 0 if no live subprocess."""
+        return self._client.token_count if self._client else 0
+
+    @property
+    def context_window(self) -> int:
+        """Context window size. Default if no live subprocess."""
+        if self._client:
+            return self._client.context_window
+        return 200_000  # Fallback — matches _Proxy.DEFAULT_CONTEXT_WINDOW
+
+    def serialize(self) -> dict[str, str]:
+        """Serialize chat metadata for Redis persistence.
+
+        Note: state is NOT persisted — it's a runtime property of the subprocess.
+        After a restart, all chats are DEAD regardless of what they were before.
+        """
+        return {
+            "session_uuid": self.session_uuid or "",
+            "title": self.title,
+            "created_at": str(self.created_at),
+            "updated_at": str(self.updated_at),
+        }
+
     async def send(self, content: list[dict]) -> None:
         """Send a message to claude. IDLE->BUSY."""
         if self.state == ChatState.DEAD:
@@ -77,6 +116,15 @@ class Chat:
 
         self._cancel_reap_timer()
         self.state = ChatState.BUSY
+        self.updated_at = time.time()
+
+        # Set title from first user message
+        if not self.title:
+            for block in content:
+                if block.get("type") == "text" and block.get("text"):
+                    self.title = block["text"][:80]
+                    break
+
         log.info("Chat %s: IDLE->BUSY", self.id)
         await self._client.send(content)
 

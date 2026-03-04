@@ -1,14 +1,13 @@
 /**
  * useWebSocket — persistent bidirectional connection to the Alpha backend.
  *
- * Replaces the fetch+SSE pattern. Opens a WebSocket on mount,
- * auto-reconnects on drop, dispatches incoming events to a handler.
+ * Phase 2: Protocol v2 — all messages carry chatId.
  *
  * Usage:
  *   const { send, connected } = useWebSocket({
  *     onEvent: (event) => { ... }
  *   });
- *   send({ type: "send", content: "Hello" });
+ *   send({ type: "send", chatId: "abc123", content: "Hello" });
  */
 
 import { useEffect, useRef, useState, useCallback } from "react";
@@ -20,18 +19,22 @@ export interface ServerEvent {
     | "thinking-delta"
     | "tool-call"
     | "tool-result"
-    | "session-id"
+    | "chat-created"
+    | "chat-state"
+    | "chat-list"
+    | "context-update"
     | "error"
     | "done"
     | "interrupted";
+  chatId?: string;
   data?: unknown;
 }
 
 // Messages TO the server
 export interface ClientMessage {
-  type: "send" | "interrupt";
+  type: "send" | "interrupt" | "create-chat" | "list-chats";
+  chatId?: string;
   content?: string | Array<Record<string, unknown>>;
-  sessionId?: string | null;
 }
 
 interface UseWebSocketOptions {
@@ -63,8 +66,11 @@ export function useWebSocket({ onEvent, onConnectionChange }: UseWebSocketOption
   onConnectionChangeRef.current = onConnectionChange;
 
   const connect = useCallback(() => {
-    // Don't connect if we already have a live connection
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
+    // Don't connect if we already have a live or in-progress connection
+    if (
+      wsRef.current?.readyState === WebSocket.OPEN ||
+      wsRef.current?.readyState === WebSocket.CONNECTING
+    ) return;
 
     const url = getWebSocketUrl();
     console.log("[Alpha WS] Connecting to", url);
@@ -120,8 +126,15 @@ export function useWebSocket({ onEvent, onConnectionChange }: UseWebSocketOption
     return () => {
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
       }
       if (wsRef.current) {
+        // Null handlers BEFORE closing to prevent stale callbacks from
+        // firing after StrictMode remount and clobbering the fresh WS ref.
+        wsRef.current.onopen = null;
+        wsRef.current.onclose = null;
+        wsRef.current.onerror = null;
+        wsRef.current.onmessage = null;
         wsRef.current.close(1000, "Component unmounting");
         wsRef.current = null;
       }

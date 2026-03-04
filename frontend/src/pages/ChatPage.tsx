@@ -1,14 +1,15 @@
 /**
  * ChatPage — The main conversation view for Alpha.
  *
+ * Phase 2: Multi-chat aware. Reads activeChatId from store, sends chatId
+ * with all messages. WebSocket owned by Layout (App.tsx), send passed as prop.
+ *
  * Supports text and image attachments (paste, drag-drop, or file picker).
- * Uses WebSocket for bidirectional communication with the backend.
  * Uses Zustand for state management and useExternalStoreRuntime to bridge
  * to assistant-ui primitives.
  */
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { useParams, useNavigate } from "react-router-dom";
 import { ArrowUp, Square, Copy, Check } from "lucide-react";
 import { ToolFallback } from "../components/ToolFallback";
 import {
@@ -33,11 +34,19 @@ import { MarkdownText } from "../components/MarkdownText";
 import {
   useWorkshopStore,
   type Message,
-  type JSONValue,
-  type ToolCallPart,
 } from "../store";
 import { StatusBar } from "@/components/StatusBar";
-import { useWebSocket, type ServerEvent } from "@/lib/useWebSocket";
+import type { ClientMessage } from "@/lib/useWebSocket";
+
+// -----------------------------------------------------------------------------
+// Props
+// -----------------------------------------------------------------------------
+
+interface ChatPageProps {
+  send: (msg: ClientMessage) => boolean;
+  connected: boolean;
+  assistantIdMapRef: React.MutableRefObject<Record<string, string | null>>;
+}
 
 // -----------------------------------------------------------------------------
 // Message Components
@@ -159,123 +168,73 @@ const convertMessage = (message: Message): ThreadMessageLike => {
 // Thread View
 // -----------------------------------------------------------------------------
 
-interface ThreadViewProps {
-  onSessionCreated?: () => void;
-}
-
-function ThreadView({ onSessionCreated }: ThreadViewProps) {
+function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
   const messages = useWorkshopStore((s) => s.messages);
-  const isRunning = useWorkshopStore((s) => s.isRunning);
-  const sessionId = useWorkshopStore((s) => s.sessionId);
+  const activeChatId = useWorkshopStore((s) => s.activeChatId);
+  const activeChat = useWorkshopStore((s) =>
+    s.activeChatId ? s.chats[s.activeChatId] : null
+  );
+
+  // isRunning is derived from chat state — no more global boolean
+  const isRunning = activeChat?.state === "busy" || activeChat?.state === "starting";
 
   const addUserMessage = useWorkshopStore((s) => s.addUserMessage);
   const addAssistantPlaceholder = useWorkshopStore((s) => s.addAssistantPlaceholder);
   const appendToAssistant = useWorkshopStore((s) => s.appendToAssistant);
-  const appendThinking = useWorkshopStore((s) => s.appendThinking);
-  const addToolCall = useWorkshopStore((s) => s.addToolCall);
-  const updateToolResult = useWorkshopStore((s) => s.updateToolResult);
   const setMessages = useWorkshopStore((s) => s.setMessages);
-  const setSessionId = useWorkshopStore((s) => s.setSessionId);
-  const setRunning = useWorkshopStore((s) => s.setRunning);
+  const loadMessages = useWorkshopStore((s) => s.loadMessages);
 
-  // Track the current assistant message being streamed into.
-  // This ref bridges the gap between onNew (where the placeholder is created)
-  // and onEvent (where streaming deltas arrive asynchronously).
-  const currentAssistantIdRef = useRef<string | null>(null);
-
-  // Keep stable refs to callbacks the WebSocket handler needs
-  const onSessionCreatedRef = useRef(onSessionCreated);
-  onSessionCreatedRef.current = onSessionCreated;
-
-  // Store action refs for the WebSocket event handler
-  const actionsRef = useRef({
-    appendToAssistant,
-    appendThinking,
-    addToolCall,
-    updateToolResult,
-    setSessionId,
-    setRunning,
-  });
-  actionsRef.current = {
-    appendToAssistant,
-    appendThinking,
-    addToolCall,
-    updateToolResult,
-    setSessionId,
-    setRunning,
-  };
-
-  // WebSocket event handler — dispatches server events to Zustand
-  const onEvent = useCallback((event: ServerEvent) => {
-    const assistantId = currentAssistantIdRef.current;
-    const actions = actionsRef.current;
-
-    switch (event.type) {
-      case "thinking-delta":
-        if (assistantId) actions.appendThinking(assistantId, event.data as string);
-        break;
-
-      case "text-delta":
-        if (assistantId) actions.appendToAssistant(assistantId, event.data as string);
-        break;
-
-      case "tool-call": {
-        if (!assistantId) break;
-        const tc = event.data as ToolCallPart;
-        actions.addToolCall(assistantId, {
-          toolCallId: tc.toolCallId,
-          toolName: tc.toolName,
-          args: tc.args,
-          argsText: tc.argsText,
-        });
-        break;
-      }
-
-      case "tool-result": {
-        if (!assistantId) break;
-        const { toolCallId, result, isError } = event.data as {
-          toolCallId: string;
-          result: JSONValue;
-          isError?: boolean;
-        };
-        actions.updateToolResult(assistantId, toolCallId, result, isError);
-        break;
-      }
-
-      case "session-id":
-        actions.setSessionId(event.data as string);
-        onSessionCreatedRef.current?.();
-        break;
-
-      case "error":
-        console.error("[Alpha WS] Error:", event.data);
-        if (assistantId) {
-          actions.appendToAssistant(assistantId, `Error: ${event.data}`);
-        }
-        break;
-
-      case "done":
-        currentAssistantIdRef.current = null;
-        actions.setRunning(false);
-        break;
-
-      case "interrupted":
-        currentAssistantIdRef.current = null;
-        actions.setRunning(false);
-        break;
-    }
-  }, []);
-
-  const { send, connected } = useWebSocket({ onEvent });
-
-  // Keep a ref to `send` and `sessionId` for use in onNew
+  // Keep refs for stable access in callbacks
+  const activeChatIdRef = useRef(activeChatId);
+  activeChatIdRef.current = activeChatId;
   const sendRef = useRef(send);
   sendRef.current = send;
-  const sessionIdRef = useRef(sessionId);
-  sessionIdRef.current = sessionId;
 
+  // ---- Load messages when active chat changes ----
+  useEffect(() => {
+    if (!activeChatId) return;
+
+    // If we already have messages (restored from cache by setActiveChatId), skip
+    if (useWorkshopStore.getState().messages.length > 0) return;
+
+    // Fetch from backend — maps chatId → session UUID → JSONL
+    const controller = new AbortController();
+    fetch(`/api/chats/${activeChatId}/messages`, { signal: controller.signal })
+      .then((r) => {
+        if (!r.ok) throw new Error("Not found");
+        return r.json();
+      })
+      .then((data) => {
+        const loaded: Message[] = (data.messages || []).map(
+          (m: { role: string; content: unknown }, i: number) => ({
+            id: `loaded-${i}`,
+            role: m.role as "user" | "assistant",
+            content: Array.isArray(m.content)
+              ? m.content
+              : [{ type: "text", text: String(m.content) }],
+            createdAt: new Date(),
+          })
+        );
+        // Only apply if still the same active chat and no messages appeared
+        const current = useWorkshopStore.getState();
+        if (current.activeChatId === activeChatId && current.messages.length === 0 && loaded.length > 0) {
+          loadMessages(activeChatId, loaded);
+        }
+      })
+      .catch((err) => {
+        if (err.name === "AbortError") return;
+        console.error("[Alpha] Failed to load chat messages:", err.message);
+      });
+
+    return () => controller.abort();
+  }, [activeChatId, loadMessages]);
+
+  // ---- Send handler ----
   const onNew = useCallback(
     async (appendMessage: AppendMessage) => {
+      const chatId = activeChatIdRef.current;
+      if (!chatId) return;
+
       const textParts = appendMessage.content.filter(
         (p): p is { type: "text"; text: string } => p.type === "text"
       );
@@ -315,39 +274,40 @@ function ThreadView({ onSessionCreated }: ThreadViewProps) {
       // Nothing to send
       if (!text.trim() && storeImages.length === 0) return;
 
-      console.log("[Alpha] Sending via WebSocket, blocks:", backendContent.length);
+      console.log("[Alpha] Sending to chat %s, blocks: %d", chatId, backendContent.length);
 
       // Add user message to store (optimistic)
       addUserMessage(text, storeImages.length > 0 ? storeImages : undefined);
 
       // Create placeholder for assistant response
       const assistantId = addAssistantPlaceholder();
-      currentAssistantIdRef.current = assistantId;
-      setRunning(true);
+      assistantIdMapRef.current[chatId] = assistantId;
 
-      // Send via WebSocket
+      // Send via WebSocket with chatId
       const sent = sendRef.current({
         type: "send",
-        content: backendContent.length === 1 && backendContent[0].type === "text"
-          ? (backendContent[0] as { text: string }).text  // Simple string for text-only
-          : backendContent,
-        sessionId: sessionIdRef.current,
+        chatId,
+        content:
+          backendContent.length === 1 && backendContent[0].type === "text"
+            ? (backendContent[0] as { text: string }).text // Simple string for text-only
+            : backendContent,
       });
 
       if (!sent) {
         appendToAssistant(assistantId, "Error: Not connected to server");
-        currentAssistantIdRef.current = null;
-        setRunning(false);
+        assistantIdMapRef.current[chatId] = null;
       }
     },
-    [addUserMessage, addAssistantPlaceholder, appendToAssistant, setRunning]
+    [addUserMessage, addAssistantPlaceholder, appendToAssistant, assistantIdMapRef]
   );
 
   const onCancel = useCallback(async () => {
-    sendRef.current({ type: "interrupt" });
-    currentAssistantIdRef.current = null;
-    setRunning(false);
-  }, [setRunning]);
+    const chatId = activeChatIdRef.current;
+    if (chatId) {
+      sendRef.current({ type: "interrupt", chatId });
+      assistantIdMapRef.current[chatId] = null;
+    }
+  }, [assistantIdMapRef]);
 
   const adapters = useMemo(
     () => ({ attachments: new SimpleImageAttachmentAdapter() }),
@@ -435,52 +395,6 @@ function ThreadView({ onSessionCreated }: ThreadViewProps) {
 // ChatPage (route handler)
 // -----------------------------------------------------------------------------
 
-interface ChatPageProps {
-  onSessionCreated?: () => void;
-}
-
-export default function ChatPage({ onSessionCreated }: ChatPageProps) {
-  const { sessionId } = useParams();
-  const navigate = useNavigate();
-  const loadSession = useWorkshopStore((s) => s.loadSession);
-  const reset = useWorkshopStore((s) => s.reset);
-
-  useEffect(() => {
-    if (!sessionId) {
-      reset();
-      return;
-    }
-
-    // Backend fetch — loads in background, no loading screen.
-    // ThreadView renders immediately; messages appear when ready.
-    const controller = new AbortController();
-
-    fetch(`/api/sessions/${sessionId}`, { signal: controller.signal })
-      .then((r) => {
-        if (!r.ok) throw new Error(`Session not found`);
-        return r.json();
-      })
-      .then((data) => {
-        const messages: Message[] = (data.messages || []).map(
-          (m: { role: string; content: unknown }, i: number) => ({
-            id: `loaded-${i}`,
-            role: m.role as "user" | "assistant",
-            content: Array.isArray(m.content)
-              ? m.content
-              : [{ type: "text", text: String(m.content) }],
-            createdAt: new Date(),
-          })
-        );
-        loadSession(sessionId, messages);
-      })
-      .catch((err) => {
-        if (err.name === "AbortError") return;
-        console.error("[Alpha] Failed to load session:", err.message);
-        navigate("/chat");
-      });
-
-    return () => controller.abort();
-  }, [sessionId, loadSession, reset, navigate]);
-
-  return <ThreadView onSessionCreated={onSessionCreated} />;
+export default function ChatPage(props: ChatPageProps) {
+  return <ThreadView {...props} />;
 }

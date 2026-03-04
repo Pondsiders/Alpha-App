@@ -37,7 +37,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Startup
     holster = Holster()
     app.state.holster = holster
-    app.state.active_chat = None
+    app.state.chats = {}  # dict[str, Chat]
 
     log.info("Warming holster (one in the chamber)...")
     await holster.warm()
@@ -46,9 +46,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Shutdown
     log.info("Shutting down...")
-    chat: Chat | None = app.state.active_chat
-    if chat and chat.state != ChatState.DEAD:
-        await chat.reap()
+    for chat in list(app.state.chats.values()):
+        if chat.state != ChatState.DEAD:
+            await chat.reap()
     await holster.shutdown()
     log.info("Goodbye.")
 
@@ -77,14 +77,16 @@ app.include_router(ws_router)
 @app.get("/health")
 async def health() -> dict:
     """Health check endpoint."""
-    chat: Chat | None = app.state.active_chat
     holster: Holster = app.state.holster
+    chats: dict[str, Chat] = app.state.chats
+    alive = [c for c in chats.values() if c.state != ChatState.DEAD]
+    busy = [c for c in chats.values() if c.state == ChatState.BUSY]
     return {
         "status": "healthy",
         "holster_ready": holster.ready,
-        "active_chat": chat.id if chat else None,
-        "chat_state": chat.state.value if chat else None,
-        "session": (chat.session_uuid[:8] + "...") if chat and chat.session_uuid else None,
+        "chats_total": len(chats),
+        "chats_alive": len(alive),
+        "chats_busy": len(busy),
     }
 
 

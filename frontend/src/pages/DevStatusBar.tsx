@@ -19,8 +19,9 @@ import { ContextMeter } from "../components/ContextMeter";
 interface MockStatusBarProps {
   label: string;
   sublabel?: string;
-  sessionId: string | null;
+  connected: boolean;
   isRunning: boolean;
+  chatId: string | null;
   model: string | null;
   tokenCount: number;
   tokenLimit: number;
@@ -28,26 +29,27 @@ interface MockStatusBarProps {
 }
 
 function getConnectionColor(
-  sessionId: string | null,
+  connected: boolean,
   isRunning: boolean
 ): string {
-  if (!sessionId) return "var(--theme-muted)";
   if (isRunning) return "var(--theme-success)";
+  if (!connected) return "var(--theme-muted)";
   return "var(--theme-primary)";
 }
 
 function MockStatusBar({
   label,
   sublabel,
-  sessionId,
+  connected,
   isRunning,
+  chatId,
   model,
   tokenCount,
   tokenLimit,
   contextPercent,
 }: MockStatusBarProps) {
-  const dotColor = getConnectionColor(sessionId, isRunning);
-  const shortId = sessionId ? sessionId.slice(0, 8) : "\u2014";
+  const dotColor = getConnectionColor(connected, isRunning);
+  const shortId = chatId ? chatId.slice(0, 8) : "\u2014";
 
   return (
     <div className="rounded-lg border border-border overflow-hidden">
@@ -64,8 +66,9 @@ function MockStatusBar({
         <div className="flex items-center gap-2.5">
           {/* Dot with health popover */}
           <ConnectionInfo
-            sessionId={sessionId}
+            connected={connected}
             isRunning={isRunning}
+            chatId={chatId}
             model={model}
             tokenCount={tokenCount}
             tokenLimit={tokenLimit}
@@ -83,11 +86,11 @@ function MockStatusBar({
             </button>
           </ConnectionInfo>
 
-          {/* Session ID */}
+          {/* Chat ID */}
           <span className="font-mono text-[11px] text-muted">{shortId}</span>
         </div>
 
-        <ContextMeter percent={contextPercent} />
+        <ContextMeter percent={contextPercent} model={model} tokenCount={tokenCount} tokenLimit={tokenLimit} />
       </div>
 
       {/* Fake chat area */}
@@ -103,20 +106,22 @@ function MockStatusBar({
 /** Standalone popover demo — always visible, no hover needed */
 function PopoverDemo({
   label,
-  sessionId,
+  connected,
   isRunning,
+  chatId,
   model,
   tokenCount,
   tokenLimit,
 }: {
   label: string;
-  sessionId: string | null;
+  connected: boolean;
   isRunning: boolean;
+  chatId: string | null;
   model: string | null;
   tokenCount: number;
   tokenLimit: number;
 }) {
-  const status = !sessionId
+  const status = !connected
     ? { text: "Disconnected", color: "var(--theme-muted)" }
     : isRunning
       ? { text: "Connected \u00b7 Streaming", color: "var(--theme-success)" }
@@ -154,12 +159,12 @@ function PopoverDemo({
             </span>
           </div>
           <div className="flex items-baseline justify-between gap-3">
-            <span className="text-[11px] text-muted">Session</span>
+            <span className="text-[11px] text-muted">Chat</span>
             <span
               className="text-[11px] font-mono text-right"
               style={{ overflowWrap: "anywhere" }}
             >
-              {sessionId ?? "\u2014"}
+              {chatId ?? "\u2014"}
             </span>
           </div>
           <div className="flex items-baseline justify-between gap-3">
@@ -188,8 +193,9 @@ export default function DevStatusBar() {
             <MockStatusBar
               label="Disconnected"
               sublabel="no session"
-              sessionId={null}
+              connected={false}
               isRunning={false}
+              chatId={null}
               model={null}
               tokenCount={0}
               tokenLimit={0}
@@ -199,8 +205,9 @@ export default function DevStatusBar() {
             <MockStatusBar
               label="Connected, idle"
               sublabel="fresh session, low context"
-              sessionId="a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+              connected={true}
               isRunning={false}
+              chatId="a1b2c3d4-e5f6-7890-abcd-ef1234567890"
               model="claude-opus-4-6"
               tokenCount={12_400}
               tokenLimit={200_000}
@@ -210,8 +217,9 @@ export default function DevStatusBar() {
             <MockStatusBar
               label="Connected, streaming"
               sublabel="API in flight, moderate context"
-              sessionId="f9e8d7c6-b5a4-3210-fedc-ba9876543210"
+              connected={true}
               isRunning={true}
+              chatId="f9e8d7c6-b5a4-3210-fedc-ba9876543210"
               model="claude-opus-4-6"
               tokenCount={84_600}
               tokenLimit={200_000}
@@ -221,8 +229,9 @@ export default function DevStatusBar() {
             <MockStatusBar
               label="Amber zone"
               sublabel="context warming up"
-              sessionId="deadbeef-cafe-1234-5678-abcdef012345"
+              connected={true}
               isRunning={false}
+              chatId="deadbeef-cafe-1234-5678-abcdef012345"
               model="claude-sonnet-4-6"
               tokenCount={138_000}
               tokenLimit={200_000}
@@ -232,8 +241,9 @@ export default function DevStatusBar() {
             <MockStatusBar
               label="Red zone"
               sublabel="compaction approaching"
-              sessionId="cafebabe-dead-beef-1234-567890abcdef"
+              connected={true}
               isRunning={false}
+              chatId="cafebabe-dead-beef-1234-567890abcdef"
               model="claude-opus-4-6"
               tokenCount={168_400}
               tokenLimit={200_000}
@@ -254,32 +264,36 @@ export default function DevStatusBar() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <PopoverDemo
               label="Disconnected"
-              sessionId={null}
+              connected={false}
               isRunning={false}
+              chatId={null}
               model={null}
               tokenCount={0}
               tokenLimit={0}
             />
             <PopoverDemo
               label="Connected, idle"
-              sessionId="a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+              connected={true}
               isRunning={false}
+              chatId="a1b2c3d4-e5f6-7890-abcd-ef1234567890"
               model="claude-opus-4-6"
               tokenCount={84_600}
               tokenLimit={200_000}
             />
             <PopoverDemo
               label="Streaming"
-              sessionId="f9e8d7c6-b5a4-3210-fedc-ba9876543210"
+              connected={true}
               isRunning={true}
+              chatId="f9e8d7c6-b5a4-3210-fedc-ba9876543210"
               model="claude-opus-4-6"
               tokenCount={142_000}
               tokenLimit={200_000}
             />
             <PopoverDemo
               label="Sonnet variant"
-              sessionId="deadbeef-cafe-1234-5678-abcdef012345"
+              connected={true}
               isRunning={false}
+              chatId="deadbeef-cafe-1234-5678-abcdef012345"
               model="claude-sonnet-4-6"
               tokenCount={38_200}
               tokenLimit={200_000}

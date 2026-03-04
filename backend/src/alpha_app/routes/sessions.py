@@ -152,6 +152,35 @@ async def list_sessions(limit: int = Query(default=20, ge=1, le=100)) -> list[di
         return []
 
 
+@router.get("/api/chats/{chat_id}/messages")
+async def get_chat_messages(chat_id: str) -> dict[str, Any]:
+    """Load a chat's message history. Maps chatId → session UUID → JSONL."""
+    # Look up session UUID from Redis
+    try:
+        r = aioredis.from_url(REDIS_URL, decode_responses=True)
+        try:
+            session_uuid = await r.hget(f"alpha:chat:{chat_id}", "session_uuid")
+        finally:
+            await r.aclose()
+    except Exception as e:
+        log.exception("Redis lookup failed: %s", e)
+        raise HTTPException(status_code=500, detail="Redis error")
+
+    if not session_uuid:
+        # Chat exists but has no session yet (never completed a turn)
+        return {"chatId": chat_id, "messages": []}
+
+    jsonl_path = SESSIONS_DIR / f"{session_uuid}.jsonl"
+    if not jsonl_path.exists():
+        return {"chatId": chat_id, "messages": []}
+
+    content = jsonl_path.read_text()
+    lines = [line for line in content.split("\n") if line.strip()]
+    messages = extract_display_messages(lines)
+
+    return {"chatId": chat_id, "messages": messages}
+
+
 @router.get("/api/sessions/{session_id}")
 async def get_session(session_id: str) -> dict[str, Any]:
     """Load a session's message history from JSONL."""
