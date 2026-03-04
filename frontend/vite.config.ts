@@ -9,6 +9,25 @@ import { VitePWA } from 'vite-plugin-pwa'
 const FRONTEND_PORT = parseInt(process.env.VITE_PORT || '18011', 10)
 const BACKEND_PORT = parseInt(process.env.VITE_BACKEND_PORT || '18010', 10)
 
+// Load HTTPS config if certs exist (for dev server), otherwise use false (for build)
+function getHttpsConfig() {
+  const certPath = '/Pondside/Basement/Files/certs/primer.tail8bd569.ts.net.crt'
+  const keyPath = '/Pondside/Basement/Files/certs/primer.tail8bd569.ts.net.key'
+
+  try {
+    if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+      return {
+        cert: fs.readFileSync(certPath),
+        key: fs.readFileSync(keyPath),
+      }
+    }
+  } catch (e) {
+    // Fall through to return false
+  }
+
+  return false
+}
+
 export default defineConfig({
   plugins: [
     react(),
@@ -59,10 +78,7 @@ export default defineConfig({
   server: {
     port: FRONTEND_PORT,
     host: '0.0.0.0',
-    https: {
-      cert: fs.readFileSync('/Pondside/Basement/Files/certs/primer.tail8bd569.ts.net.crt'),
-      key: fs.readFileSync('/Pondside/Basement/Files/certs/primer.tail8bd569.ts.net.key'),
-    },
+    https: getHttpsConfig(),
     proxy: {
       '/api': {
         target: `http://localhost:${BACKEND_PORT}`,

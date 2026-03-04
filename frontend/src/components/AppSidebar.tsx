@@ -131,7 +131,7 @@ export function AppSidebar() {
   }, [navigate, isMobile, setOpenMobile]);
 
   return (
-    <Sidebar side="left" variant="sidebar" collapsible="icon">
+    <Sidebar side="left" variant="sidebar" collapsible="offcanvas">
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
