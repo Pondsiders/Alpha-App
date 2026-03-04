@@ -12,7 +12,7 @@ Client -> Server messages:
 Server -> Client messages:
   { "type": "chat-created", "chatId": "...", "data": { "state": "idle" } }
   { "type": "chat-list", "data": [...] }
-  { "type": "chat-state", "chatId": "...", "data": { "state": "busy", "title": "...", "updatedAt": ..., "sessionUuid": "..." } }
+  { "type": "chat-state", "chatId": "...", "data": { "state": "busy", "title": "...", "updatedAt": ..., "sessionUuid": "...", "tokenCount": ..., "contextWindow": ... } }
   { "type": "text-delta", "chatId": "...", "data": "chunk" }
   { "type": "thinking-delta", "chatId": "...", "data": "chunk" }
   { "type": "tool-call", "chatId": "...", "data": { "toolCallId", "toolName", "args", "argsText" } }
@@ -77,6 +77,8 @@ async def _list_chats_from_redis() -> list[dict]:
                         "state": "dead",  # Always dead from Redis — live overlay adds runtime state
                         "updatedAt": float(meta.get("updated_at", 0) or 0),
                         "sessionUuid": meta.get("session_uuid", ""),
+                        "tokenCount": int(meta.get("token_count", 0) or 0),
+                        "contextWindow": int(meta.get("context_window", 0) or 0) or 200_000,
                     })
             return result
         finally:
@@ -178,6 +180,8 @@ async def _stream_chat_events(ws: WebSocket, chat: Chat) -> None:
                         "title": chat.title,
                         "updatedAt": chat.updated_at,
                         "sessionUuid": chat.session_uuid or "",
+                        "tokenCount": chat.token_count,
+                        "contextWindow": chat.context_window,
                     },
                 })
 
@@ -253,6 +257,8 @@ async def _handle_list_chats(
             item["state"] = live_chat.state.value
             item["title"] = live_chat.title or item["title"]
             item["sessionUuid"] = live_chat.session_uuid or item.get("sessionUuid", "")
+            item["tokenCount"] = live_chat.token_count
+            item["contextWindow"] = live_chat.context_window
 
     await ws.send_json({"type": "chat-list", "data": chat_list})
 
@@ -303,13 +309,23 @@ async def _handle_send(
             await ws.send_json({
                 "type": "chat-state",
                 "chatId": chat_id,
-                "data": {"state": "starting", "sessionUuid": chat.session_uuid or ""},
+                "data": {
+                    "state": "starting",
+                    "sessionUuid": chat.session_uuid or "",
+                    "tokenCount": chat.token_count,
+                    "contextWindow": chat.context_window,
+                },
             })
             await chat.resurrect()
             await ws.send_json({
                 "type": "chat-state",
                 "chatId": chat_id,
-                "data": {"state": chat.state.value, "sessionUuid": chat.session_uuid or ""},
+                "data": {
+                    "state": chat.state.value,
+                    "sessionUuid": chat.session_uuid or "",
+                    "tokenCount": chat.token_count,
+                    "contextWindow": chat.context_window,
+                },
             })
 
         # Send the message (IDLE -> BUSY, sets title + updated_at)
@@ -324,6 +340,8 @@ async def _handle_send(
                 "title": chat.title,
                 "updatedAt": chat.updated_at,
                 "sessionUuid": chat.session_uuid or "",
+                "tokenCount": chat.token_count,
+                "contextWindow": chat.context_window,
             },
         })
 
@@ -356,7 +374,12 @@ async def _handle_interrupt(
             await ws.send_json({
                 "type": "chat-state",
                 "chatId": chat_id,
-                "data": {"state": chat.state.value, "sessionUuid": chat.session_uuid or ""},
+                "data": {
+                    "state": chat.state.value,
+                    "sessionUuid": chat.session_uuid or "",
+                    "tokenCount": chat.token_count,
+                    "contextWindow": chat.context_window,
+                },
             })
         except Exception as e:
             log.exception("Interrupt error: %s", e)

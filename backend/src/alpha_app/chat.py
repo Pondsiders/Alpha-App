@@ -61,6 +61,10 @@ class Chat:
         self._client = client
         self._reap_task: asyncio.Task | None = None
 
+        # Cached token state — survives subprocess death and Redis round-trips
+        self._cached_token_count: int = 0
+        self._cached_context_window: int = 200_000
+
     @classmethod
     def from_holster(cls, *, id: str, client: AlphaClient) -> "Chat":
         """Create a Chat with a pre-warmed client. Born IDLE."""
@@ -78,19 +82,23 @@ class Chat:
         chat.state = ChatState.DEAD
         chat.created_at = float(data.get("created_at", 0) or 0)
         chat.updated_at = float(data.get("updated_at", 0) or 0)
+        chat._cached_token_count = int(data.get("token_count", 0) or 0)
+        chat._cached_context_window = int(data.get("context_window", 0) or 0) or 200_000
         return chat
 
     @property
     def token_count(self) -> int:
-        """Current input token count. 0 if no live subprocess."""
-        return self._client.token_count if self._client else 0
+        """Current input token count. Falls back to cached value if no live subprocess."""
+        if self._client:
+            return self._client.token_count
+        return self._cached_token_count
 
     @property
     def context_window(self) -> int:
-        """Context window size. Default if no live subprocess."""
+        """Context window size. Falls back to cached value if no live subprocess."""
         if self._client:
             return self._client.context_window
-        return 200_000  # Fallback — matches _Proxy.DEFAULT_CONTEXT_WINDOW
+        return self._cached_context_window
 
     def serialize(self) -> dict[str, str]:
         """Serialize chat metadata for Redis persistence.
@@ -103,6 +111,8 @@ class Chat:
             "title": self.title,
             "created_at": str(self.created_at),
             "updated_at": str(self.updated_at),
+            "token_count": str(self.token_count),
+            "context_window": str(self.context_window),
         }
 
     async def send(self, content: list[dict]) -> None:
@@ -158,6 +168,7 @@ class Chat:
         except Exception:
             # Subprocess crashed — go DEAD
             log.exception("Chat %s: subprocess error, going DEAD", self.id)
+            self._snapshot_token_state()
             self.state = ChatState.DEAD
             self._client = None
             raise
@@ -175,6 +186,7 @@ class Chat:
         """Kill the subprocess. *->DEAD. Safe to call on already-DEAD chats."""
         self._cancel_reap_timer()
         if self._client:
+            self._snapshot_token_state()
             try:
                 await self._client.stop()
             except Exception as e:
@@ -219,6 +231,18 @@ class Chat:
             self.state = ChatState.DEAD
             self._client = None
             raise
+
+    # -- Token state snapshot ----------------------------------------------
+
+    def _snapshot_token_state(self) -> None:
+        """Snapshot token state from live client before it goes away."""
+        if self._client:
+            count = self._client.token_count
+            if count > 0:
+                self._cached_token_count = count
+            window = self._client.context_window
+            if window > 0:
+                self._cached_context_window = window
 
     # -- Reap timer -------------------------------------------------------
 

@@ -39,8 +39,7 @@ function Layout() {
     appendThinking: useWorkshopStore.getState().appendThinking,
     addToolCall: useWorkshopStore.getState().addToolCall,
     updateToolResult: useWorkshopStore.getState().updateToolResult,
-    setTokens: useWorkshopStore.getState().setTokens,
-    setContextPercent: useWorkshopStore.getState().setContextPercent,
+    updateChatTokens: useWorkshopStore.getState().updateChatTokens,
   });
   // Keep the ref fresh (store actions are stable with immer, but belt & suspenders)
   actionsRef.current = {
@@ -53,8 +52,7 @@ function Layout() {
     appendThinking: useWorkshopStore.getState().appendThinking,
     addToolCall: useWorkshopStore.getState().addToolCall,
     updateToolResult: useWorkshopStore.getState().updateToolResult,
-    setTokens: useWorkshopStore.getState().setTokens,
-    setContextPercent: useWorkshopStore.getState().setContextPercent,
+    updateChatTokens: useWorkshopStore.getState().updateChatTokens,
   };
 
   // Shared assistant ID map — Layout reads, ChatPage writes
@@ -77,6 +75,8 @@ function Layout() {
           state: string;
           updatedAt: number;
           sessionUuid?: string;
+          tokenCount?: number;
+          contextWindow?: number;
         }>;
         const chatList: ChatMeta[] = raw.map((c) => ({
           id: c.chatId,
@@ -84,6 +84,8 @@ function Layout() {
           state: c.state as ChatState,
           updatedAt: c.updatedAt,
           sessionUuid: c.sessionUuid || undefined,
+          tokenCount: c.tokenCount,
+          contextWindow: c.contextWindow,
         }));
         actions.setChats(chatList);
         break;
@@ -113,13 +115,17 @@ function Layout() {
           title?: string;
           updatedAt?: number;
           sessionUuid?: string;
+          tokenCount?: number;
+          contextWindow?: number;
         };
         actions.updateChatState(
           eChatId,
           data.state as ChatState,
           data.title,
           data.updatedAt,
-          data.sessionUuid || undefined
+          data.sessionUuid || undefined,
+          data.tokenCount,
+          data.contextWindow,
         );
         break;
       }
@@ -174,13 +180,9 @@ function Layout() {
       }
 
       case "context-update": {
+        if (!eChatId) break;
         const ctx = event.data as { tokenCount: number; tokenLimit: number };
-        actions.setTokens(ctx.tokenCount, ctx.tokenLimit);
-        if (ctx.tokenLimit > 0) {
-          actions.setContextPercent(
-            Math.round((ctx.tokenCount / ctx.tokenLimit) * 1000) / 10
-          );
-        }
+        actions.updateChatTokens(eChatId, ctx.tokenCount, ctx.tokenLimit);
         break;
       }
 

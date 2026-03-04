@@ -50,6 +50,8 @@ export interface ChatMeta {
   state: ChatState;
   updatedAt: number;
   sessionUuid?: string;
+  tokenCount?: number;
+  contextWindow?: number;
 }
 
 // -----------------------------------------------------------------------------
@@ -79,7 +81,7 @@ interface WorkshopActions {
   // Chat management
   setChats: (chatList: ChatMeta[]) => void;
   addChat: (chat: ChatMeta) => void;
-  updateChatState: (chatId: string, state: ChatState, title?: string, updatedAt?: number, sessionUuid?: string) => void;
+  updateChatState: (chatId: string, state: ChatState, title?: string, updatedAt?: number, sessionUuid?: string, tokenCount?: number, contextWindow?: number) => void;
   setActiveChatId: (chatId: string | null) => void;
 
   // Messages
@@ -109,6 +111,7 @@ interface WorkshopActions {
   setContextPercent: (percent: number) => void;
   setModel: (model: string | null) => void;
   setTokens: (count: number, limit: number) => void;
+  updateChatTokens: (chatId: string, tokenCount: number, contextWindow: number) => void;
 
   // Reset
   reset: () => void;
@@ -152,6 +155,24 @@ export const useWorkshopStore = create<WorkshopStore>()(
           map[chat.id] = chat;
         }
         state.chats = map;
+
+        // Restore token state for the active chat.
+        // Handles the race where setActiveChatId fires before chat-list arrives.
+        // (setActiveChatId always fires first — React effects run before the
+        //  WebSocket network round-trip completes, so activeChatId is set by
+        //  the time the chat-list response arrives here.)
+        if (state.activeChatId) {
+          const active = map[state.activeChatId];
+          if (active) {
+            const tc = active.tokenCount ?? 0;
+            const cw = active.contextWindow ?? 200_000;
+            state.tokenCount = tc;
+            state.tokenLimit = cw;
+            state.contextPercent = cw > 0
+              ? Math.round((tc / cw) * 1000) / 10
+              : 0;
+          }
+        }
       });
     },
 
@@ -161,7 +182,7 @@ export const useWorkshopStore = create<WorkshopStore>()(
       });
     },
 
-    updateChatState: (chatId, chatState, title, updatedAt, sessionUuid?) => {
+    updateChatState: (chatId, chatState, title, updatedAt, sessionUuid?, tokenCount?, contextWindow?) => {
       set((state) => {
         const chat = state.chats[chatId];
         if (!chat) return;
@@ -169,6 +190,17 @@ export const useWorkshopStore = create<WorkshopStore>()(
         if (title !== undefined) chat.title = title;
         if (updatedAt !== undefined) chat.updatedAt = updatedAt;
         if (sessionUuid !== undefined) chat.sessionUuid = sessionUuid;
+        if (tokenCount !== undefined) chat.tokenCount = tokenCount;
+        if (contextWindow !== undefined) chat.contextWindow = contextWindow;
+
+        // Update global meter if this is the active chat
+        if (chatId === state.activeChatId && tokenCount !== undefined && contextWindow !== undefined) {
+          state.tokenCount = tokenCount;
+          state.tokenLimit = contextWindow;
+          state.contextPercent = contextWindow > 0
+            ? Math.round((tokenCount / contextWindow) * 1000) / 10
+            : 0;
+        }
       });
     },
 
@@ -187,6 +219,20 @@ export const useWorkshopStore = create<WorkshopStore>()(
           state.messages = [...state.messageCache[chatId]];
         } else {
           state.messages = [];
+        }
+
+        // Restore token state from the new chat's metadata
+        if (chatId) {
+          const chat = state.chats[chatId];
+          if (chat) {
+            const tc = chat.tokenCount ?? 0;
+            const cw = chat.contextWindow ?? 200_000;
+            state.tokenCount = tc;
+            state.tokenLimit = cw;
+            state.contextPercent = cw > 0
+              ? Math.round((tc / cw) * 1000) / 10
+              : 0;
+          }
         }
       });
     },
@@ -367,6 +413,26 @@ export const useWorkshopStore = create<WorkshopStore>()(
       set((state) => {
         state.tokenCount = count;
         state.tokenLimit = limit;
+      });
+    },
+
+    updateChatTokens: (chatId, tokenCount, contextWindow) => {
+      set((state) => {
+        // Update per-chat metadata
+        const chat = state.chats[chatId];
+        if (chat) {
+          chat.tokenCount = tokenCount;
+          chat.contextWindow = contextWindow;
+        }
+
+        // Update global meter if this is the active chat
+        if (chatId === state.activeChatId) {
+          state.tokenCount = tokenCount;
+          state.tokenLimit = contextWindow;
+          state.contextPercent = contextWindow > 0
+            ? Math.round((tokenCount / contextWindow) * 1000) / 10
+            : 0;
+        }
       });
     },
 
