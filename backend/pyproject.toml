@@ -7,7 +7,7 @@ dependencies = [
     "fastapi>=0.135.0",
     "uvicorn[standard]>=0.32.0",
     "alpha-sdk>=1.0.0a3,<2.0",
-    "redis[hiredis]>=5.0.0",
+    "asyncpg>=0.30.0",
 ]
 
 [build-system]

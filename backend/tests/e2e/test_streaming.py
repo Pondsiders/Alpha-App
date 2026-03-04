@@ -13,7 +13,8 @@ Run with:
 
 Prerequisites:
     - `npm run build` in frontend/ (creates dist/ that uvicorn serves)
-    - Redis running (for chat persistence)
+    - Postgres running with app.chats table (for chat persistence)
+    - DATABASE_URL set (connection string for Postgres)
     - ANTHROPIC_API_KEY set (claude subprocess needs it for auth headers,
       even though the actual API call goes to our mock)
 """
@@ -116,7 +117,7 @@ def test_streaming_survives_backend_restart(
 
     This tests the actual failure mode Jeffery found: backend restarts,
     WebSocket reconnects, user sends a message to a chat whose subprocess
-    is dead. The backend must load the chat from Redis, resurrect it
+    is dead. The backend must load the chat from Postgres, resurrect it
     (new subprocess with --resume), and stream the response.
 
     NO page refresh. NO navigation. Same window, same chat. If this
@@ -149,7 +150,7 @@ def test_streaming_survives_backend_restart(
 
     # --- Second message: same window, same chat, no navigation ---
     # The old chat's subprocess is dead. The backend must:
-    # 1. Load chat metadata from Redis (DEAD, has session_uuid)
+    # 1. Load chat metadata from Postgres (DEAD, has session_uuid)
     # 2. Resurrect (start new subprocess, --resume session)
     # 3. Send the message
     # 4. Stream the response back through the new WebSocket

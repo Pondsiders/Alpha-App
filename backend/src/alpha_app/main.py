@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from alpha_app.chat import Chat, ChatState, Holster
+from alpha_app.db import init_pool, close_pool
 from alpha_app.routes.sessions import router as sessions_router
 from alpha_app.routes.ws import router as ws_router
 
@@ -35,6 +36,9 @@ log = logging.getLogger("alpha")
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """App lifespan — holster warmup on startup, clean shutdown."""
     # Startup
+    log.info("Connecting to Postgres...")
+    await init_pool()
+
     holster = Holster()
     app.state.holster = holster
     app.state.chats = {}  # dict[str, Chat]
@@ -50,6 +54,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if chat.state != ChatState.DEAD:
             await chat.reap()
     await holster.shutdown()
+    await close_pool()
     log.info("Goodbye.")
 
 

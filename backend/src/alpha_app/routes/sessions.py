@@ -1,24 +1,22 @@
-"""Sessions route — list sessions from Redis, load content from JSONL.
+"""Sessions route — list sessions, load content from JSONL.
 
-GET /api/sessions lists recent sessions (metadata from Redis).
-GET /api/sessions/{session_id} loads message history from JSONL files.
+GET /api/chats/{chat_id}/messages loads message history via chatId → session UUID → JSONL.
+GET /api/sessions/{session_id} loads message history from JSONL files directly.
 """
 
 import json
 import logging
 import os
-import time
 from pathlib import Path
 from typing import Any
 
-import redis.asyncio as aioredis
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException
+
+from alpha_app.db import get_pool
 
 log = logging.getLogger(__name__)
 
 router = APIRouter()
-
-REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379")
 
 # Claude Code stores sessions as JSONL files at ~/.claude/projects/{cwd-with-dashes}/.
 # Inside the container, claude's CWD is the container's CWD (usually /app).
@@ -122,50 +120,24 @@ def extract_display_messages(lines: list[str]) -> list[dict[str, Any]]:
     return messages
 
 
-@router.get("/api/sessions")
-async def list_sessions(limit: int = Query(default=20, ge=1, le=100)) -> list[dict[str, Any]]:
-    """List recent sessions from Redis."""
-    try:
-        r = aioredis.from_url(REDIS_URL, decode_responses=True)
-        try:
-            # Get most recent session IDs from sorted set
-            session_ids = await r.zrevrange("alpha:sessions", 0, limit - 1)
-
-            sessions = []
-            for sid in session_ids:
-                meta = await r.hgetall(f"alpha:session:{sid}")
-                if meta:
-                    created = float(meta.get("created_at", 0))
-                    updated = float(meta.get("updated_at", 0))
-                    sessions.append({
-                        "session_id": sid,
-                        "title": meta.get("title", sid[:8]),
-                        "created_at": _epoch_to_iso(created),
-                        "updated_at": _epoch_to_iso(updated),
-                    })
-            return sessions
-        finally:
-            await r.aclose()
-
-    except Exception as e:
-        log.exception("Failed to list sessions: %s", e)
-        return []
-
-
 @router.get("/api/chats/{chat_id}/messages")
 async def get_chat_messages(chat_id: str) -> dict[str, Any]:
     """Load a chat's message history. Maps chatId → session UUID → JSONL."""
-    # Look up session UUID from Redis
+    # Look up session UUID from Postgres
     try:
-        r = aioredis.from_url(REDIS_URL, decode_responses=True)
-        try:
-            session_uuid = await r.hget(f"alpha:chat:{chat_id}", "session_uuid")
-        finally:
-            await r.aclose()
+        pool = get_pool()
+        row = await pool.fetchrow(
+            "SELECT data FROM app.chats WHERE id = $1",
+            chat_id,
+        )
     except Exception as e:
-        log.exception("Redis lookup failed: %s", e)
-        raise HTTPException(status_code=500, detail="Redis error")
+        log.exception("Postgres lookup failed: %s", e)
+        raise HTTPException(status_code=500, detail="Database error")
 
+    if not row:
+        return {"chatId": chat_id, "messages": []}
+
+    session_uuid = row["data"].get("session_uuid")
     if not session_uuid:
         # Chat exists but has no session yet (never completed a turn)
         return {"chatId": chat_id, "messages": []}
@@ -204,11 +176,3 @@ async def get_session(session_id: str) -> dict[str, Any]:
         "created_at": first.get("timestamp"),
         "updated_at": last.get("timestamp"),
     }
-
-
-def _epoch_to_iso(epoch: float) -> str | None:
-    """Convert epoch timestamp to ISO string."""
-    if not epoch:
-        return None
-    from datetime import datetime, timezone
-    return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()

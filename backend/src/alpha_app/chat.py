@@ -74,16 +74,22 @@ class Chat:
         return chat
 
     @classmethod
-    def from_redis(cls, chat_id: str, data: dict[str, str]) -> "Chat":
-        """Restore a Chat from Redis metadata. Born DEAD (no subprocess)."""
+    def from_db(cls, chat_id: str, updated_at: float, data: dict) -> "Chat":
+        """Restore a Chat from Postgres row. Born DEAD (no subprocess).
+
+        Args:
+            chat_id: The chat ID (from the `id` column).
+            updated_at: Epoch timestamp (from the `updated_at` column).
+            data: JSONB blob (from the `data` column).
+        """
         chat = cls(id=chat_id)
         chat.session_uuid = data.get("session_uuid") or None
         chat.title = data.get("title", "")
         chat.state = ChatState.DEAD
-        chat.created_at = float(data.get("created_at", 0) or 0)
-        chat.updated_at = float(data.get("updated_at", 0) or 0)
-        chat._cached_token_count = int(data.get("token_count", 0) or 0)
-        chat._cached_context_window = int(data.get("context_window", 0) or 0) or 200_000
+        chat.created_at = data.get("created_at", 0) or 0
+        chat.updated_at = updated_at
+        chat._cached_token_count = data.get("token_count", 0) or 0
+        chat._cached_context_window = data.get("context_window", 0) or 200_000
         return chat
 
     @property
@@ -100,19 +106,19 @@ class Chat:
             return self._client.context_window
         return self._cached_context_window
 
-    def serialize(self) -> dict[str, str]:
-        """Serialize chat metadata for Redis persistence.
+    def to_data(self) -> dict:
+        """Serialize chat metadata as a JSONB-ready dict.
 
-        Note: state is NOT persisted — it's a runtime property of the subprocess.
-        After a restart, all chats are DEAD regardless of what they were before.
+        This goes into the `data` column. The `id` and `updated_at` columns
+        are set separately. State is NOT persisted — it's a runtime property
+        of the subprocess. After a restart, all chats are DEAD.
         """
         return {
             "session_uuid": self.session_uuid or "",
             "title": self.title,
-            "created_at": str(self.created_at),
-            "updated_at": str(self.updated_at),
-            "token_count": str(self.token_count),
-            "context_window": str(self.context_window),
+            "created_at": self.created_at,
+            "token_count": self.token_count,
+            "context_window": self.context_window,
         }
 
     async def send(self, content: list[dict]) -> None:

@@ -22,85 +22,93 @@ Server -> Client messages:
   { "type": "error", "chatId": "...", "data": "something broke" }
 """
 
-import asyncio
 import json
 import logging
-import os
+from datetime import datetime, timezone
 
-import redis.asyncio as aioredis
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from alpha_sdk import AssistantEvent, ResultEvent, ErrorEvent, StreamEvent
 
 from alpha_app.chat import Chat, ChatState, Holster, generate_chat_id
+from alpha_app.db import get_pool
 
 log = logging.getLogger(__name__)
 
 router = APIRouter()
 
-REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379")
-CHAT_TTL = 29 * 24 * 3600  # 29 days in seconds
 
-
-# -- Redis helpers ------------------------------------------------------------
+# -- Postgres helpers ---------------------------------------------------------
 
 
 async def _persist_chat(chat: Chat) -> None:
-    """Persist chat metadata to Redis."""
+    """Persist chat metadata to Postgres. Upsert by chat ID."""
     try:
-        r = aioredis.from_url(REDIS_URL, decode_responses=True)
-        try:
-            pipe = r.pipeline()
-            pipe.hset(f"alpha:chat:{chat.id}", mapping=chat.serialize())
-            pipe.expire(f"alpha:chat:{chat.id}", CHAT_TTL)
-            pipe.zadd("alpha:chats", {chat.id: chat.updated_at})
-            await pipe.execute()
-        finally:
-            await r.aclose()
+        pool = get_pool()
+        updated = datetime.fromtimestamp(chat.updated_at, tz=timezone.utc)
+        await pool.execute(
+            """
+            INSERT INTO app.chats (id, updated_at, data)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (id) DO UPDATE
+                SET updated_at = EXCLUDED.updated_at,
+                    data = EXCLUDED.data
+            """,
+            chat.id,
+            updated,
+            chat.to_data(),
+        )
     except Exception as e:
-        log.warning("Redis persist failed (non-fatal): %s", e)
+        log.warning("Postgres persist failed (non-fatal): %s", e)
 
 
-async def _list_chats_from_redis() -> list[dict]:
-    """Load chat list from Redis for sidebar hydration."""
+async def _list_chats() -> list[dict]:
+    """Load chat list from Postgres for sidebar hydration."""
     try:
-        r = aioredis.from_url(REDIS_URL, decode_responses=True)
-        try:
-            chat_ids = await r.zrevrange("alpha:chats", 0, 99)
-            result = []
-            for cid in chat_ids:
-                meta = await r.hgetall(f"alpha:chat:{cid}")
-                if meta:
-                    result.append({
-                        "chatId": cid,
-                        "title": meta.get("title", ""),
-                        "state": "dead",  # Always dead from Redis — live overlay adds runtime state
-                        "updatedAt": float(meta.get("updated_at", 0) or 0),
-                        "sessionUuid": meta.get("session_uuid", ""),
-                        "tokenCount": int(meta.get("token_count", 0) or 0),
-                        "contextWindow": int(meta.get("context_window", 0) or 0) or 200_000,
-                    })
-            return result
-        finally:
-            await r.aclose()
+        pool = get_pool()
+        rows = await pool.fetch(
+            """
+            SELECT id, updated_at, data
+            FROM app.chats
+            ORDER BY updated_at DESC
+            LIMIT 100
+            """
+        )
+        result = []
+        for row in rows:
+            data = row["data"]
+            result.append({
+                "chatId": row["id"],
+                "title": data.get("title", ""),
+                "state": "dead",  # Always dead from DB — live overlay adds runtime state
+                "updatedAt": row["updated_at"].timestamp(),
+                "sessionUuid": data.get("session_uuid", ""),
+                "tokenCount": data.get("token_count", 0) or 0,
+                "contextWindow": data.get("context_window", 0) or 200_000,
+            })
+        return result
     except Exception as e:
-        log.warning("Redis list failed (non-fatal): %s", e)
+        log.warning("Postgres list failed (non-fatal): %s", e)
         return []
 
 
-async def _load_chat_from_redis(chat_id: str) -> Chat | None:
-    """Load a chat's metadata from Redis. Returns a DEAD Chat, or None."""
+async def _load_chat(chat_id: str) -> Chat | None:
+    """Load a chat's metadata from Postgres. Returns a DEAD Chat, or None."""
     try:
-        r = aioredis.from_url(REDIS_URL, decode_responses=True)
-        try:
-            data = await r.hgetall(f"alpha:chat:{chat_id}")
-            if data:
-                return Chat.from_redis(chat_id, data)
-            return None
-        finally:
-            await r.aclose()
+        pool = get_pool()
+        row = await pool.fetchrow(
+            "SELECT id, updated_at, data FROM app.chats WHERE id = $1",
+            chat_id,
+        )
+        if row:
+            return Chat.from_db(
+                chat_id=row["id"],
+                updated_at=row["updated_at"].timestamp(),
+                data=row["data"],
+            )
+        return None
     except Exception as e:
-        log.warning("Redis load failed (non-fatal): %s", e)
+        log.warning("Postgres load failed (non-fatal): %s", e)
         return None
 
 
@@ -169,7 +177,7 @@ async def _stream_chat_events(ws: WebSocket, chat: Chat) -> None:
 
             elif isinstance(event, ResultEvent):
                 # Persist updated metadata (session UUID, title, etc.)
-                asyncio.create_task(_persist_chat(chat))
+                await _persist_chat(chat)
 
                 # Notify state change: BUSY -> IDLE
                 await ws.send_json({
@@ -227,7 +235,7 @@ async def _handle_create_chat(
         chat = Chat.from_holster(id=chat_id, client=client)
         chats[chat_id] = chat
 
-        # Persist to Redis
+        # Persist to Postgres
         await _persist_chat(chat)
 
         await ws.send_json({
@@ -246,11 +254,11 @@ async def _handle_list_chats(
     ws: WebSocket,
     chats: dict[str, Chat],
 ) -> None:
-    """Handle list-chats: return chat metadata from Redis, overlaid with live state."""
-    chat_list = await _list_chats_from_redis()
+    """Handle list-chats: return chat metadata from Postgres, overlaid with live state."""
+    chat_list = await _list_chats()
 
     # Overlay runtime state from live in-memory chats.
-    # Redis always reports "dead" — only live chats have real state.
+    # Postgres always reports "dead" — only live chats have real state.
     for item in chat_list:
         live_chat = chats.get(item["chatId"])
         if live_chat:
@@ -278,7 +286,7 @@ async def _handle_send(
     # Find or load the chat
     chat = chats.get(chat_id)
     if not chat:
-        chat = await _load_chat_from_redis(chat_id)
+        chat = await _load_chat(chat_id)
         if chat:
             chats[chat_id] = chat
         else:
@@ -346,7 +354,7 @@ async def _handle_send(
         })
 
         # Persist updated metadata
-        asyncio.create_task(_persist_chat(chat))
+        await _persist_chat(chat)
 
         # Stream events (ends with chat-state IDLE + done)
         await _stream_chat_events(ws, chat)
