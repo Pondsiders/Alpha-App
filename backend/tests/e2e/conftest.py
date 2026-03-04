@@ -1,11 +1,17 @@
-"""End-to-end test fixtures — backend lifecycle + Playwright.
+"""End-to-end test fixtures — mock API + backend lifecycle + Playwright.
 
-The key fixture is `backend`, which starts uvicorn in a subprocess,
-waits for it to be healthy, and provides .restart() for the
-backend-restart survival test.
+Three-layer test stack:
+  1. Mock Anthropic API  (port 18098) — deterministic SSE responses
+  2. Alpha-App backend   (port 18099) — uvicorn serving the built frontend
+  3. Playwright browser   — headless Chrome driving the real UI
 
-All tests in this directory run against a BUILT frontend served by
-uvicorn — no Vite dev server. Run `vite build` before these tests.
+The backend starts with ANTHROPIC_BASE_URL pointed at the mock. The full
+chain runs for real — browser, WebSocket, FastAPI, Engine, claude subprocess,
+SDK proxy — except the API call at the very end hits the mock instead of
+api.anthropic.com. "We trust Anthropic." We're testing our plumbing.
+
+All tests run against a BUILT frontend served by uvicorn — no Vite dev
+server. Run `vite build` in frontend/ before running these tests.
 This matches production: one process, one port, one reality.
 """
 
@@ -18,24 +24,36 @@ import time
 import pytest
 import requests
 
+from tests.e2e.mock_anthropic import MockAnthropicServer
 
-# The port used exclusively for e2e tests. Different from dev (18010)
-# so tests can run without conflicting with a running dev server.
-E2E_PORT = 18099
+
+# -- Ports (all different so nothing collides) --------------------------------
+MOCK_PORT = 18098   # Mock Anthropic API
+E2E_PORT = 18099    # Alpha-App backend
 E2E_BASE_URL = f"http://localhost:{E2E_PORT}"
+
+
+# -- Backend subprocess manager -----------------------------------------------
 
 
 class Backend:
     """Manages a uvicorn subprocess for testing."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, mock_api_url: str) -> None:
         self.port = E2E_PORT
         self.base_url = E2E_BASE_URL
+        self._mock_api_url = mock_api_url
         self._proc: subprocess.Popen | None = None
 
     def start(self, *, timeout: float = 30.0) -> None:
         """Start the backend and wait until healthy."""
-        env = {**os.environ, "PORT": str(self.port)}
+        env = {
+            **os.environ,
+            "PORT": str(self.port),
+            # Route API requests to the mock instead of Anthropic.
+            # The Engine captures this before overriding it for claude.
+            "ANTHROPIC_BASE_URL": self._mock_api_url,
+        }
 
         self._proc = subprocess.Popen(
             [
@@ -91,10 +109,26 @@ class Backend:
         return self._proc.pid if self._proc else None
 
 
+# -- Fixtures -----------------------------------------------------------------
+
+
 @pytest.fixture(scope="session")
-def backend():
-    """Session-scoped backend fixture. Starts once, shared across all tests."""
-    b = Backend()
+def mock_api():
+    """Session-scoped mock Anthropic API. Starts once, shared across all tests."""
+    server = MockAnthropicServer(port=MOCK_PORT)
+    server.start()
+    yield server
+    server.stop()
+
+
+@pytest.fixture(scope="session")
+def backend(mock_api: MockAnthropicServer):
+    """Session-scoped backend. Starts after mock API, shared across all tests.
+
+    The backend is configured with ANTHROPIC_BASE_URL pointing at the mock,
+    so all API calls go to deterministic fixture responses.
+    """
+    b = Backend(mock_api_url=mock_api.base_url)
     b.start()
     yield b
     b.stop()

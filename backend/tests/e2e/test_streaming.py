@@ -1,16 +1,21 @@
-"""End-to-end streaming tests — the tests that catch the bug we have right now.
+"""End-to-end streaming tests — Playwright + Mock Anthropic API.
 
 These tests use Playwright to drive a real browser against the full stack:
-uvicorn serving the built frontend + WebSocket + claude subprocess.
+uvicorn serving the built frontend + WebSocket + Engine + claude subprocess
++ SDK proxy → mock Anthropic API. Everything real except the brain.
+
+The mock API responds deterministically via §-commands. No real model
+inference = fast, repeatable, no API key needed for the response content.
 
 Run with:
-    cd Alpha-App/backend
-    uv run pytest tests/e2e/ -v
+    cd Alpha-App/frontend && npm run build
+    cd Alpha-App/backend && uv run pytest tests/e2e/ -v
 
 Prerequisites:
-    - `vite build` in ../frontend (creates dist/ that uvicorn serves)
+    - `npm run build` in frontend/ (creates dist/ that uvicorn serves)
     - Redis running (for chat persistence)
-    - ANTHROPIC_API_KEY set (for claude subprocess)
+    - ANTHROPIC_API_KEY set (claude subprocess needs it for auth headers,
+      even though the actual API call goes to our mock)
 """
 
 import re
@@ -26,12 +31,12 @@ SCREENSHOT_DIR = Path(__file__).parent / "screenshots"
 INPUT_SELECTOR = '[placeholder="Message Alpha..."]'
 
 # AssistantMessage root has this Tailwind group class.
-# Using CSS attribute-contains selector for the group/assistant class.
 ASSISTANT_MSG_SELECTOR = ".group\\/assistant"
 
-# How long to wait for the model to respond. This is the one genuinely
-# slow step — claude needs time to think. Everything else should be fast.
-MODEL_TIMEOUT = 30_000
+# How long to wait for the model to respond. With the mock API this is
+# fast — but we still need time for the full chain: WebSocket → Engine
+# → claude subprocess → proxy → mock → response → streaming back.
+MODEL_TIMEOUT = 15_000
 
 # How long to wait for UI navigation and element visibility.
 NAV_TIMEOUT = 5_000
@@ -59,6 +64,7 @@ def test_smoke_send_and_receive(page: Page, base_url: str) -> None:
     """Smoke test: send a message, verify assistant output appears.
 
     This is the most basic test. If this fails, nothing works.
+    Uses the default mock response (lorem ipsum).
     """
     _enter_chat(page, base_url)
     _screenshot(page, "01_in_chat")
@@ -67,16 +73,11 @@ def test_smoke_send_and_receive(page: Page, base_url: str) -> None:
     input_box = page.locator(INPUT_SELECTOR)
     expect(input_box).to_be_visible(timeout=NAV_TIMEOUT)
 
-    # Send a simple message
-    input_box.fill("Say exactly: hello world")
+    # Send a message — no § prefix → lorem ipsum response
+    input_box.fill("Hello, world!")
     input_box.press("Enter")
 
-    # Capture what we see right after sending
     _screenshot(page, "02_after_send")
-
-    # Dump the page HTML so we can inspect the actual DOM
-    html_path = SCREENSHOT_DIR / "page_after_send.html"
-    html_path.write_text(page.content())
 
     # Wait for assistant output to appear
     assistant_msg = page.locator(ASSISTANT_MSG_SELECTOR).first
@@ -84,6 +85,28 @@ def test_smoke_send_and_receive(page: Page, base_url: str) -> None:
     expect(assistant_msg).not_to_be_empty()
 
     _screenshot(page, "03_response_visible")
+
+
+def test_echo_deterministic(page: Page, base_url: str) -> None:
+    """§echo returns exact text — verifies the full streaming pipeline.
+
+    If the echoed text appears in the DOM, the entire chain works:
+    browser → WebSocket → backend → Engine → claude → proxy → mock
+    → SSE → proxy → Engine → backend → WebSocket → browser.
+    """
+    _enter_chat(page, base_url)
+
+    input_box = page.locator(INPUT_SELECTOR)
+    expect(input_box).to_be_visible(timeout=NAV_TIMEOUT)
+
+    # Send with §echo command — the mock will echo this exact text
+    input_box.fill("§echo:The duck quacks at midnight")
+    input_box.press("Enter")
+
+    # The assistant message should contain our echoed text
+    assistant_msg = page.locator(ASSISTANT_MSG_SELECTOR).first
+    expect(assistant_msg).to_be_visible(timeout=MODEL_TIMEOUT)
+    expect(assistant_msg).to_contain_text("The duck quacks at midnight")
 
 
 def test_streaming_survives_backend_restart(
@@ -103,10 +126,9 @@ def test_streaming_survives_backend_restart(
     input_box = page.locator(INPUT_SELECTOR)
     expect(input_box).to_be_visible(timeout=NAV_TIMEOUT)
 
-    input_box.fill("Say exactly: before restart")
+    input_box.fill("First message before restart")
     input_box.press("Enter")
 
-    # Verify output appears
     first_msg = page.locator(ASSISTANT_MSG_SELECTOR).first
     expect(first_msg).to_be_visible(timeout=MODEL_TIMEOUT)
     expect(first_msg).not_to_be_empty()
@@ -115,8 +137,7 @@ def test_streaming_survives_backend_restart(
     backend.restart()
 
     # Wait for the WebSocket to reconnect.
-    # The useWebSocket hook has exponential backoff: 1s, 2s, 4s, 8s, 16s.
-    # Give it time to reconnect and be ready.
+    # useWebSocket has exponential backoff: 1s, 2s, 4s, 8s, 16s.
     page.wait_for_timeout(5_000)
 
     # --- Second message: this is where the bug lives ---
@@ -127,10 +148,10 @@ def test_streaming_survives_backend_restart(
     input_box = page.locator(INPUT_SELECTOR)
     expect(input_box).to_be_visible(timeout=NAV_TIMEOUT)
 
-    input_box.fill("Say exactly: after restart")
+    input_box.fill("Second message after restart")
     input_box.press("Enter")
 
-    # THIS IS THE ASSERTION THAT CURRENTLY FAILS
+    # THIS IS THE ASSERTION THAT MATTERS
     second_msg = page.locator(ASSISTANT_MSG_SELECTOR).first
     expect(second_msg).to_be_visible(timeout=MODEL_TIMEOUT)
     expect(second_msg).not_to_be_empty()
