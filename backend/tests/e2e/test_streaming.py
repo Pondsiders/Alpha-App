@@ -170,3 +170,190 @@ def test_streaming_survives_backend_restart(
     expect(second_msg).to_contain_text("After the storm")
 
     _screenshot(page, "06_survived_restart")
+
+
+def test_chat_switch_streaming(page: Page, base_url: str) -> None:
+    """Chat switch via client-side navigation (WebSocket stays connected).
+
+    Tests the EASY case: React Router internal navigation. The WebSocket
+    stays open, Zustand state persists, messages are cached in memory.
+    This passes. It's not the bug Jeffery found.
+
+    See test_chat_switch_after_browser_close for the REAL bug.
+    """
+    # --- Step 1: Visit root URL, land in chat A ---
+    page.goto(f"{base_url}/")
+    page.wait_for_url(re.compile(r"/chat/.+"), timeout=NAV_TIMEOUT)
+    chat_a_url = page.url
+
+    input_box = page.locator(INPUT_SELECTOR)
+    expect(input_box).to_be_visible(timeout=NAV_TIMEOUT)
+
+    _screenshot(page, "07_chat_a_ready")
+
+    # --- Step 2: Send message in chat A ---
+    input_box.fill("§echo:Alpha remembers")
+    input_box.press("Enter")
+
+    first_msg = page.locator(ASSISTANT_MSG_SELECTOR).first
+    expect(first_msg).to_be_visible(timeout=MODEL_TIMEOUT)
+    expect(first_msg).to_contain_text("Alpha remembers")
+
+    _screenshot(page, "08_chat_a_response")
+
+    # Human pause — Jeffery isn't a robot
+    page.wait_for_timeout(2_000)
+
+    # --- Step 3: Click "New chat" (client-side navigation, no page reload) ---
+    # This is different from page.goto() — React Router navigates internally,
+    # WebSocket stays connected, state persists. Tests the real user flow.
+    sidebar = page.locator("[data-sidebar='sidebar']")
+    new_chat_btn = sidebar.locator("button").filter(has_text="New chat")
+    expect(new_chat_btn).to_be_visible(timeout=NAV_TIMEOUT)
+    new_chat_btn.click()
+    page.wait_for_url(re.compile(r"/chat/.+"), timeout=NAV_TIMEOUT)
+    assert page.url != chat_a_url, "Should be on a new chat, not chat A"
+
+    _screenshot(page, "09_on_chat_b")
+
+    # Human pause — let the page settle
+    page.wait_for_timeout(2_000)
+
+    # --- Step 4: Click back to chat A in the sidebar ---
+    sidebar = page.locator("[data-sidebar='sidebar']")
+    chat_a_button = sidebar.locator("button").filter(has_text="Alpha remembers")
+    expect(chat_a_button).to_be_visible(timeout=NAV_TIMEOUT)
+    chat_a_button.click()
+
+    # Wait for navigation back to chat A
+    page.wait_for_url(chat_a_url, timeout=NAV_TIMEOUT)
+
+    _screenshot(page, "10_back_on_chat_a")
+
+    # Human pause — look at the chat, then type
+    page.wait_for_timeout(2_000)
+
+    # --- Step 5: Send another message in chat A ---
+    input_box = page.locator(INPUT_SELECTOR)
+    expect(input_box).to_be_visible(timeout=NAV_TIMEOUT)
+
+    input_box.fill("§echo:Still here after switch")
+    input_box.press("Enter")
+
+    # THIS IS THE ASSERTION THAT MATTERS.
+    # The response must stream and render without a page refresh.
+    second_msg = page.locator(ASSISTANT_MSG_SELECTOR).nth(1)
+    expect(second_msg).to_be_visible(timeout=MODEL_TIMEOUT)
+    expect(second_msg).to_contain_text("Still here after switch")
+
+    _screenshot(page, "11_chat_switch_survived")
+
+
+def test_chat_switch_after_browser_close(
+    page: Page, base_url: str, backend
+) -> None:
+    """THE bug. Streaming breaks after browser close + backend restart.
+
+    Reproduces Jeffery's exact steps (Mar 4, 2026):
+    1. Open browser, go to root URL
+    2. New chat auto-created, send message, see response ✓
+    3. Quit browser
+    4. Restart Alpha-App
+    5. Open browser, paste in root URL
+    6. Select PREVIOUS chat from sidebar
+    7. Type message, hit enter
+    8. Response fails to stream in
+
+    BOTH conditions matter:
+    - Browser close = empty Zustand, fresh WebSocket, no JS state
+    - Backend restart = all chats DEAD, must resurrect from Postgres
+
+    The browser-close-only variant passes. The backend-restart-only
+    variant passes. It's the COMBINATION that breaks.
+
+    No §-commands. Normal messages, lorem ipsum responses. The assertion
+    is just "did an assistant response appear?" — same as what Jeffery
+    checks by eyeball.
+
+    Human-speed pauses between steps. This isn't a timing test.
+    """
+    # --- Steps 1-2: First browser session — create chat, send, verify ---
+    page.goto(f"{base_url}/")
+    page.wait_for_url(re.compile(r"/chat/.+"), timeout=NAV_TIMEOUT)
+
+    input_box = page.locator(INPUT_SELECTOR)
+    expect(input_box).to_be_visible(timeout=NAV_TIMEOUT)
+
+    # Normal message. No § magic. Just a person talking.
+    input_box.fill("Tell me about rubber ducks")
+    input_box.press("Enter")
+
+    # The mock returns lorem ipsum. We just need to see it appear.
+    first_response = page.locator(ASSISTANT_MSG_SELECTOR).first
+    expect(first_response).to_be_visible(timeout=MODEL_TIMEOUT)
+    expect(first_response).not_to_be_empty()
+
+    _screenshot(page, "12_first_session_response")
+
+    # Human pause — Jeffery reads the response, then closes Chrome
+    page.wait_for_timeout(2_000)
+
+    # --- Step 3: QUIT BROWSER ---
+    browser = page.context.browser
+    page.context.close()  # Closes page AND context — nuclear option
+
+    # --- Step 4: RESTART ALPHA-APP ---
+    # This is the key step the previous test was missing. After restart,
+    # all in-memory Chat objects are gone. The holster warms a fresh
+    # subprocess. Existing chats must be loaded from Postgres and
+    # resurrected via --resume.
+    backend.restart()
+
+    # --- Step 5: OPEN BROWSER, GO TO ROOT URL ---
+    new_context = browser.new_context()
+    page2 = new_context.new_page()
+    page2.goto(f"{base_url}/")
+
+    # Root URL auto-creates a new chat (chat B) and redirects.
+    # Chat A should appear in the sidebar, loaded from Postgres.
+    page2.wait_for_url(re.compile(r"/chat/.+"), timeout=NAV_TIMEOUT)
+
+    _screenshot(page2, "13_fresh_browser_after_restart")
+
+    # Human pause — the page loads, sidebar populates
+    page2.wait_for_timeout(2_000)
+
+    # --- Step 6: Select PREVIOUS chat from sidebar ---
+    sidebar = page2.locator("[data-sidebar='sidebar']")
+    previous_chat = sidebar.locator("button").filter(has_text="Tell me about rubber ducks")
+    expect(previous_chat).to_be_visible(timeout=NAV_TIMEOUT)
+    previous_chat.click()
+
+    _screenshot(page2, "14_selected_previous_chat")
+
+    # Human pause — messages load from the backend, Jeffery reads, then types
+    page2.wait_for_timeout(2_000)
+
+    # --- Steps 7-8: Send message, observe response stream ---
+    input_box2 = page2.locator(INPUT_SELECTOR)
+    expect(input_box2).to_be_visible(timeout=NAV_TIMEOUT)
+
+    # Another normal message. Jeffery is just talking.
+    input_box2.fill("Now translate that into French")
+    input_box2.press("Enter")
+
+    # THIS IS THE ASSERTION THAT MATTERS.
+    # There should be TWO assistant messages: the first loaded from history,
+    # the second just streamed in. We check the second one exists at all.
+    # If it doesn't appear, the streaming pipeline broke — exactly the bug.
+    #
+    # Generous timeout: resurrection = subprocess start + resume + drain + turn.
+    RESURRECTION_TIMEOUT = 30_000
+    second_response = page2.locator(ASSISTANT_MSG_SELECTOR).nth(1)
+    expect(second_response).to_be_visible(timeout=RESURRECTION_TIMEOUT)
+    expect(second_response).not_to_be_empty()
+
+    _screenshot(page2, "15_survived_browser_close_and_restart")
+
+    # Cleanup
+    new_context.close()
