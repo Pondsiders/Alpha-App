@@ -1,10 +1,6 @@
 """Alpha backend — FastAPI application.
 
-The mannequin's throat. Haiku speaks through here.
-
-Phase 1: Chat + Holster internals. The Holster pre-warms a claude subprocess
-on startup so the first message is instant. Single-chat mode — one active
-conversation at a time, same WebSocket protocol as before.
+The mannequin's throat. The frog speaks through here. 🐸
 """
 
 import logging
@@ -18,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from alpha_sdk import read_soul
 from alpha_app.chat import Chat, ChatState, Holster
 from alpha_app.db import init_pool, close_pool
 from alpha_app.routes.sessions import router as sessions_router
@@ -34,14 +31,23 @@ log = logging.getLogger("alpha")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """App lifespan — holster warmup on startup, clean shutdown."""
+    """App lifespan — read soul, warm holster, clean shutdown."""
     # Startup
     log.info("Connecting to Postgres...")
     await init_pool()
 
-    holster = Holster()
+    # Read the soul from the identity directory
+    try:
+        soul = read_soul()
+        log.info("Soul loaded from $JE_NE_SAIS_QUOI")
+    except (RuntimeError, FileNotFoundError) as e:
+        log.warning("No soul found (%s) — running without system prompt", e)
+        soul = ""
+
+    holster = Holster(system_prompt=soul)
     app.state.holster = holster
     app.state.chats = {}  # dict[str, Chat]
+    app.state.system_prompt = soul  # Stored for resurrection
 
     log.info("Warming holster (one in the chamber)...")
     await holster.warm()

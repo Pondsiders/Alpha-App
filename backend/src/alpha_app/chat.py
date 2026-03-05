@@ -1,7 +1,6 @@
 """Chat kernel — Chat + Holster for subprocess lifecycle management.
 
-Phase 1: Single-chat refactor. Same WebSocket protocol. Different internals.
-The Chat class wraps AlphaClient with a state machine and reap timer.
+The Chat class wraps a Claude subprocess with a state machine and reap timer.
 The Holster keeps one warm subprocess ready for instant startup.
 
 See KERNEL.md for the full design.
@@ -14,12 +13,11 @@ import time
 from enum import Enum
 from typing import AsyncIterator
 
-from alpha_sdk import AlphaClient, Event, ResultEvent
+from alpha_sdk import Claude, Event, ResultEvent
 
 log = logging.getLogger(__name__)
 
 # The mannequin model. Haiku for speed and cheapness.
-# Note: claude-haiku-4-20250514 does NOT exist. Don't repeat this mistake.
 MODEL = "claude-haiku-4-5-20251001"
 
 # Idle chat timeout in seconds. After this, subprocess gets reaped.
@@ -45,43 +43,39 @@ class Chat:
         from_holster() -> IDLE   (born warm)
         send()         -> IDLE->BUSY
         events()       -> (yields until ResultEvent) -> BUSY->IDLE
-        interrupt()    -> *->DEAD (AlphaClient has no cancel-turn API)
+        interrupt()    -> *->DEAD
         reap()         -> *->DEAD
         resurrect()    -> DEAD->STARTING->IDLE
     """
 
-    def __init__(self, *, id: str, client: AlphaClient | None = None) -> None:
+    def __init__(self, *, id: str, claude: Claude | None = None) -> None:
         self.id = id
         self.session_uuid: str | None = None
-        self.state = ChatState.IDLE if client else ChatState.DEAD
+        self.state = ChatState.IDLE if claude else ChatState.DEAD
         self.title: str = ""
         self.created_at: float = time.time()
         self.updated_at: float = time.time()
 
-        self._client = client
+        self._claude = claude
+        self._system_prompt: str = ""  # Stored for resurrection
         self._reap_task: asyncio.Task | None = None
 
-        # Cached token state — survives subprocess death and Redis round-trips
+        # Cached token state — survives subprocess death
         self._cached_token_count: int = 0
         self._cached_context_window: int = 200_000
 
     @classmethod
-    def from_holster(cls, *, id: str, client: AlphaClient) -> "Chat":
-        """Create a Chat with a pre-warmed client. Born IDLE."""
-        chat = cls(id=id, client=client)
+    def from_holster(cls, *, id: str, claude: Claude, system_prompt: str = "") -> "Chat":
+        """Create a Chat with a pre-warmed Claude. Born IDLE."""
+        chat = cls(id=id, claude=claude)
+        chat._system_prompt = system_prompt
         chat._start_reap_timer()
         log.info("Chat %s: born IDLE (from holster)", id)
         return chat
 
     @classmethod
     def from_db(cls, chat_id: str, updated_at: float, data: dict) -> "Chat":
-        """Restore a Chat from Postgres row. Born DEAD (no subprocess).
-
-        Args:
-            chat_id: The chat ID (from the `id` column).
-            updated_at: Epoch timestamp (from the `updated_at` column).
-            data: JSONB blob (from the `data` column).
-        """
+        """Restore a Chat from Postgres row. Born DEAD (no subprocess)."""
         chat = cls(id=chat_id)
         chat.session_uuid = data.get("session_uuid") or None
         chat.title = data.get("title", "")
@@ -94,25 +88,18 @@ class Chat:
 
     @property
     def token_count(self) -> int:
-        """Current input token count. Falls back to cached value if no live subprocess."""
-        if self._client:
-            return self._client.token_count
+        if self._claude:
+            return self._claude.token_count
         return self._cached_token_count
 
     @property
     def context_window(self) -> int:
-        """Context window size. Falls back to cached value if no live subprocess."""
-        if self._client:
-            return self._client.context_window
+        if self._claude:
+            return self._claude.context_window
         return self._cached_context_window
 
     def to_data(self) -> dict:
-        """Serialize chat metadata as a JSONB-ready dict.
-
-        This goes into the `data` column. The `id` and `updated_at` columns
-        are set separately. State is NOT persisted — it's a runtime property
-        of the subprocess. After a restart, all chats are DEAD.
-        """
+        """Serialize chat metadata as a JSONB-ready dict."""
         return {
             "session_uuid": self.session_uuid or "",
             "title": self.title,
@@ -134,7 +121,6 @@ class Chat:
         self.state = ChatState.BUSY
         self.updated_at = time.time()
 
-        # Set title from first user message
         if not self.title:
             for block in content:
                 if block.get("type") == "text" and block.get("text"):
@@ -142,22 +128,16 @@ class Chat:
                     break
 
         log.info("Chat %s: IDLE->BUSY", self.id)
-        await self._client.send(content)
+        await self._claude.send(content)
 
     async def events(self) -> AsyncIterator[Event]:
-        """Stream events from the subprocess until the turn completes.
-
-        Yields all events including the final ResultEvent.
-        On ResultEvent: captures session UUID, BUSY->IDLE, reap timer restarts.
-        On subprocess crash: BUSY->DEAD, exception propagates.
-        """
-        if not self._client:
+        """Stream events until the turn completes."""
+        if not self._claude:
             raise RuntimeError(f"Chat {self.id} has no subprocess")
 
         try:
-            async for event in self._client.events():
+            async for event in self._claude.events():
                 if isinstance(event, ResultEvent):
-                    # Capture session UUID (None until first ResultEvent)
                     if event.session_id:
                         self.session_uuid = event.session_id
                     self.state = ChatState.IDLE
@@ -172,36 +152,31 @@ class Chat:
                     return
                 yield event
         except Exception:
-            # Subprocess crashed — go DEAD
             log.exception("Chat %s: subprocess error, going DEAD", self.id)
             self._snapshot_token_state()
             self.state = ChatState.DEAD
-            self._client = None
+            self._claude = None
             raise
 
     async def interrupt(self) -> None:
-        """Interrupt the current turn.
-
-        AlphaClient has no cancel-turn API, so interrupt = kill subprocess.
-        *->DEAD.
-        """
+        """Interrupt the current turn. *->DEAD."""
         log.info("Chat %s: interrupted -> DEAD", self.id)
         await self.reap()
 
     async def reap(self) -> None:
-        """Kill the subprocess. *->DEAD. Safe to call on already-DEAD chats."""
+        """Kill the subprocess. *->DEAD."""
         self._cancel_reap_timer()
-        if self._client:
+        if self._claude:
             self._snapshot_token_state()
             try:
-                await self._client.stop()
+                await self._claude.stop()
             except Exception as e:
-                log.warning("Chat %s: error stopping client: %s", self.id, e)
-            self._client = None
+                log.warning("Chat %s: error stopping claude: %s", self.id, e)
+            self._claude = None
         self.state = ChatState.DEAD
         log.info("Chat %s: DEAD", self.id)
 
-    async def resurrect(self, session_uuid: str | None = None) -> None:
+    async def resurrect(self, system_prompt: str = "", session_uuid: str | None = None) -> None:
         """Bring a DEAD chat back to life via --resume. DEAD->STARTING->IDLE."""
         if self.state != ChatState.DEAD:
             raise RuntimeError(f"Can only resurrect DEAD chats, not {self.state.value}")
@@ -210,19 +185,21 @@ class Chat:
         if not uuid:
             raise RuntimeError(f"Chat {self.id}: cannot resurrect without a session UUID")
 
+        prompt = system_prompt or self._system_prompt
+
         self.state = ChatState.STARTING
         log.info("Chat %s: DEAD->STARTING (resuming %s...)", self.id, uuid[:8])
 
         try:
-            self._client = AlphaClient(
+            self._claude = Claude(
                 model=MODEL,
-                system_prompt="",
+                system_prompt=prompt or None,
                 permission_mode="bypassPermissions",
             )
-            await self._client.start(uuid)
+            await self._claude.start(uuid)
 
-            # Drain resume metadata events (claude emits these before it's ready)
-            async for event in self._client.events():
+            # Drain resume metadata events
+            async for event in self._claude.events():
                 if isinstance(event, ResultEvent):
                     if event.session_id:
                         self.session_uuid = event.session_id
@@ -235,18 +212,17 @@ class Chat:
         except Exception:
             log.exception("Chat %s: resurrection failed -> DEAD", self.id)
             self.state = ChatState.DEAD
-            self._client = None
+            self._claude = None
             raise
 
     # -- Token state snapshot ----------------------------------------------
 
     def _snapshot_token_state(self) -> None:
-        """Snapshot token state from live client before it goes away."""
-        if self._client:
-            count = self._client.token_count
+        if self._claude:
+            count = self._claude.token_count
             if count > 0:
                 self._cached_token_count = count
-            window = self._client.context_window
+            window = self._claude.context_window
             if window > 0:
                 self._cached_context_window = window
 
@@ -271,69 +247,58 @@ class Chat:
 
 
 class Holster:
-    """One in the chamber. Always keeps one warm claude subprocess ready.
+    """One in the chamber. Always keeps one warm claude subprocess ready."""
 
-    On app startup, warm() is called. When a new chat claims the warm
-    subprocess via claim(), a replacement starts warming immediately.
-
-    The holster subprocess is NOT on the reap timer — it stays warm
-    indefinitely until claimed or the app shuts down.
-    """
-
-    def __init__(self) -> None:
-        self._warm: AlphaClient | None = None
+    def __init__(self, system_prompt: str = "") -> None:
+        self._system_prompt = system_prompt
+        self._warm: Claude | None = None
         self._warming: asyncio.Task | None = None
 
     @property
     def ready(self) -> bool:
-        """True if a warm client is available for immediate claim."""
         return self._warm is not None
 
     async def warm(self) -> None:
-        """Start warming a new client in the background."""
+        """Start warming a new Claude in the background."""
         if self._warming or self._warm:
-            return  # Already warming or warm
+            return
         self._warming = asyncio.create_task(self._do_warm())
 
     async def _do_warm(self) -> None:
-        """Spawn a claude subprocess (new session) and wait until ready."""
         try:
-            client = AlphaClient(
+            claude = Claude(
                 model=MODEL,
-                system_prompt="",
+                system_prompt=self._system_prompt or None,
                 permission_mode="bypassPermissions",
             )
-            await client.start(None)  # New session, no --resume
-            self._warm = client
+            await claude.start(None)
+            self._warm = claude
             self._warming = None
-            log.info("Holster: warm client ready")
+            log.info("Holster: warm claude ready")
         except Exception:
-            log.exception("Holster: failed to warm client")
+            log.exception("Holster: failed to warm claude")
             self._warming = None
 
-    async def claim(self) -> AlphaClient:
-        """Take the warm client. Immediately start warming a replacement."""
+    async def claim(self) -> Claude:
+        """Take the warm Claude. Immediately start warming a replacement."""
         if self._warm is not None:
-            client = self._warm
+            claude = self._warm
             self._warm = None
-            self._warming = None  # Clear stale ref
-            await self.warm()  # Chamber the next round
-            log.info("Holster: client claimed, warming replacement")
-            return client
+            self._warming = None
+            await self.warm()
+            log.info("Holster: claude claimed, warming replacement")
+            return claude
 
-        # Rare: replacement still warming
         if self._warming is not None:
             log.info("Holster: waiting for warm-up to complete...")
             await self._warming
             return await self.claim()
 
-        # Nothing at all — cold start
         log.info("Holster: cold start (nothing warm)")
         await self._do_warm()
         return await self.claim()
 
     async def shutdown(self) -> None:
-        """Clean up on app shutdown."""
         if self._warming:
             self._warming.cancel()
             try:
@@ -345,6 +310,6 @@ class Holster:
             try:
                 await self._warm.stop()
             except Exception as e:
-                log.warning("Holster: error stopping warm client: %s", e)
+                log.warning("Holster: error stopping warm claude: %s", e)
             self._warm = None
         log.info("Holster: shutdown complete")

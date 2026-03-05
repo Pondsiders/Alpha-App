@@ -15,6 +15,12 @@ data/
 .vscode/
 .idea/
 
+# Secrets
+.env
+
+# Test artifacts
+backend/tests/e2e/screenshots/
+
 # OS
 .DS_Store
 

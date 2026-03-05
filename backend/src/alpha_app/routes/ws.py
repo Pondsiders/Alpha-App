@@ -230,9 +230,10 @@ async def _handle_create_chat(
 ) -> None:
     """Handle create-chat: claim from holster, persist, return chatId."""
     try:
-        client = await holster.claim()
+        claude = await holster.claim()
         chat_id = generate_chat_id()
-        chat = Chat.from_holster(id=chat_id, client=client)
+        system_prompt = ws.app.state.system_prompt
+        chat = Chat.from_holster(id=chat_id, claude=claude, system_prompt=system_prompt)
         chats[chat_id] = chat
 
         # Persist to Postgres
@@ -324,7 +325,7 @@ async def _handle_send(
                     "contextWindow": chat.context_window,
                 },
             })
-            await chat.resurrect()
+            await chat.resurrect(system_prompt=ws.app.state.system_prompt)
             await ws.send_json({
                 "type": "chat-state",
                 "chatId": chat_id,

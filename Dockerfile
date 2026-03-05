@@ -25,7 +25,12 @@ RUN pip install --no-cache-dir uv
 
 WORKDIR /app
 
-# Install app dependencies
+# Copy SDK source (from additional build context in compose.yml).
+# pyproject.toml [tool.uv.sources] points at ../../alpha_sdk-next
+# which resolves to /alpha_sdk-next/ from /app/backend/.
+COPY --from=sdk . /alpha_sdk-next/
+
+# Install app dependencies (resolves alpha-sdk from /alpha_sdk-next/)
 COPY backend/ /app/backend/
 RUN cd /app/backend && uv pip install --system .
 
