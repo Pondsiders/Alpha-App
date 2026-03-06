@@ -7,15 +7,12 @@ See KERNEL.md for the full design.
 """
 
 import asyncio
-import logging
 import secrets
 import time
 from enum import Enum
 from typing import AsyncIterator
 
 from alpha_sdk import Claude, Event, ResultEvent
-
-log = logging.getLogger(__name__)
 
 # The mannequin model. Haiku for speed and cheapness.
 MODEL = "claude-haiku-4-5-20251001"
@@ -70,7 +67,6 @@ class Chat:
         chat = cls(id=id, claude=claude)
         chat._system_prompt = system_prompt
         chat._start_reap_timer()
-        log.info("Chat %s: born IDLE (from holster)", id)
         return chat
 
     @classmethod
@@ -98,6 +94,44 @@ class Chat:
             return self._claude.context_window
         return self._cached_context_window
 
+    # -- Per-turn usage (live only, from proxy SSE sniffing) ------------------
+
+    @property
+    def input_tokens(self) -> int:
+        return self._claude.input_tokens if self._claude else 0
+
+    @property
+    def cache_creation_tokens(self) -> int:
+        return self._claude.cache_creation_tokens if self._claude else 0
+
+    @property
+    def cache_read_tokens(self) -> int:
+        return self._claude.cache_read_tokens if self._claude else 0
+
+    @property
+    def output_tokens(self) -> int:
+        return self._claude.output_tokens if self._claude else 0
+
+    @property
+    def stop_reason(self) -> str | None:
+        return self._claude.stop_reason if self._claude else None
+
+    @property
+    def response_model(self) -> str | None:
+        return self._claude.response_model if self._claude else None
+
+    @property
+    def response_id(self) -> str | None:
+        return self._claude.response_id if self._claude else None
+
+    @property
+    def usage_5h(self) -> float | None:
+        return self._claude.usage_5h if self._claude else None
+
+    @property
+    def usage_7d(self) -> float | None:
+        return self._claude.usage_7d if self._claude else None
+
     def to_data(self) -> dict:
         """Serialize chat metadata as a JSONB-ready dict."""
         return {
@@ -107,6 +141,11 @@ class Chat:
             "token_count": self.token_count,
             "context_window": self.context_window,
         }
+
+    def set_trace_context(self, ctx: dict | None) -> None:
+        """Set trace context so proxy spans nest under the consumer's trace."""
+        if self._claude:
+            self._claude.set_trace_context(ctx)
 
     async def send(self, content: list[dict]) -> None:
         """Send a message to claude. IDLE->BUSY."""
@@ -127,7 +166,6 @@ class Chat:
                     self.title = block["text"][:80]
                     break
 
-        log.info("Chat %s: IDLE->BUSY", self.id)
         await self._claude.send(content)
 
     async def events(self) -> AsyncIterator[Event]:
@@ -142,17 +180,10 @@ class Chat:
                         self.session_uuid = event.session_id
                     self.state = ChatState.IDLE
                     self._start_reap_timer()
-                    log.info(
-                        "Chat %s: BUSY->IDLE (session=%s, cost=$%.4f)",
-                        self.id,
-                        self.session_uuid[:8] if self.session_uuid else "?",
-                        event.cost_usd,
-                    )
                     yield event
                     return
                 yield event
         except Exception:
-            log.exception("Chat %s: subprocess error, going DEAD", self.id)
             self._snapshot_token_state()
             self.state = ChatState.DEAD
             self._claude = None
@@ -160,7 +191,6 @@ class Chat:
 
     async def interrupt(self) -> None:
         """Interrupt the current turn. *->DEAD."""
-        log.info("Chat %s: interrupted -> DEAD", self.id)
         await self.reap()
 
     async def reap(self) -> None:
@@ -170,11 +200,10 @@ class Chat:
             self._snapshot_token_state()
             try:
                 await self._claude.stop()
-            except Exception as e:
-                log.warning("Chat %s: error stopping claude: %s", self.id, e)
+            except Exception:
+                pass
             self._claude = None
         self.state = ChatState.DEAD
-        log.info("Chat %s: DEAD", self.id)
 
     async def resurrect(self, system_prompt: str = "", session_uuid: str | None = None) -> None:
         """Bring a DEAD chat back to life via --resume. DEAD->STARTING->IDLE."""
@@ -188,7 +217,6 @@ class Chat:
         prompt = system_prompt or self._system_prompt
 
         self.state = ChatState.STARTING
-        log.info("Chat %s: DEAD->STARTING (resuming %s...)", self.id, uuid[:8])
 
         try:
             self._claude = Claude(
@@ -207,10 +235,8 @@ class Chat:
 
             self.state = ChatState.IDLE
             self._start_reap_timer()
-            log.info("Chat %s: STARTING->IDLE", self.id)
 
         except Exception:
-            log.exception("Chat %s: resurrection failed -> DEAD", self.id)
             self.state = ChatState.DEAD
             self._claude = None
             raise
@@ -240,7 +266,6 @@ class Chat:
     async def _reap_after(self, seconds: float) -> None:
         try:
             await asyncio.sleep(seconds)
-            log.info("Chat %s: idle timeout (%ds) — reaping", self.id, int(seconds))
             await self.reap()
         except asyncio.CancelledError:
             pass
@@ -274,9 +299,7 @@ class Holster:
             await claude.start(None)
             self._warm = claude
             self._warming = None
-            log.info("Holster: warm claude ready")
         except Exception:
-            log.exception("Holster: failed to warm claude")
             self._warming = None
 
     async def claim(self) -> Claude:
@@ -286,15 +309,12 @@ class Holster:
             self._warm = None
             self._warming = None
             await self.warm()
-            log.info("Holster: claude claimed, warming replacement")
             return claude
 
         if self._warming is not None:
-            log.info("Holster: waiting for warm-up to complete...")
             await self._warming
             return await self.claim()
 
-        log.info("Holster: cold start (nothing warm)")
         await self._do_warm()
         return await self.claim()
 
@@ -309,7 +329,6 @@ class Holster:
         if self._warm:
             try:
                 await self._warm.stop()
-            except Exception as e:
-                log.warning("Holster: error stopping warm claude: %s", e)
+            except Exception:
+                pass
             self._warm = None
-        log.info("Holster: shutdown complete")

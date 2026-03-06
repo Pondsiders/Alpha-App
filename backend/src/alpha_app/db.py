@@ -18,12 +18,9 @@ Usage:
 """
 
 import json
-import logging
 import os
 
 import asyncpg
-
-log = logging.getLogger(__name__)
 
 _pool: asyncpg.Pool | None = None
 
@@ -49,10 +46,6 @@ async def init_pool() -> None:
         raise RuntimeError("DATABASE_URL is not set — cannot connect to Postgres")
 
     _pool = await asyncpg.create_pool(dsn, min_size=2, max_size=10, init=_init_connection)
-    log.info(
-        "Postgres pool ready (%s)",
-        dsn.split("@")[-1] if "@" in dsn else "local",
-    )
 
 
 async def close_pool() -> None:
@@ -61,7 +54,6 @@ async def close_pool() -> None:
     if _pool:
         await _pool.close()
         _pool = None
-        log.info("Postgres pool closed")
 
 
 def get_pool() -> asyncpg.Pool:

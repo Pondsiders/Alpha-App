@@ -5,7 +5,6 @@ GET /api/sessions/{session_id} loads message history from JSONL files directly.
 """
 
 import json
-import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -13,8 +12,6 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 
 from alpha_app.db import get_pool
-
-log = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -131,7 +128,6 @@ async def get_chat_messages(chat_id: str) -> dict[str, Any]:
             chat_id,
         )
     except Exception as e:
-        log.exception("Postgres lookup failed: %s", e)
         raise HTTPException(status_code=500, detail="Database error")
 
     if not row:

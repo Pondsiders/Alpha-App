@@ -3,12 +3,12 @@
 The mannequin's throat. The frog speaks through here. 🐸
 """
 
-import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
 
+import logfire
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -20,28 +20,19 @@ from alpha_app.db import init_pool, close_pool
 from alpha_app.routes.sessions import router as sessions_router
 from alpha_app.routes.ws import router as ws_router
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-    datefmt="%H:%M:%S",
-)
-log = logging.getLogger("alpha")
+# Observability — one place to look for everything.
+logfire.configure(service_name="alpha-app", scrubbing=False)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """App lifespan — read soul, warm holster, clean shutdown."""
     # Startup
-    log.info("Connecting to Postgres...")
     await init_pool()
 
-    # Read the soul from the identity directory
     try:
         soul = read_soul()
-        log.info("Soul loaded from $JE_NE_SAIS_QUOI")
-    except (RuntimeError, FileNotFoundError) as e:
-        log.warning("No soul found (%s) — running without system prompt", e)
+    except (RuntimeError, FileNotFoundError):
         soul = ""
 
     holster = Holster(system_prompt=soul)
@@ -49,19 +40,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.chats = {}  # dict[str, Chat]
     app.state.system_prompt = soul  # Stored for resurrection
 
-    log.info("Warming holster (one in the chamber)...")
     await holster.warm()
 
     yield
 
     # Shutdown
-    log.info("Shutting down...")
     for chat in list(app.state.chats.values()):
         if chat.state != ChatState.DEAD:
             await chat.reap()
     await holster.shutdown()
     await close_pool()
-    log.info("Goodbye.")
 
 
 app = FastAPI(
