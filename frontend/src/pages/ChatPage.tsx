@@ -22,7 +22,6 @@ import {
   ThreadPrimitive,
   ComposerPrimitive,
   MessagePrimitive,
-  AssistantIf,
   useMessage,
   SimpleImageAttachmentAdapter,
 } from "@assistant-ui/react";
@@ -276,12 +275,19 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
 
       console.log("[Alpha] Sending to chat %s, blocks: %d", chatId, backendContent.length);
 
-      // Add user message to store (optimistic)
+      // Add user message to store (optimistic) — always, even for interjections
       addUserMessage(text, storeImages.length > 0 ? storeImages : undefined);
 
-      // Create placeholder for assistant response
-      const assistantId = addAssistantPlaceholder();
-      assistantIdMapRef.current[chatId] = assistantId;
+      // Check if this is an interjection (chat is busy — assistant still streaming)
+      const activeChat = useWorkshopStore.getState().chats[chatId];
+      const isBusy = activeChat?.state === "busy";
+
+      if (!isBusy) {
+        // Normal turn — create placeholder for assistant response
+        const assistantId = addAssistantPlaceholder();
+        assistantIdMapRef.current[chatId] = assistantId;
+      }
+      // Interjection: no new placeholder — the existing assistant message keeps accumulating
 
       // Send via WebSocket with chatId
       const sent = sendRef.current({
@@ -294,8 +300,13 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
       });
 
       if (!sent) {
-        appendToAssistant(assistantId, "Error: Not connected to server");
-        assistantIdMapRef.current[chatId] = null;
+        const existingId = assistantIdMapRef.current[chatId];
+        if (existingId) {
+          appendToAssistant(existingId, "\n\nError: Not connected to server");
+        }
+        if (!isBusy) {
+          assistantIdMapRef.current[chatId] = null;
+        }
       }
     },
     [addUserMessage, addAssistantPlaceholder, appendToAssistant, assistantIdMapRef]
@@ -317,7 +328,11 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
   const runtime = useExternalStoreRuntime({
     messages,
     setMessages,
-    isRunning,
+    // Always false — we manage duplex ourselves. Setting true would block
+    // ComposerPrimitive.Send, but we need sends to work mid-stream for
+    // interjections. Our own `isRunning` (derived from chat state) controls
+    // the stop button and interjection logic in onNew.
+    isRunning: false,
     onNew,
     onCancel,
     convertMessage,
@@ -368,17 +383,25 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
                 {/* Attach image button */}
                 <ComposerAddAttachment />
 
-                <AssistantIf condition={({ thread }) => !thread.isRunning}>
-                  <ComposerPrimitive.Send className="w-9 h-9 flex items-center justify-center bg-primary border-none rounded-lg text-white cursor-pointer">
-                    <ArrowUp size={20} strokeWidth={2.5} />
-                  </ComposerPrimitive.Send>
-                </AssistantIf>
+                {/* Send — always visible. Works as interjection when busy (duplex). */}
+                <ComposerPrimitive.Send
+                  data-testid="send-button"
+                  className="w-9 h-9 flex items-center justify-center bg-primary border-none rounded-lg text-white cursor-pointer disabled:opacity-40 disabled:cursor-default"
+                >
+                  <ArrowUp size={20} strokeWidth={2.5} />
+                </ComposerPrimitive.Send>
 
-                <AssistantIf condition={({ thread }) => thread.isRunning}>
-                  <ComposerPrimitive.Cancel className="w-9 h-9 flex items-center justify-center bg-primary border-none rounded-lg text-white cursor-pointer">
+                {/* Stop — visible while streaming. Regular button because we told
+                    assistant-ui isRunning=false for duplex send support. */}
+                {isRunning && (
+                  <button
+                    data-testid="stop-button"
+                    onClick={onCancel}
+                    className="w-9 h-9 flex items-center justify-center bg-primary border-none rounded-lg text-white cursor-pointer"
+                  >
                     <Square size={16} fill="white" />
-                  </ComposerPrimitive.Cancel>
-                </AssistantIf>
+                  </button>
+                )}
               </div>
             </ComposerPrimitive.Root>
             <p className="text-right text-muted mt-2 text-[11px]">

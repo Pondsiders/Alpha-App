@@ -153,14 +153,24 @@ class Chat:
             self._claude.set_trace_context(ctx)
 
     async def send(self, content: list[dict]) -> None:
-        """Send a message to claude. IDLE->BUSY."""
+        """Send a message to claude. IDLE->BUSY, or interjection if already BUSY.
+
+        Full duplex: claude reads stdin between tool calls. Sending while BUSY
+        feeds the message to the subprocess, which absorbs it into the current
+        turn. No state change, no title update — just write to stdin.
+        See duplex_test_class.py for proof.
+        """
         if self.state == ChatState.DEAD:
             raise RuntimeError(f"Chat {self.id} is DEAD — resurrect first")
         if self.state == ChatState.STARTING:
             raise RuntimeError(f"Chat {self.id} is still STARTING")
-        if self.state == ChatState.BUSY:
-            raise RuntimeError(f"Chat {self.id} is already BUSY")
 
+        if self.state == ChatState.BUSY:
+            # Interjection — feed to subprocess, no state change.
+            await self._claude.send(content)
+            return
+
+        # New turn: IDLE -> BUSY
         self._cancel_reap_timer()
         self.state = ChatState.BUSY
         self.updated_at = time.time()

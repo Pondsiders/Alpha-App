@@ -357,3 +357,59 @@ def test_chat_switch_after_browser_close(
 
     # Cleanup
     new_context.close()
+
+
+def test_interjection_during_streaming(page: Page, base_url: str) -> None:
+    """Duplex: send a message while the assistant is still streaming.
+
+    Tests the full-duplex UI:
+    1. Both send and stop buttons visible during streaming
+    2. User can type and send while assistant is streaming
+    3. Interjection appears as a user bubble below the streaming message
+    4. No errors — WebSocket stays alive, chat survives
+
+    Uses §slow for a deliberately slow response (~9 seconds of streaming)
+    that gives plenty of time to send the interjection.
+    """
+    _enter_chat(page, base_url)
+
+    input_box = page.locator(INPUT_SELECTOR)
+    expect(input_box).to_be_visible(timeout=NAV_TIMEOUT)
+
+    # Send §slow — 200ms between chunks, ~9 seconds of streaming
+    input_box.fill("§slow")
+    input_box.press("Enter")
+
+    # Wait for streaming to start (assistant bubble appears with text)
+    assistant_msg = page.locator(ASSISTANT_MSG_SELECTOR).first
+    expect(assistant_msg).to_be_visible(timeout=MODEL_TIMEOUT)
+    expect(assistant_msg).to_contain_text("Lorem", timeout=MODEL_TIMEOUT)
+
+    _screenshot(page, "16_streaming_started")
+
+    # Verify stop button is visible during streaming (duplex UI)
+    stop_btn = page.locator('[data-testid="stop-button"]')
+    expect(stop_btn).to_be_visible(timeout=NAV_TIMEOUT)
+
+    # INTERJECTION: send while the assistant is still streaming.
+    # The composer should still be accessible because we set
+    # isRunning=false in the runtime for duplex support.
+    input_box = page.locator(INPUT_SELECTOR)
+    expect(input_box).to_be_visible(timeout=NAV_TIMEOUT)
+    input_box.fill("Wait, also tell me about ducks!")
+    input_box.press("Enter")
+
+    _screenshot(page, "17_interjection_sent")
+
+    # The interjection should appear as a user bubble BELOW the
+    # still-streaming assistant message. This is the key assertion:
+    # the thread reads chronologically — user, assistant (streaming),
+    # user (interjection).
+    user_bubbles = page.locator(".bg-user-bubble")
+    expect(user_bubbles.nth(1)).to_be_visible(timeout=NAV_TIMEOUT)
+    expect(user_bubbles.nth(1)).to_contain_text("also tell me about ducks")
+
+    # The assistant message should still be present (streaming or done)
+    expect(assistant_msg).to_be_visible()
+
+    _screenshot(page, "18_interjection_visible")

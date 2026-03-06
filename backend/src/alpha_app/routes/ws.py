@@ -22,6 +22,7 @@ Server -> Client messages:
   { "type": "error", "chatId": "...", "data": "something broke" }
 """
 
+import asyncio
 import json
 from datetime import datetime, timezone
 
@@ -387,38 +388,36 @@ async def _handle_list_chats(
     await ws.send_json({"type": "chat-list", "data": chat_list})
 
 
-async def _handle_send(
-    ws: WebSocket,
-    chats: dict[str, Chat],
-    holster: Holster,
-    chat_id: str,
-    raw_content: str | list,
-) -> None:
-    """Handle send: route message to the right chat, stream response."""
-    if not chat_id:
-        await ws.send_json({"type": "error", "data": "Missing chatId"})
-        return
-
-    # Find or load the chat
-    chat = chats.get(chat_id)
-    if not chat:
-        chat = await _load_chat(chat_id)
-        if chat:
-            chats[chat_id] = chat
-        else:
-            await ws.send_json({"type": "error", "chatId": chat_id, "data": "Chat not found"})
-            await ws.send_json({"type": "done", "chatId": chat_id})
-            return
-
-    # Normalize content to content blocks
+def _normalize_content(raw_content: str | list) -> list[dict]:
+    """Normalize raw content to Messages API content blocks."""
     if isinstance(raw_content, str):
-        content: list[dict] = [{"type": "text", "text": raw_content}]
+        return [{"type": "text", "text": raw_content}]
     elif isinstance(raw_content, list):
-        content = raw_content
+        return raw_content
     else:
-        content = [{"type": "text", "text": str(raw_content)}]
+        return [{"type": "text", "text": str(raw_content)}]
 
+
+async def _handle_new_turn(
+    ws: WebSocket,
+    chat: Chat,
+    content: list[dict],
+    turn_input_messages: dict[str, list],
+    streaming_tasks: dict[str, asyncio.Task],
+) -> None:
+    """Handle a new turn: resurrect if needed, send, stream events.
+
+    Runs as a background task so the WebSocket read loop stays hot.
+    Interjections that arrive while this is running append to
+    turn_input_messages[chat_id], which gets written to the Logfire
+    span at turn end.
+    """
+    chat_id = chat.id
     prompt_preview = _build_prompt_preview(content)
+
+    # Track input messages for this turn (interjections append here)
+    input_messages = _format_input_messages(content)
+    turn_input_messages[chat_id] = input_messages
 
     with logfire.span(
         "alpha.turn: {prompt_preview}",
@@ -431,7 +430,7 @@ async def _handle_send(
             "gen_ai.request.model": MODEL,
             "gen_ai.conversation.id": chat_id,  # OTel standard for session/thread ID
             "gen_ai.system_instructions": [{"type": "text", "content": ws.app.state.system_prompt}],
-            "gen_ai.input.messages": _format_input_messages(content),
+            "gen_ai.input.messages": input_messages,
             # Custom extras
             "client_name": "alpha",
             "chat.id": chat_id,  # keep for backward compat with existing queries
@@ -500,21 +499,56 @@ async def _handle_send(
             # Persist updated metadata
             await _persist_chat(chat)
 
-            # Stream events (ends with chat-state IDLE + done)
+            # Stream events (blocking within this task, but the WS read loop is free)
             await _stream_chat_events(ws, chat, span)
 
+        except asyncio.CancelledError:
+            # Task cancelled (WebSocket disconnect or interrupt) — clean exit
+            pass
         except Exception as e:
             span.set_attribute("error.type", type(e).__name__)
-            await ws.send_json({"type": "error", "chatId": chat_id, "data": str(e)})
-            await ws.send_json({"type": "done", "chatId": chat_id})
+            try:
+                await ws.send_json({"type": "error", "chatId": chat_id, "data": str(e)})
+                await ws.send_json({"type": "done", "chatId": chat_id})
+            except Exception:
+                pass  # WebSocket might be closed
+        finally:
+            # Update input messages if interjections were added during the turn
+            final_messages = turn_input_messages.get(chat_id)
+            if final_messages and len(final_messages) > len(input_messages):
+                span.set_attribute("gen_ai.input.messages", final_messages)
+
+            # Clean up shared state
+            turn_input_messages.pop(chat_id, None)
+            streaming_tasks.pop(chat_id, None)
+
+
+async def _handle_interjection(
+    ws: WebSocket,
+    chat: Chat,
+    content: list[dict],
+    turn_input_messages: dict[str, list],
+) -> None:
+    """Handle an interjection: feed to BUSY subprocess, update Logfire tracking.
+
+    The subprocess absorbs the message between tool calls. The streaming task
+    doesn't need to know — the response appears in the event stream naturally.
+    See duplex_test_class.py for proof that this works.
+    """
+    await chat.send(content)
+
+    # Append to the turn's input messages for the Logfire span
+    if chat.id in turn_input_messages:
+        turn_input_messages[chat.id].extend(_format_input_messages(content))
 
 
 async def _handle_interrupt(
     ws: WebSocket,
     chats: dict[str, Chat],
     chat_id: str,
+    streaming_tasks: dict[str, asyncio.Task],
 ) -> None:
-    """Handle interrupt: cancel the active turn for a specific chat."""
+    """Handle interrupt: kill the subprocess, cancel the streaming task."""
     if not chat_id:
         await ws.send_json({"type": "error", "data": "Missing chatId"})
         return
@@ -536,6 +570,11 @@ async def _handle_interrupt(
         except Exception as e:
             await ws.send_json({"type": "error", "chatId": chat_id, "data": str(e)})
 
+    # Cancel the streaming task — it will clean up in its finally block
+    task = streaming_tasks.get(chat_id)
+    if task and not task.done():
+        task.cancel()
+
     await ws.send_json({"type": "interrupted", "chatId": chat_id})
 
 
@@ -546,13 +585,17 @@ async def _handle_interrupt(
 async def websocket_chat(ws: WebSocket) -> None:
     """Bidirectional multi-chat over WebSocket.
 
-    Phase 2: All messages carry chatId. Multiple chats multiplexed
-    over one connection. The create-chat round-trip is instant thanks
-    to the Holster.
+    Full duplex: the read loop stays hot while streaming tasks run in the
+    background. Sends to a BUSY chat become interjections — the subprocess
+    absorbs them between tool calls. See duplex_test_class.py for proof.
     """
     await ws.accept()
     holster: Holster = ws.app.state.holster
     chats: dict[str, Chat] = ws.app.state.chats
+
+    # Per-connection tracking for background streaming tasks
+    streaming_tasks: dict[str, asyncio.Task] = {}
+    turn_input_messages: dict[str, list] = {}
 
     try:
         while True:
@@ -568,11 +611,37 @@ async def websocket_chat(ws: WebSocket) -> None:
             elif msg_type == "send":
                 chat_id = raw.get("chatId", "")
                 raw_content = raw.get("content", "")
-                await _handle_send(ws, chats, holster, chat_id, raw_content)
+
+                if not chat_id:
+                    await ws.send_json({"type": "error", "data": "Missing chatId"})
+                    continue
+
+                content = _normalize_content(raw_content)
+
+                # Find or load the chat
+                chat = chats.get(chat_id)
+                if not chat:
+                    chat = await _load_chat(chat_id)
+                    if chat:
+                        chats[chat_id] = chat
+                    else:
+                        await ws.send_json({"type": "error", "chatId": chat_id, "data": "Chat not found"})
+                        await ws.send_json({"type": "done", "chatId": chat_id})
+                        continue
+
+                if chat.state == ChatState.BUSY:
+                    # Interjection — feed to subprocess inline
+                    await _handle_interjection(ws, chat, content, turn_input_messages)
+                else:
+                    # New turn — start streaming in background
+                    task = asyncio.create_task(
+                        _handle_new_turn(ws, chat, content, turn_input_messages, streaming_tasks)
+                    )
+                    streaming_tasks[chat_id] = task
 
             elif msg_type == "interrupt":
                 chat_id = raw.get("chatId", "")
-                await _handle_interrupt(ws, chats, chat_id)
+                await _handle_interrupt(ws, chats, chat_id, streaming_tasks)
 
             else:
                 pass
@@ -581,3 +650,13 @@ async def websocket_chat(ws: WebSocket) -> None:
         pass
     except Exception:
         pass
+    finally:
+        # Cancel all streaming tasks on disconnect
+        for task in streaming_tasks.values():
+            if not task.done():
+                task.cancel()
+        for task in list(streaming_tasks.values()):
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
