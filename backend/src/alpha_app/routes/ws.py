@@ -61,8 +61,25 @@ def _format_input_messages(content: list[dict]) -> list[dict]:
         if block_type == "text":
             parts.append({"type": "text", "content": block.get("text", "")})
         elif block_type == "image":
-            media = block.get("source", {}).get("media_type", "image")
-            parts.append({"type": "image", "content": f"({media})"})
+            source = block.get("source", {})
+            if source.get("type") == "base64":
+                # OTel GenAI semantic conventions say BlobPart is the correct
+                # format for inline image data, and UriPart with a data URI
+                # "should not" be used.  However Logfire's UI doesn't render
+                # BlobPart images yet (pydantic/logfire#1512 is in draft), so
+                # we send a data-URI UriPart as a pragmatic workaround.
+                # Switch to BlobPart once that PR ships.
+                data = source.get("data", "")
+                media_type = source.get("media_type", "image/jpeg")
+                data_uri = f"data:{media_type};base64,{data}"
+                parts.append({
+                    "type": "uri",
+                    "content": data_uri,
+                    "media_type": media_type,
+                })
+            else:
+                media = source.get("media_type", "image")
+                parts.append({"type": "image", "content": f"({media})"})
         else:
             parts.append({"type": block_type, "content": f"({block_type})"})
     return [{"role": "user", "parts": parts}]
