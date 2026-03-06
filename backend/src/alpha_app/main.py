@@ -38,6 +38,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     holster = Holster(system_prompt=soul)
     app.state.holster = holster
     app.state.chats = {}  # dict[str, Chat]
+    app.state.connections = set()  # set[WebSocket] — all live WS connections (the switch)
     app.state.system_prompt = soul  # Stored for resurrection
 
     await holster.warm()

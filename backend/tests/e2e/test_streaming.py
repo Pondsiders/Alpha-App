@@ -413,3 +413,172 @@ def test_interjection_during_streaming(page: Page, base_url: str) -> None:
     expect(assistant_msg).to_be_visible()
 
     _screenshot(page, "18_interjection_visible")
+
+
+def test_multi_tab_sidebar_switch(page: Page, base_url: str) -> None:
+    """Jeffery's exact flow. Two browsers, sidebar click, nothing happens.
+
+    Reproduces the March 6 bug report:
+    1. Browser A opens root URL (auto-creates chat A)
+    2. Browser B opens root URL (auto-creates chat B)
+    3. Browser A clicks "New chat" → chat C created
+    4. Browser B clicks chat C in sidebar
+    5. Browser A sends message in chat C
+    6. Browser B: NOTHING HAPPENS ← this is the bug
+
+    If this test fails, the switch has a real bug in the sidebar-click path.
+    """
+    # --- Browser A: open root URL, auto-creates its own chat ---
+    page.goto(f"{base_url}/")
+    page.wait_for_url(re.compile(r"/chat/.+"), timeout=NAV_TIMEOUT)
+
+    _screenshot(page, "23_browser_a_ready")
+
+    # --- Browser A: send a message to give the chat a unique title ---
+    input_box_a = page.locator(INPUT_SELECTOR)
+    expect(input_box_a).to_be_visible(timeout=NAV_TIMEOUT)
+
+    input_box_a.fill("§echo:Switchboard test")
+    input_box_a.press("Enter")
+
+    first_msg = page.locator(ASSISTANT_MSG_SELECTOR).first
+    expect(first_msg).to_be_visible(timeout=MODEL_TIMEOUT)
+    expect(first_msg).to_contain_text("Switchboard test")
+
+    _screenshot(page, "24_browser_a_first_message")
+
+    # Human pause
+    page.wait_for_timeout(2_000)
+
+    # --- Browser B: SEPARATE browser context, open root URL ---
+    browser = page.context.browser
+    context_b = browser.new_context()
+    page_b = context_b.new_page()
+    page_b.goto(f"{base_url}/")
+    page_b.wait_for_url(re.compile(r"/chat/.+"), timeout=NAV_TIMEOUT)
+
+    _screenshot(page_b, "25_browser_b_ready")
+
+    # Human pause — let sidebar populate
+    page_b.wait_for_timeout(2_000)
+
+    # --- Browser B: click Browser A's chat in the sidebar ---
+    sidebar_b = page_b.locator("[data-sidebar='sidebar']")
+    chat_a_btn = sidebar_b.locator("button").filter(has_text="Switchboard test")
+    expect(chat_a_btn).to_be_visible(timeout=NAV_TIMEOUT)
+    chat_a_btn.click()
+
+    # Wait for navigation to the chat
+    page_b.wait_for_timeout(2_000)
+
+    input_box_b = page_b.locator(INPUT_SELECTOR)
+    expect(input_box_b).to_be_visible(timeout=NAV_TIMEOUT)
+
+    _screenshot(page_b, "26_browser_b_on_same_chat")
+
+    # Human pause — let everything settle
+    page_b.wait_for_timeout(3_000)
+
+    # --- Browser A: send a SECOND message ---
+    input_box_a = page.locator(INPUT_SELECTOR)
+    expect(input_box_a).to_be_visible(timeout=NAV_TIMEOUT)
+
+    input_box_a.fill("§echo:Can Browser B see this?")
+    input_box_a.press("Enter")
+
+    # Browser A should see its own response
+    msg_a = page.locator(ASSISTANT_MSG_SELECTOR).nth(1)
+    expect(msg_a).to_be_visible(timeout=MODEL_TIMEOUT)
+    expect(msg_a).to_contain_text("Can Browser B see this?")
+
+    _screenshot(page, "27_browser_a_sent")
+
+    # --- Browser B: THIS IS THE ASSERTION ---
+    # Browser B loaded history (first message pair) on sidebar click.
+    # The SECOND response should have streamed in via the switch.
+    msg_b = page_b.locator(ASSISTANT_MSG_SELECTOR).nth(1)
+    expect(msg_b).to_be_visible(timeout=MODEL_TIMEOUT)
+    expect(msg_b).to_contain_text("Can Browser B see this?")
+
+    _screenshot(page_b, "28_browser_b_received")
+
+    # Cleanup
+    context_b.close()
+
+
+def test_multi_tab_echo(page: Page, base_url: str) -> None:
+    """THE switch test. Two tabs, one chat, verify broadcast.
+
+    Tab A creates a chat and sends a message. Tab B opens the same chat.
+    Tab A sends a second message. Tab B should see:
+    1. The user message (echoed via user-message broadcast, sender excluded)
+    2. The assistant response (streamed via text-delta broadcast to all)
+
+    If this passes, the switch architecture works end-to-end across
+    multiple browser connections.
+    """
+    # --- Tab A: create a chat, send first message ---
+    _enter_chat(page, base_url)
+    chat_url = page.url
+
+    input_box_a = page.locator(INPUT_SELECTOR)
+    expect(input_box_a).to_be_visible(timeout=NAV_TIMEOUT)
+
+    # First message establishes the chat has content
+    input_box_a.fill("§echo:First message from tab A")
+    input_box_a.press("Enter")
+
+    first_msg_a = page.locator(ASSISTANT_MSG_SELECTOR).first
+    expect(first_msg_a).to_be_visible(timeout=MODEL_TIMEOUT)
+    expect(first_msg_a).to_contain_text("First message from tab A")
+
+    _screenshot(page, "19_tab_a_first_response")
+
+    # --- Tab B: open a NEW browser context, navigate to the SAME chat ---
+    browser = page.context.browser
+    context_b = browser.new_context()
+    page_b = context_b.new_page()
+
+    # Go directly to the chat URL — Tab B joins an existing chat
+    page_b.goto(chat_url)
+
+    # Wait for Tab B's WebSocket to connect and the page to settle
+    input_box_b = page_b.locator(INPUT_SELECTOR)
+    expect(input_box_b).to_be_visible(timeout=NAV_TIMEOUT)
+
+    # Human pause — let WebSocket connect, list-chats arrive, page settle
+    page_b.wait_for_timeout(3_000)
+
+    _screenshot(page_b, "20_tab_b_connected")
+
+    # --- Tab A sends a SECOND message while Tab B is watching ---
+    input_box_a = page.locator(INPUT_SELECTOR)
+    expect(input_box_a).to_be_visible(timeout=NAV_TIMEOUT)
+
+    input_box_a.fill("§echo:The switch works")
+    input_box_a.press("Enter")
+
+    # Tab A should see its own response (normal flow, not the switch)
+    second_msg_a = page.locator(ASSISTANT_MSG_SELECTOR).nth(1)
+    expect(second_msg_a).to_be_visible(timeout=MODEL_TIMEOUT)
+    expect(second_msg_a).to_contain_text("The switch works")
+
+    _screenshot(page, "21_tab_a_second_response")
+
+    # --- Tab B: THE ASSERTIONS THAT MATTER ---
+    # Tab B should have received the user message via user-message echo
+    # AND the assistant response via text-delta broadcast.
+    #
+    # Tab B loaded chat history on arrival (first message pair), then
+    # received the second pair in real time via the switch.
+
+    # The assistant response should have streamed in via broadcast
+    # Tab B sees history (1st response) + live (2nd response)
+    tab_b_assistant_msgs = page_b.locator(ASSISTANT_MSG_SELECTOR)
+    expect(tab_b_assistant_msgs.nth(1)).to_be_visible(timeout=MODEL_TIMEOUT)
+    expect(tab_b_assistant_msgs.nth(1)).to_contain_text("The switch works")
+
+    _screenshot(page_b, "22_tab_b_echo_received")
+
+    # Cleanup
+    context_b.close()

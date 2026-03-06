@@ -1,6 +1,13 @@
-"""WebSocket route — bidirectional multi-chat pipe.
+"""WebSocket route — bidirectional multi-chat switch.
 
-Phase 2: All messages carry chatId. Multiple chats multiplexed over one connection.
+Phase 3: The Switch — all events broadcast to all connected clients.
+
+Every WebSocket connection registers in app.state.connections (a set).
+Streaming events, state changes, and user message echoes broadcast to all
+connections. Request/response messages (list-chats) unicast to the requester.
+The reap timer broadcasts DEAD state via on_reap callback.
+
+Two tabs = two connections = same conversation, synced.
 
 Client -> Server messages:
   { "type": "create-chat" }
@@ -9,10 +16,13 @@ Client -> Server messages:
   { "type": "send", "chatId": "...", "content": [{ "type": "text", "text": "Hello" }, ...] }
   { "type": "interrupt", "chatId": "..." }
 
-Server -> Client messages:
-  { "type": "chat-created", "chatId": "...", "data": { "state": "idle" } }
+Server -> Client messages (unicast — response to requester only):
   { "type": "chat-list", "data": [...] }
-  { "type": "chat-state", "chatId": "...", "data": { "state": "busy", "title": "...", "updatedAt": ..., "sessionUuid": "...", "tokenCount": ..., "contextWindow": ... } }
+
+Server -> Client messages (broadcast — all connections):
+  { "type": "chat-created", "chatId": "...", "data": { "state": "idle" } }
+  { "type": "chat-state", "chatId": "...", "data": { "state": "busy", "title": "...", ... } }
+  { "type": "user-message", "chatId": "...", "data": { "content": [...] } }
   { "type": "text-delta", "chatId": "...", "data": "chunk" }
   { "type": "thinking-delta", "chatId": "...", "data": "chunk" }
   { "type": "tool-call", "chatId": "...", "data": { "toolCallId", "toolName", "args", "argsText" } }
@@ -35,6 +45,34 @@ from alpha_app.chat import MODEL, Chat, ChatState, Holster, generate_chat_id
 from alpha_app.db import get_pool
 
 router = APIRouter()
+
+
+# -- Broadcast ----------------------------------------------------------------
+# The heart of the switch. Send an event to every connected client.
+# Unicast (ws.send_json) is for request/response. Broadcast is for events.
+
+
+async def _broadcast(
+    connections: set,
+    event: dict,
+    *,
+    exclude: WebSocket | None = None,
+) -> None:
+    """Send event to all connected WebSockets, optionally excluding one.
+
+    Dead connections (send fails) are silently removed from the set.
+    Uses asyncio.gather for parallel delivery.
+    """
+    targets = [c for c in connections if c is not exclude]
+    if not targets:
+        return
+    results = await asyncio.gather(
+        *(c.send_json(event) for c in targets),
+        return_exceptions=True,
+    )
+    for conn, result in zip(targets, results):
+        if isinstance(result, Exception):
+            connections.discard(conn)
 
 
 # -- Logfire span helpers -----------------------------------------------------
@@ -64,12 +102,6 @@ def _format_input_messages(content: list[dict]) -> list[dict]:
         elif block_type == "image":
             source = block.get("source", {})
             if source.get("type") == "base64":
-                # OTel GenAI semantic conventions say BlobPart is the correct
-                # format for inline image data, and UriPart with a data URI
-                # "should not" be used.  However Logfire's UI doesn't render
-                # BlobPart images yet (pydantic/logfire#1512 is in draft), so
-                # we send a data-URI UriPart as a pragmatic workaround.
-                # Switch to BlobPart once that PR ships.
                 data = source.get("data", "")
                 media_type = source.get("media_type", "image/jpeg")
                 data_uri = f"data:{media_type};base64,{data}"
@@ -87,19 +119,13 @@ def _format_input_messages(content: list[dict]) -> list[dict]:
 
 
 def _format_output_messages(output_parts: list[dict]) -> list[dict]:
-    """Format assistant content blocks as gen_ai.output.messages for Logfire.
-
-    Tool calls use Logfire's ToolCallPart format (type="tool_call" with id/name/arguments),
-    NOT Anthropic's raw tool_use format. This is what triggers proper rendering in the
-    Model Run card.
-    """
+    """Format assistant content blocks as gen_ai.output.messages for Logfire."""
     parts = []
     for block in output_parts:
         block_type = block.get("type", "")
         if block_type == "text":
             parts.append({"type": "text", "content": block.get("text", "")})
         elif block_type == "tool_use":
-            # Logfire's normalized tool_call format (from semconv.py ToolCallPart)
             parts.append({
                 "type": "tool_call",
                 "id": block.get("id", ""),
@@ -151,7 +177,7 @@ async def _list_chats() -> list[dict]:
             result.append({
                 "chatId": row["id"],
                 "title": data.get("title", ""),
-                "state": "dead",  # Always dead from DB — live overlay adds runtime state
+                "state": "dead",
                 "updatedAt": row["updated_at"].timestamp(),
                 "sessionUuid": data.get("session_uuid", ""),
                 "tokenCount": data.get("token_count", 0) or 0,
@@ -187,16 +213,8 @@ async def _load_chat(chat_id: str) -> Chat | None:
 
 
 def _set_turn_span_response(span, chat: Chat, result: ResultEvent, output_parts: list) -> None:
-    """Set gen_ai response attributes on the turn span.
-
-    Follows the attribute schema that triggers Logfire's Model Run card.
-    Matches the proven format from Rosemary's turn spans.
-    """
-    # Model Run card attributes (these trigger the card)
+    """Set gen_ai response attributes on the turn span."""
     span.set_attribute("gen_ai.response.model", chat.response_model or "")
-    # OTel Anthropic semantic conventions (footnote [11]): gen_ai.usage.input_tokens
-    # MUST be computed as input_tokens + cache_read + cache_creation because
-    # Anthropic's raw input_tokens excludes cached tokens.
     span.set_attribute("gen_ai.usage.input_tokens", chat.total_input_tokens)
     span.set_attribute("gen_ai.usage.output_tokens", chat.output_tokens)
     span.set_attribute("gen_ai.usage.cache_creation.input_tokens", chat.cache_creation_tokens)
@@ -205,7 +223,6 @@ def _set_turn_span_response(span, chat: Chat, result: ResultEvent, output_parts:
     output_messages = _format_output_messages(output_parts)
     span.set_attribute("gen_ai.output.messages", output_messages)
 
-    # Custom extras (don't affect Model Run card, useful for debugging)
     span.set_attribute("gen_ai.response.id", chat.response_id or "")
     span.set_attribute("gen_ai.response.finish_reasons", [chat.stop_reason or "unknown"])
     span.set_attribute("gen_ai.token_count", chat.token_count)
@@ -218,42 +235,31 @@ def _set_turn_span_response(span, chat: Chat, result: ResultEvent, output_parts:
         for p in msg.get("parts", [])
     ))
 
-    # Quota utilization
     if chat.usage_5h is not None:
         span.set_attribute("anthropic.quota.usage_5h", chat.usage_5h)
     if chat.usage_7d is not None:
         span.set_attribute("anthropic.quota.usage_7d", chat.usage_7d)
 
 
-async def _stream_chat_events(ws: WebSocket, chat: Chat, span=None) -> None:
-    """Stream events from a Chat to the WebSocket. Handles turn lifecycle.
+async def _stream_chat_events(connections: set, chat: Chat, span=None) -> None:
+    """Stream events from a Chat to ALL connected clients.
 
-    All emitted events carry the chatId. On turn completion, emits chat-state
-    with the updated state, then done.
-
-    Also monitors token_count changes (from the proxy's SSE sniffing) and
-    emits context-update events in real time — so the browser ContextMeter
-    updates live during multi-tool-call turns.
-
-    If span is provided, sets gen_ai response attributes on it at turn end.
+    All emitted events carry the chatId and broadcast to every connection.
+    On turn completion, emits chat-state with the updated state, then done.
     """
     chat_id = chat.id
     turn_completed = False
-    last_token_count = chat.token_count  # Track changes
-    output_parts: list[dict] = []  # Accumulate assistant content for span
+    last_token_count = chat.token_count
+    output_parts: list[dict] = []
 
     try:
         async for event in chat.events():
-            # -- Real-time context updates --
-            # Check after each event whether token_count changed.
-            # The proxy sniffs input_tokens from each API call's message_start,
-            # so during a 30-tool-call turn the count climbs. After auto-compact,
-            # it drops. Either way, the browser sees it live.
+            # Real-time context updates
             current_tokens = chat.token_count
             if current_tokens != last_token_count:
                 last_token_count = current_tokens
                 try:
-                    await ws.send_json({
+                    await _broadcast(connections, {
                         "type": "context-update",
                         "chatId": chat_id,
                         "data": {
@@ -262,23 +268,23 @@ async def _stream_chat_events(ws: WebSocket, chat: Chat, span=None) -> None:
                         },
                     })
                 except Exception:
-                    pass  # Don't let meter updates kill the stream
+                    pass
 
             if isinstance(event, StreamEvent):
                 if event.delta_type == "text_delta":
                     text = event.delta_text
                     if text:
-                        await ws.send_json({"type": "text-delta", "chatId": chat_id, "data": text})
+                        await _broadcast(connections, {"type": "text-delta", "chatId": chat_id, "data": text})
                 elif event.delta_type == "thinking_delta":
                     text = event.delta_text
                     if text:
-                        await ws.send_json({"type": "thinking-delta", "chatId": chat_id, "data": text})
+                        await _broadcast(connections, {"type": "thinking-delta", "chatId": chat_id, "data": text})
 
             elif isinstance(event, AssistantEvent):
                 output_parts.extend(event.content)
                 for block in event.content:
                     if block.get("type") == "tool_use":
-                        await ws.send_json({
+                        await _broadcast(connections, {
                             "type": "tool-call",
                             "chatId": chat_id,
                             "data": {
@@ -290,15 +296,12 @@ async def _stream_chat_events(ws: WebSocket, chat: Chat, span=None) -> None:
                         })
 
             elif isinstance(event, ResultEvent):
-                # Persist updated metadata (session UUID, title, etc.)
                 await _persist_chat(chat)
 
-                # Set gen_ai attributes on the turn span (before any cleanup)
                 if span:
                     _set_turn_span_response(span, chat, event, output_parts)
 
-                # Notify state change: BUSY -> IDLE
-                await ws.send_json({
+                await _broadcast(connections, {
                     "type": "chat-state",
                     "chatId": chat_id,
                     "data": {
@@ -315,25 +318,22 @@ async def _stream_chat_events(ws: WebSocket, chat: Chat, span=None) -> None:
                 break
 
             elif isinstance(event, ErrorEvent):
-                await ws.send_json({"type": "error", "chatId": chat_id, "data": event.message})
+                await _broadcast(connections, {"type": "error", "chatId": chat_id, "data": event.message})
 
     except Exception as e:
         if span:
             span.set_attribute("error.type", type(e).__name__)
         try:
-            await ws.send_json({"type": "error", "chatId": chat_id, "data": str(e)})
+            await _broadcast(connections, {"type": "error", "chatId": chat_id, "data": str(e)})
         except Exception:
             pass
 
     finally:
-        # If the turn didn't complete normally, the chat might be stuck in BUSY.
-        # Reap it so it doesn't block future sends.
         if not turn_completed and chat.state == ChatState.BUSY:
             await chat.reap()
 
-    # Signal turn complete
     try:
-        await ws.send_json({"type": "done", "chatId": chat_id})
+        await _broadcast(connections, {"type": "done", "chatId": chat_id})
     except Exception:
         pass
 
@@ -343,21 +343,25 @@ async def _stream_chat_events(ws: WebSocket, chat: Chat, span=None) -> None:
 
 async def _handle_create_chat(
     ws: WebSocket,
+    connections: set,
     holster: Holster,
     chats: dict[str, Chat],
+    on_reap,
 ) -> None:
-    """Handle create-chat: claim from holster, persist, return chatId."""
+    """Handle create-chat: claim from holster, persist, broadcast to all."""
     try:
         claude = await holster.claim()
         chat_id = generate_chat_id()
         system_prompt = ws.app.state.system_prompt
         chat = Chat.from_holster(id=chat_id, claude=claude, system_prompt=system_prompt)
+        chat.on_reap = on_reap
         chats[chat_id] = chat
 
-        # Persist to Postgres
         await _persist_chat(chat)
 
-        await ws.send_json({
+        # Broadcast to all — the requester navigates (createPendingRef),
+        # other tabs just add it to their sidebar.
+        await _broadcast(connections, {
             "type": "chat-created",
             "chatId": chat_id,
             "data": {"state": chat.state.value},
@@ -371,11 +375,9 @@ async def _handle_list_chats(
     ws: WebSocket,
     chats: dict[str, Chat],
 ) -> None:
-    """Handle list-chats: return chat metadata from Postgres, overlaid with live state."""
+    """Handle list-chats: unicast — only the requester needs the full list."""
     chat_list = await _list_chats()
 
-    # Overlay runtime state from live in-memory chats.
-    # Postgres always reports "dead" — only live chats have real state.
     for item in chat_list:
         live_chat = chats.get(item["chatId"])
         if live_chat:
@@ -400,6 +402,7 @@ def _normalize_content(raw_content: str | list) -> list[dict]:
 
 async def _handle_new_turn(
     ws: WebSocket,
+    connections: set,
     chat: Chat,
     content: list[dict],
     turn_input_messages: dict[str, list],
@@ -408,14 +411,11 @@ async def _handle_new_turn(
     """Handle a new turn: resurrect if needed, send, stream events.
 
     Runs as a background task so the WebSocket read loop stays hot.
-    Interjections that arrive while this is running append to
-    turn_input_messages[chat_id], which gets written to the Logfire
-    span at turn end.
+    State changes and streaming events broadcast to ALL connections.
     """
     chat_id = chat.id
     prompt_preview = _build_prompt_preview(content)
 
-    # Track input messages for this turn (interjections append here)
     input_messages = _format_input_messages(content)
     turn_input_messages[chat_id] = input_messages
 
@@ -423,17 +423,15 @@ async def _handle_new_turn(
         "alpha.turn: {prompt_preview}",
         **{
             "prompt_preview": prompt_preview,
-            # Model Run card attributes (match Rosemary's proven schema)
             "gen_ai.operation.name": "chat",
-            "gen_ai.system": "anthropic",  # deprecated but Logfire still keys off it
-            "gen_ai.provider.name": "anthropic",  # OTel semconv >= 1.40
+            "gen_ai.system": "anthropic",
+            "gen_ai.provider.name": "anthropic",
             "gen_ai.request.model": MODEL,
-            "gen_ai.conversation.id": chat_id,  # OTel standard for session/thread ID
+            "gen_ai.conversation.id": chat_id,
             "gen_ai.system_instructions": [{"type": "text", "content": ws.app.state.system_prompt}],
             "gen_ai.input.messages": input_messages,
-            # Custom extras
             "client_name": "alpha",
-            "chat.id": chat_id,  # keep for backward compat with existing queries
+            "chat.id": chat_id,
             "session_id": chat.session_uuid or "",
         },
     ) as span:
@@ -442,15 +440,15 @@ async def _handle_new_turn(
             resurrected = False
             if chat.state == ChatState.DEAD:
                 if not chat.session_uuid:
-                    await ws.send_json({
+                    await _broadcast(connections, {
                         "type": "error",
                         "chatId": chat_id,
                         "data": "Chat is dead with no session to resume",
                     })
-                    await ws.send_json({"type": "done", "chatId": chat_id})
+                    await _broadcast(connections, {"type": "done", "chatId": chat_id})
                     return
 
-                await ws.send_json({
+                await _broadcast(connections, {
                     "type": "chat-state",
                     "chatId": chat_id,
                     "data": {
@@ -462,7 +460,7 @@ async def _handle_new_turn(
                 })
                 await chat.resurrect(system_prompt=ws.app.state.system_prompt)
                 resurrected = True
-                await ws.send_json({
+                await _broadcast(connections, {
                     "type": "chat-state",
                     "chatId": chat_id,
                     "data": {
@@ -473,17 +471,15 @@ async def _handle_new_turn(
                     },
                 })
 
-            # Propagate trace context to proxy so its spans nest under this turn
             chat.set_trace_context(logfire.get_context())
 
-            # Send the message (IDLE -> BUSY, sets title + updated_at)
             await chat.send(content)
 
             span.set_attribute("chat.title", chat.title)
             span.set_attribute("chat.resurrected", resurrected)
 
-            # Notify state change: IDLE -> BUSY
-            await ws.send_json({
+            # Notify state change: IDLE -> BUSY (all clients)
+            await _broadcast(connections, {
                 "type": "chat-state",
                 "chatId": chat_id,
                 "data": {
@@ -496,46 +492,45 @@ async def _handle_new_turn(
                 },
             })
 
-            # Persist updated metadata
             await _persist_chat(chat)
 
-            # Stream events (blocking within this task, but the WS read loop is free)
-            await _stream_chat_events(ws, chat, span)
+            # Stream events to all connections
+            await _stream_chat_events(connections, chat, span)
 
         except asyncio.CancelledError:
-            # Task cancelled (WebSocket disconnect or interrupt) — clean exit
             pass
         except Exception as e:
             span.set_attribute("error.type", type(e).__name__)
             try:
-                await ws.send_json({"type": "error", "chatId": chat_id, "data": str(e)})
-                await ws.send_json({"type": "done", "chatId": chat_id})
+                await _broadcast(connections, {"type": "error", "chatId": chat_id, "data": str(e)})
+                await _broadcast(connections, {"type": "done", "chatId": chat_id})
             except Exception:
-                pass  # WebSocket might be closed
+                pass
         finally:
-            # Update input messages if interjections were added during the turn
             final_messages = turn_input_messages.get(chat_id)
             if final_messages and len(final_messages) > len(input_messages):
                 span.set_attribute("gen_ai.input.messages", final_messages)
 
-            # Clean up shared state
             turn_input_messages.pop(chat_id, None)
             streaming_tasks.pop(chat_id, None)
 
 
 async def _handle_interjection(
     ws: WebSocket,
+    connections: set,
     chat: Chat,
     content: list[dict],
     turn_input_messages: dict[str, list],
 ) -> None:
-    """Handle an interjection: feed to BUSY subprocess, update Logfire tracking.
-
-    The subprocess absorbs the message between tool calls. The streaming task
-    doesn't need to know — the response appears in the event stream naturally.
-    See duplex_test_class.py for proof that this works.
-    """
+    """Handle an interjection: feed to BUSY subprocess, echo to other clients."""
     await chat.send(content)
+
+    # Echo user message to other connections (sender has it optimistically)
+    await _broadcast(connections, {
+        "type": "user-message",
+        "chatId": chat.id,
+        "data": {"content": content},
+    }, exclude=ws)
 
     # Append to the turn's input messages for the Logfire span
     if chat.id in turn_input_messages:
@@ -544,11 +539,12 @@ async def _handle_interjection(
 
 async def _handle_interrupt(
     ws: WebSocket,
+    connections: set,
     chats: dict[str, Chat],
     chat_id: str,
     streaming_tasks: dict[str, asyncio.Task],
 ) -> None:
-    """Handle interrupt: kill the subprocess, cancel the streaming task."""
+    """Handle interrupt: kill the subprocess, broadcast state change."""
     if not chat_id:
         await ws.send_json({"type": "error", "data": "Missing chatId"})
         return
@@ -557,7 +553,7 @@ async def _handle_interrupt(
     if chat:
         try:
             await chat.interrupt()
-            await ws.send_json({
+            await _broadcast(connections, {
                 "type": "chat-state",
                 "chatId": chat_id,
                 "data": {
@@ -568,14 +564,13 @@ async def _handle_interrupt(
                 },
             })
         except Exception as e:
-            await ws.send_json({"type": "error", "chatId": chat_id, "data": str(e)})
+            await _broadcast(connections, {"type": "error", "chatId": chat_id, "data": str(e)})
 
-    # Cancel the streaming task — it will clean up in its finally block
     task = streaming_tasks.get(chat_id)
     if task and not task.done():
         task.cancel()
 
-    await ws.send_json({"type": "interrupted", "chatId": chat_id})
+    await _broadcast(connections, {"type": "interrupted", "chatId": chat_id})
 
 
 # -- WebSocket handler --------------------------------------------------------
@@ -583,15 +578,30 @@ async def _handle_interrupt(
 
 @router.websocket("/ws")
 async def websocket_chat(ws: WebSocket) -> None:
-    """Bidirectional multi-chat over WebSocket.
+    """Bidirectional multi-chat switch.
 
     Full duplex: the read loop stays hot while streaming tasks run in the
-    background. Sends to a BUSY chat become interjections — the subprocess
-    absorbs them between tool calls. See duplex_test_class.py for proof.
+    background. All events broadcast to all connected clients. Sends to a
+    BUSY chat become interjections. User messages echo to other connections.
+
+    Two tabs, same conversation, fully synced.
     """
     await ws.accept()
+
+    # Register in the connection set (the switch fabric)
+    connections: set = ws.app.state.connections
+    connections.add(ws)
+
     holster: Holster = ws.app.state.holster
     chats: dict[str, Chat] = ws.app.state.chats
+
+    # Reap callback — when a chat's idle timer fires, broadcast DEAD to all.
+    async def on_chat_reap(chat_id: str) -> None:
+        await _broadcast(connections, {
+            "type": "chat-state",
+            "chatId": chat_id,
+            "data": {"state": "dead"},
+        })
 
     # Per-connection tracking for background streaming tasks
     streaming_tasks: dict[str, asyncio.Task] = {}
@@ -603,7 +613,7 @@ async def websocket_chat(ws: WebSocket) -> None:
             msg_type = raw.get("type")
 
             if msg_type == "create-chat":
-                await _handle_create_chat(ws, holster, chats)
+                await _handle_create_chat(ws, connections, holster, chats, on_chat_reap)
 
             elif msg_type == "list-chats":
                 await _handle_list_chats(ws, chats)
@@ -623,6 +633,7 @@ async def websocket_chat(ws: WebSocket) -> None:
                 if not chat:
                     chat = await _load_chat(chat_id)
                     if chat:
+                        chat.on_reap = on_chat_reap
                         chats[chat_id] = chat
                     else:
                         await ws.send_json({"type": "error", "chatId": chat_id, "data": "Chat not found"})
@@ -630,18 +641,25 @@ async def websocket_chat(ws: WebSocket) -> None:
                         continue
 
                 if chat.state == ChatState.BUSY:
-                    # Interjection — feed to subprocess inline
-                    await _handle_interjection(ws, chat, content, turn_input_messages)
+                    # Interjection — feed to subprocess, echo to others
+                    await _handle_interjection(ws, connections, chat, content, turn_input_messages)
                 else:
+                    # Echo user message to other connections
+                    await _broadcast(connections, {
+                        "type": "user-message",
+                        "chatId": chat_id,
+                        "data": {"content": content},
+                    }, exclude=ws)
+
                     # New turn — start streaming in background
                     task = asyncio.create_task(
-                        _handle_new_turn(ws, chat, content, turn_input_messages, streaming_tasks)
+                        _handle_new_turn(ws, connections, chat, content, turn_input_messages, streaming_tasks)
                     )
                     streaming_tasks[chat_id] = task
 
             elif msg_type == "interrupt":
                 chat_id = raw.get("chatId", "")
-                await _handle_interrupt(ws, chats, chat_id, streaming_tasks)
+                await _handle_interrupt(ws, connections, chats, chat_id, streaming_tasks)
 
             else:
                 pass
@@ -651,6 +669,9 @@ async def websocket_chat(ws: WebSocket) -> None:
     except Exception:
         pass
     finally:
+        # Deregister from the connection set
+        connections.discard(ws)
+
         # Cancel all streaming tasks on disconnect
         for task in streaming_tasks.values():
             if not task.done():

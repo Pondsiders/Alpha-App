@@ -9,6 +9,7 @@ See KERNEL.md for the full design.
 import asyncio
 import secrets
 import time
+from collections.abc import Awaitable, Callable
 from enum import Enum
 from typing import AsyncIterator
 
@@ -60,6 +61,10 @@ class Chat:
         # Cached token state — survives subprocess death
         self._cached_token_count: int = 0
         self._cached_context_window: int = 200_000
+
+        # Broadcast callback — called after reap so all clients see the state change.
+        # Set externally by the WS handler. Signature: async (chat_id: str) -> None.
+        self.on_reap: Callable[[str], Awaitable[None]] | None = None
 
     @classmethod
     def from_holster(cls, *, id: str, claude: Claude, system_prompt: str = "") -> "Chat":
@@ -280,6 +285,9 @@ class Chat:
         try:
             await asyncio.sleep(seconds)
             await self.reap()
+            # Broadcast the state change so all clients update their sidebar dots.
+            if self.on_reap:
+                await self.on_reap(self.id)
         except asyncio.CancelledError:
             pass
 

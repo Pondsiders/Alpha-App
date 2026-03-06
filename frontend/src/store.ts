@@ -99,6 +99,10 @@ interface WorkshopActions {
   ) => void;
   setMessages: (messages: readonly Message[] | Message[]) => void;
 
+  // Remote messages (echoed from other connections via the switch)
+  addRemoteUserMessage: (chatId: string, content: ContentPart[]) => string;
+  addRemoteAssistantPlaceholder: (chatId: string) => string;
+
   // Cache
   cacheActiveMessages: () => void;
   loadFromCache: (chatId: string) => boolean;
@@ -356,6 +360,46 @@ export const useWorkshopStore = create<WorkshopStore>()(
       set((state) => {
         state.messages = [...messages];
       });
+    },
+
+    // -- Remote messages (echoed from other connections via the switch) --------
+
+    addRemoteUserMessage: (chatId, content) => {
+      const id = generateId();
+      set((state) => {
+        const msg: Message = {
+          id,
+          role: "user" as const,
+          content,
+          createdAt: new Date(),
+        };
+        if (chatId === state.activeChatId) {
+          state.messages.push(msg);
+        } else {
+          if (!state.messageCache[chatId]) state.messageCache[chatId] = [];
+          state.messageCache[chatId].push(msg);
+        }
+      });
+      return id;
+    },
+
+    addRemoteAssistantPlaceholder: (chatId) => {
+      const id = generateId();
+      set((state) => {
+        const msg: Message = {
+          id,
+          role: "assistant" as const,
+          content: [],
+          createdAt: new Date(),
+        };
+        if (chatId === state.activeChatId) {
+          state.messages.push(msg);
+        } else {
+          if (!state.messageCache[chatId]) state.messageCache[chatId] = [];
+          state.messageCache[chatId].push(msg);
+        }
+      });
+      return id;
     },
 
     // -- Cache ----------------------------------------------------------------

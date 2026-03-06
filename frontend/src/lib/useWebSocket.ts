@@ -23,6 +23,7 @@ export interface ServerEvent {
     | "chat-state"
     | "chat-list"
     | "context-update"
+    | "user-message"
     | "error"
     | "done"
     | "interrupted";

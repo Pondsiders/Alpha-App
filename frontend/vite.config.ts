@@ -67,6 +67,10 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
         // Don't cache API calls — those need to hit the server
         navigateFallbackDenylist: [/^\/api/],
+        // Activate new SW immediately — don't wait for old tabs to close.
+        // Without this, deploys serve stale cached JS until a hard refresh.
+        skipWaiting: true,
+        clientsClaim: true,
       },
     }),
   ],

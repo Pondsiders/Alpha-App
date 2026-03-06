@@ -10,6 +10,7 @@ import {
   useWorkshopStore,
   type ChatMeta,
   type ChatState,
+  type ContentPart,
   type JSONObject,
   type JSONValue,
 } from "./store";
@@ -40,6 +41,8 @@ function Layout() {
     addToolCall: useWorkshopStore.getState().addToolCall,
     updateToolResult: useWorkshopStore.getState().updateToolResult,
     updateChatTokens: useWorkshopStore.getState().updateChatTokens,
+    addRemoteUserMessage: useWorkshopStore.getState().addRemoteUserMessage,
+    addRemoteAssistantPlaceholder: useWorkshopStore.getState().addRemoteAssistantPlaceholder,
   });
   // Keep the ref fresh (store actions are stable with immer, but belt & suspenders)
   actionsRef.current = {
@@ -53,6 +56,8 @@ function Layout() {
     addToolCall: useWorkshopStore.getState().addToolCall,
     updateToolResult: useWorkshopStore.getState().updateToolResult,
     updateChatTokens: useWorkshopStore.getState().updateChatTokens,
+    addRemoteUserMessage: useWorkshopStore.getState().addRemoteUserMessage,
+    addRemoteAssistantPlaceholder: useWorkshopStore.getState().addRemoteAssistantPlaceholder,
   };
 
   // Shared assistant ID map — Layout reads, ChatPage writes
@@ -127,6 +132,24 @@ function Layout() {
           data.tokenCount,
           data.contextWindow,
         );
+        break;
+      }
+
+      // -- Remote user message echo (from another connection via the switch) --
+      case "user-message": {
+        if (!eChatId) break;
+        const umData = event.data as { content: ContentPart[] };
+        actions.addRemoteUserMessage(eChatId, umData.content || []);
+
+        // If the chat is NOT busy, a new turn is starting — create an
+        // assistant placeholder so incoming text-deltas have somewhere to land.
+        // If BUSY, this is an interjection — the existing assistant message
+        // continues streaming, no new placeholder needed.
+        const chatMeta = useWorkshopStore.getState().chats[eChatId];
+        if (chatMeta?.state !== "busy") {
+          const aid = actions.addRemoteAssistantPlaceholder(eChatId);
+          assistantIdMapRef.current[eChatId] = aid;
+        }
         break;
       }
 
