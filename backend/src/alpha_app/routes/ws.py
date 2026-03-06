@@ -176,7 +176,10 @@ def _set_turn_span_response(span, chat: Chat, result: ResultEvent, output_parts:
     """
     # Model Run card attributes (these trigger the card)
     span.set_attribute("gen_ai.response.model", chat.response_model or "")
-    span.set_attribute("gen_ai.usage.input_tokens", chat.input_tokens)
+    # OTel Anthropic semantic conventions (footnote [11]): gen_ai.usage.input_tokens
+    # MUST be computed as input_tokens + cache_read + cache_creation because
+    # Anthropic's raw input_tokens excludes cached tokens.
+    span.set_attribute("gen_ai.usage.input_tokens", chat.total_input_tokens)
     span.set_attribute("gen_ai.usage.output_tokens", chat.output_tokens)
     span.set_attribute("gen_ai.usage.cache_creation.input_tokens", chat.cache_creation_tokens)
     span.set_attribute("gen_ai.usage.cache_read.input_tokens", chat.cache_read_tokens)
@@ -406,13 +409,15 @@ async def _handle_send(
             "prompt_preview": prompt_preview,
             # Model Run card attributes (match Rosemary's proven schema)
             "gen_ai.operation.name": "chat",
-            "gen_ai.system": "anthropic",
+            "gen_ai.system": "anthropic",  # deprecated but Logfire still keys off it
+            "gen_ai.provider.name": "anthropic",  # OTel semconv >= 1.40
             "gen_ai.request.model": MODEL,
+            "gen_ai.conversation.id": chat_id,  # OTel standard for session/thread ID
             "gen_ai.system_instructions": [{"type": "text", "content": ws.app.state.system_prompt}],
             "gen_ai.input.messages": _format_input_messages(content),
             # Custom extras
             "client_name": "alpha",
-            "chat.id": chat_id,
+            "chat.id": chat_id,  # keep for backward compat with existing queries
             "session_id": chat.session_uuid or "",
         },
     ) as span:

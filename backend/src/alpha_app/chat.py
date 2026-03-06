@@ -101,6 +101,11 @@ class Chat:
         return self._claude.input_tokens if self._claude else 0
 
     @property
+    def total_input_tokens(self) -> int:
+        """OTel-compliant total: uncached + cache_creation + cache_read."""
+        return self._claude.total_input_tokens if self._claude else 0
+
+    @property
     def cache_creation_tokens(self) -> int:
         return self._claude.cache_creation_tokens if self._claude else 0
 
