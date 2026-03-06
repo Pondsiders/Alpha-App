@@ -20,16 +20,20 @@ This matches production: one process, one port, one reality.
 """
 
 import os
+import shutil
 import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import pytest
 import requests
 
 from tests.e2e.mock_anthropic import MockAnthropicServer
 
+# Screenshots directory — wiped at session start so stale images don't mislead.
+SCREENSHOT_DIR = Path(__file__).parent / "screenshots"
 
 # -- Ports (all different so nothing collides) --------------------------------
 MOCK_PORT = 18098   # Mock Anthropic API
@@ -199,6 +203,20 @@ class Backend:
 
 
 # -- Fixtures -----------------------------------------------------------------
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _clean_screenshots():
+    """Wipe screenshots at session start so stale images don't mislead.
+
+    Tests take screenshots at key moments for post-mortem diagnosis.
+    Old screenshots from a previous run could confuse investigation if
+    the current test fails before reaching a screenshot call.
+    """
+    if SCREENSHOT_DIR.exists():
+        shutil.rmtree(SCREENSHOT_DIR)
+    SCREENSHOT_DIR.mkdir(exist_ok=True)
+    yield
 
 
 @pytest.fixture(scope="session", autouse=True)

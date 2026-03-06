@@ -231,12 +231,10 @@ class Chat:
             )
             await self._claude.start(uuid)
 
-            # Drain resume metadata events
-            async for event in self._claude.events():
-                if isinstance(event, ResultEvent):
-                    if event.session_id:
-                        self.session_uuid = event.session_id
-                    break
+            # --resume loads the session JSONL and restores context silently.
+            # No events are emitted — the subprocess goes READY and waits
+            # for input.  (A previous drain loop here caused a deadlock:
+            # we waited for events that would never come.)
 
             self.state = ChatState.IDLE
             self._start_reap_timer()
