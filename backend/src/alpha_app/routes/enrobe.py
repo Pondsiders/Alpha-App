@@ -47,16 +47,19 @@ def _format_timestamp() -> str:
 def _compute_approach_light(token_count: int, context_window: int) -> str:
     """Compute approach light color based on context usage.
 
-    Green:  < 70% — plenty of room
-    Yellow: 70-85% — getting full
-    Red:    > 85% — compaction needed soon
+    Green:  < 65% — plenty of room
+    Yellow: 65-75% — getting full, start wrapping up
+    Red:    > 75% — compaction imminent
+
+    Auto-compact fires around 80-85%. Yellow and red must land
+    BEFORE that threshold so Alpha sees the warning in time.
     """
     if context_window <= 0:
         return "green"
     ratio = token_count / context_window
-    if ratio >= 0.85:
+    if ratio >= 0.75:
         return "red"
-    elif ratio >= 0.70:
+    elif ratio >= 0.65:
         return "yellow"
     return "green"
 

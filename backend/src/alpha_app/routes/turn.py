@@ -121,6 +121,12 @@ async def handle_new_turn(
             # -- Enrobe: wrap user message in enrichment -------------------
             result = await enrobe(content, chat=chat)
 
+            # Update Logfire with what Claude actually sees (enriched, not raw)
+            enriched_messages = format_input_messages(result.content)
+            turn_input_messages[chat_id] = enriched_messages
+            input_messages = enriched_messages
+            span.set_attribute("gen_ai.input.messages", enriched_messages)
+
             # Broadcast enrichment events to all clients
             for event in result.events:
                 await broadcast(connections, {
