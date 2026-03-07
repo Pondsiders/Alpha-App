@@ -1,8 +1,15 @@
 """turn.py — Turn handling: new turns and interjections.
 
-A new turn resurrects dead chats, sends the message, and streams
-the response. An interjection feeds a message into an already-busy
-subprocess (full duplex).
+A new turn goes through the full lifecycle:
+  1. Resurrect if COLD
+  2. Begin turn (READY -> ENRICHING)
+  3. Enrobe the user message (timestamp, approach lights, recall, intro)
+  4. Broadcast enrichment events to all clients
+  5. Send enriched content to Claude (ENRICHING -> RESPONDING)
+  6. Stream the response
+  7. On ResultEvent: RESPONDING -> READY, suggest -> ARMED
+
+An interjection feeds a message into an already-RESPONDING subprocess.
 """
 
 import asyncio
@@ -10,9 +17,10 @@ import asyncio
 import logfire
 from fastapi import WebSocket
 
-from alpha_app.chat import MODEL, Chat, ChatState
+from alpha_app.chat import MODEL, Chat, ConversationState
 from alpha_app.db import persist_chat
 from alpha_app.routes.broadcast import broadcast
+from alpha_app.routes.enrobe import enrobe
 from alpha_app.routes.spans import build_prompt_preview, format_input_messages
 from alpha_app.routes.streaming import stream_chat_events
 
@@ -25,10 +33,11 @@ async def handle_new_turn(
     turn_input_messages: dict[str, list],
     streaming_tasks: dict[str, asyncio.Task],
 ) -> None:
-    """Handle a new turn: resurrect if needed, send, stream events.
+    """Handle a new turn: resurrect if needed, enrobe, send, stream events.
 
     Runs as a background task so the WebSocket read loop stays hot.
-    State changes and streaming events broadcast to ALL connections.
+    State changes, enrichment events, and streaming events broadcast
+    to ALL connections.
     """
     chat_id = chat.id
     prompt_preview = build_prompt_preview(content)
@@ -53,14 +62,14 @@ async def handle_new_turn(
         },
     ) as span:
         try:
-            # Resurrect if DEAD
+            # -- Resurrect if COLD -----------------------------------------
             resurrected = False
-            if chat.state == ChatState.DEAD:
+            if chat.state == ConversationState.COLD:
                 if not chat.session_uuid:
                     await broadcast(connections, {
                         "type": "error",
                         "chatId": chat_id,
-                        "data": "Chat is dead with no session to resume",
+                        "data": "Chat is cold with no session to resume",
                     })
                     await broadcast(connections, {"type": "done", "chatId": chat_id})
                     return
@@ -81,7 +90,7 @@ async def handle_new_turn(
                     "type": "chat-state",
                     "chatId": chat_id,
                     "data": {
-                        "state": chat.state.value,
+                        "state": chat.state.wire_value,
                         "sessionUuid": chat.session_uuid or "",
                         "tokenCount": chat.token_count,
                         "contextWindow": chat.context_window,
@@ -90,17 +99,45 @@ async def handle_new_turn(
 
             chat.set_trace_context(logfire.get_context())
 
-            await chat.send(content)
+            # -- Begin turn: READY -> ENRICHING ----------------------------
+            chat.begin_turn(content)
 
             span.set_attribute("chat.title", chat.title)
             span.set_attribute("chat.resurrected", resurrected)
 
-            # Notify state change: IDLE -> BUSY (all clients)
             await broadcast(connections, {
                 "type": "chat-state",
                 "chatId": chat_id,
                 "data": {
-                    "state": chat.state.value,
+                    "state": chat.state.wire_value,
+                    "title": chat.title,
+                    "updatedAt": chat.updated_at,
+                    "sessionUuid": chat.session_uuid or "",
+                    "tokenCount": chat.token_count,
+                    "contextWindow": chat.context_window,
+                },
+            })
+
+            # -- Enrobe: wrap user message in enrichment -------------------
+            result = await enrobe(content, chat=chat)
+
+            # Broadcast enrichment events to all clients
+            for event in result.events:
+                await broadcast(connections, {
+                    "type": event["type"],
+                    "chatId": chat_id,
+                    "data": event["data"],
+                })
+
+            # -- Send enriched content: ENRICHING -> RESPONDING ------------
+            await chat.send(result.content)
+
+            # Notify state change: ENRICHING -> RESPONDING
+            await broadcast(connections, {
+                "type": "chat-state",
+                "chatId": chat_id,
+                "data": {
+                    "state": chat.state.wire_value,
                     "title": chat.title,
                     "updatedAt": chat.updated_at,
                     "sessionUuid": chat.session_uuid or "",
@@ -111,7 +148,7 @@ async def handle_new_turn(
 
             await persist_chat(chat)
 
-            # Stream events to all connections
+            # -- Stream events to all connections -------------------------
             await stream_chat_events(connections, chat, span)
 
         except asyncio.CancelledError:
@@ -139,7 +176,7 @@ async def handle_interjection(
     content: list[dict],
     turn_input_messages: dict[str, list],
 ) -> None:
-    """Handle an interjection: feed to BUSY subprocess, echo to other clients."""
+    """Handle an interjection: feed to RESPONDING subprocess, echo to other clients."""
     await chat.send(content)
 
     # Echo user message to other connections (sender has it optimistically)

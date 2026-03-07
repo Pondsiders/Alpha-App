@@ -36,7 +36,7 @@ import asyncio
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from alpha_app.chat import Chat, ChatState, Holster
+from alpha_app.chat import Chat, ConversationState, Holster
 from alpha_app.db import load_chat
 from alpha_app.routes.broadcast import broadcast
 from alpha_app.routes.handlers import handle_create_chat, handle_interrupt, handle_list_chats
@@ -119,7 +119,7 @@ async def websocket_chat(ws: WebSocket) -> None:
                         await ws.send_json({"type": "done", "chatId": chat_id})
                         continue
 
-                if chat.state == ChatState.BUSY:
+                if chat.state in (ConversationState.ENRICHING, ConversationState.RESPONDING):
                     # Interjection — feed to subprocess, echo to others
                     await handle_interjection(ws, connections, chat, content, turn_input_messages)
                 else:

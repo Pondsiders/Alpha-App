@@ -8,7 +8,7 @@ import asyncio
 
 from fastapi import WebSocket
 
-from alpha_app.chat import Chat, ChatState, Holster, generate_chat_id
+from alpha_app.chat import Chat, ConversationState, Holster, generate_chat_id
 from alpha_app.db import list_chats, persist_chat
 from alpha_app.routes.broadcast import broadcast
 
@@ -36,7 +36,7 @@ async def handle_create_chat(
         await broadcast(connections, {
             "type": "chat-created",
             "chatId": chat_id,
-            "data": {"state": chat.state.value},
+            "data": {"state": chat.state.wire_value},
         })
 
     except Exception as e:
@@ -53,7 +53,7 @@ async def handle_list_chats(
     for item in chat_list:
         live_chat = chats.get(item["chatId"])
         if live_chat:
-            item["state"] = live_chat.state.value
+            item["state"] = live_chat.state.wire_value
             item["title"] = live_chat.title or item["title"]
             item["sessionUuid"] = live_chat.session_uuid or item.get("sessionUuid", "")
             item["tokenCount"] = live_chat.token_count
@@ -82,7 +82,7 @@ async def handle_interrupt(
                 "type": "chat-state",
                 "chatId": chat_id,
                 "data": {
-                    "state": chat.state.value,
+                    "state": chat.state.wire_value,
                     "sessionUuid": chat.session_uuid or "",
                     "tokenCount": chat.token_count,
                     "contextWindow": chat.context_window,

@@ -9,7 +9,7 @@ import json
 
 from alpha_sdk import AssistantEvent, ErrorEvent, ResultEvent, StreamEvent
 
-from alpha_app.chat import Chat, ChatState
+from alpha_app.chat import Chat, ConversationState
 from alpha_app.db import persist_chat
 from alpha_app.routes.broadcast import broadcast
 from alpha_app.routes.spans import set_turn_span_response
@@ -79,7 +79,7 @@ async def stream_chat_events(connections: set, chat: Chat, span=None) -> None:
                     "type": "chat-state",
                     "chatId": chat_id,
                     "data": {
-                        "state": chat.state.value,
+                        "state": chat.state.wire_value,
                         "title": chat.title,
                         "updatedAt": chat.updated_at,
                         "sessionUuid": chat.session_uuid or "",
@@ -103,7 +103,7 @@ async def stream_chat_events(connections: set, chat: Chat, span=None) -> None:
             pass
 
     finally:
-        if not turn_completed and chat.state == ChatState.BUSY:
+        if not turn_completed and chat.state in (ConversationState.ENRICHING, ConversationState.RESPONDING):
             await chat.reap()
 
     try:

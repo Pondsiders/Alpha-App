@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from alpha_sdk import assemble_system_prompt
-from alpha_app.chat import Chat, ChatState, Holster
+from alpha_app.chat import Chat, ConversationState, Holster
 from alpha_app.db import init_pool, close_pool
 from alpha_app.routes.sessions import router as sessions_router
 from alpha_app.routes.ws import router as ws_router
@@ -47,7 +47,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Shutdown
     for chat in list(app.state.chats.values()):
-        if chat.state != ChatState.DEAD:
+        if chat.state != ConversationState.COLD:
             await chat.reap()
     await holster.shutdown()
     await close_pool()
@@ -79,8 +79,8 @@ async def health() -> dict:
     """Health check endpoint."""
     holster: Holster = app.state.holster
     chats: dict[str, Chat] = app.state.chats
-    alive = [c for c in chats.values() if c.state != ChatState.DEAD]
-    busy = [c for c in chats.values() if c.state == ChatState.BUSY]
+    alive = [c for c in chats.values() if c.state != ConversationState.COLD]
+    busy = [c for c in chats.values() if c.state in (ConversationState.ENRICHING, ConversationState.RESPONDING)]
     return {
         "status": "healthy",
         "holster_ready": holster.ready,

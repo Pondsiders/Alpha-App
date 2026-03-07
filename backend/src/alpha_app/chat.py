@@ -3,6 +3,15 @@
 The Chat class wraps a Claude subprocess with a state machine and reap timer.
 The Holster keeps one warm subprocess ready for instant startup.
 
+State is a vector with two orthogonal dimensions:
+  - Conversation: STARTING / READY / ENRICHING / RESPONDING / COLD
+  - Suggest:      DISARMED / ARMED / FIRING
+
+Each dimension evolves independently. Off-diagonal couplings:
+  - begin_turn() disarms suggest (new turn resets the cycle)
+  - ResultEvent arms suggest (turn complete, ready for analysis)
+  - conversation -> COLD -> suggest -> DISARMED (cleanup)
+
 See KERNEL.md for the full design.
 """
 
@@ -29,29 +38,72 @@ def generate_chat_id() -> str:
     return secrets.token_urlsafe(9)
 
 
-class ChatState(Enum):
+# -- State vector dimensions --------------------------------------------------
+
+# Wire value mapping: internal state names -> backward-compatible WebSocket values.
+# When the frontend learns the new names, remove this mapping and use .value directly.
+_CONVERSATION_WIRE = {
+    "starting": "starting",
+    "ready": "idle",
+    "enriching": "busy",
+    "responding": "busy",
+    "cold": "dead",
+}
+
+
+class ConversationState(Enum):
+    """First dimension of the state vector: the conversation lifecycle.
+
+    Claudes aren't alive or dead. They're warm or cold.
+    """
     STARTING = "starting"
-    IDLE = "idle"
-    BUSY = "busy"
-    DEAD = "dead"
+    READY = "ready"
+    ENRICHING = "enriching"
+    RESPONDING = "responding"
+    COLD = "cold"
+
+    @property
+    def wire_value(self) -> str:
+        """Backward-compatible value for the WebSocket protocol."""
+        return _CONVERSATION_WIRE.get(self.value, self.value)
+
+
+class SuggestState(Enum):
+    """Second dimension of the state vector: the metacognitive pipeline."""
+    DISARMED = "disarmed"
+    ARMED = "armed"
+    FIRING = "firing"
+
+
+# Backward compatibility — existing imports of ChatState still resolve.
+ChatState = ConversationState
 
 
 class Chat:
     """A single conversation. Owns a claude subprocess and its lifecycle.
 
-    State machine:
-        from_holster() -> IDLE   (born warm)
-        send()         -> IDLE->BUSY
-        events()       -> (yields until ResultEvent) -> BUSY->IDLE
-        interrupt()    -> *->DEAD
-        reap()         -> *->DEAD
-        resurrect()    -> DEAD->STARTING->IDLE
+    State vector: (conversation, suggest)
+      conversation: STARTING / READY / ENRICHING / RESPONDING / COLD
+      suggest:      DISARMED / ARMED / FIRING
+
+    Lifecycle:
+        from_holster()  -> (READY, DISARMED)
+        begin_turn()    -> READY -> ENRICHING, suggest -> DISARMED
+        send()          -> ENRICHING/READY -> RESPONDING (or interjection)
+        events()        -> RESPONDING -> READY, suggest -> ARMED
+        interrupt()     -> * -> COLD, suggest -> DISARMED
+        reap()          -> * -> COLD, suggest -> DISARMED
+        resurrect()     -> COLD -> STARTING -> READY
     """
 
     def __init__(self, *, id: str, claude: Claude | None = None) -> None:
         self.id = id
         self.session_uuid: str | None = None
-        self.state = ChatState.IDLE if claude else ChatState.DEAD
+
+        # State vector: two orthogonal dimensions
+        self.state = ConversationState.READY if claude else ConversationState.COLD
+        self.suggest = SuggestState.DISARMED
+
         self.title: str = ""
         self.created_at: float = time.time()
         self.updated_at: float = time.time()
@@ -70,7 +122,7 @@ class Chat:
 
     @classmethod
     def from_holster(cls, *, id: str, claude: Claude, system_prompt: str = "") -> "Chat":
-        """Create a Chat with a pre-warmed Claude. Born IDLE."""
+        """Create a Chat with a pre-warmed Claude. Born READY."""
         chat = cls(id=id, claude=claude)
         chat._system_prompt = system_prompt
         chat._start_reap_timer()
@@ -78,16 +130,18 @@ class Chat:
 
     @classmethod
     def from_db(cls, chat_id: str, updated_at: float, data: dict) -> "Chat":
-        """Restore a Chat from Postgres row. Born DEAD (no subprocess)."""
+        """Restore a Chat from Postgres row. Born COLD (no subprocess)."""
         chat = cls(id=chat_id)
         chat.session_uuid = data.get("session_uuid") or None
         chat.title = data.get("title", "")
-        chat.state = ChatState.DEAD
+        chat.state = ConversationState.COLD
         chat.created_at = data.get("created_at", 0) or 0
         chat.updated_at = updated_at
         chat._cached_token_count = data.get("token_count", 0) or 0
         chat._cached_context_window = data.get("context_window", 0) or 200_000
         return chat
+
+    # -- Token state properties -----------------------------------------------
 
     @property
     def token_count(self) -> int:
@@ -100,8 +154,6 @@ class Chat:
         if self._claude:
             return self._claude.context_window
         return self._cached_context_window
-
-    # -- Per-turn usage (live only, from proxy SSE sniffing) ------------------
 
     @property
     def input_tokens(self) -> int:
@@ -159,39 +211,68 @@ class Chat:
         if self._claude:
             self._claude.set_trace_context(ctx)
 
-    async def send(self, content: list[dict]) -> None:
-        """Send a message to claude. IDLE->BUSY, or interjection if already BUSY.
+    # -- Turn lifecycle -------------------------------------------------------
 
-        Full duplex: claude reads stdin between tool calls. Sending while BUSY
-        feeds the message to the subprocess, which absorbs it into the current
-        turn. No state change, no title update — just write to stdin.
-        See duplex_test_class.py for proof.
+    def begin_turn(self, content: list[dict] | None = None) -> None:
+        """Begin a new turn. READY -> ENRICHING, suggest -> DISARMED.
+
+        Cancels the reap timer, extracts title from original (pre-enrobe)
+        content, and transitions to ENRICHING. Called before enrobe().
         """
-        if self.state == ChatState.DEAD:
-            raise RuntimeError(f"Chat {self.id} is DEAD — resurrect first")
-        if self.state == ChatState.STARTING:
-            raise RuntimeError(f"Chat {self.id} is still STARTING")
+        if self.state in (ConversationState.COLD, ConversationState.STARTING):
+            raise RuntimeError(
+                f"Chat {self.id} cannot begin turn in state {self.state.value}"
+            )
 
-        if self.state == ChatState.BUSY:
-            # Interjection — feed to subprocess, no state change.
-            await self._claude.send(content)
-            return
-
-        # New turn: IDLE -> BUSY
         self._cancel_reap_timer()
-        self.state = ChatState.BUSY
+        self.state = ConversationState.ENRICHING
+        self.suggest = SuggestState.DISARMED
         self.updated_at = time.time()
 
-        if not self.title:
+        # Title from original content (before enrobe adds enrichment blocks)
+        if content and not self.title:
             for block in content:
                 if block.get("type") == "text" and block.get("text"):
                     self.title = block["text"][:80]
                     break
 
+    async def send(self, content: list[dict]) -> None:
+        """Send a message to claude. ENRICHING/READY -> RESPONDING, or interjection.
+
+        Full duplex: claude reads stdin between tool calls. Sending while
+        RESPONDING feeds the message to the subprocess, which absorbs it
+        into the current turn. No state change — just write to stdin.
+        """
+        if self.state == ConversationState.COLD:
+            raise RuntimeError(f"Chat {self.id} is COLD — resurrect first")
+        if self.state == ConversationState.STARTING:
+            raise RuntimeError(f"Chat {self.id} is still STARTING")
+
+        if self.state == ConversationState.RESPONDING:
+            # Interjection — feed to subprocess, no state change.
+            await self._claude.send(content)
+            return
+
+        # New turn: ENRICHING -> RESPONDING (after enrobe)
+        # or READY -> RESPONDING (direct send, backward compat)
+        if self.state == ConversationState.READY:
+            # Direct send without begin_turn() — backward compat path.
+            self._cancel_reap_timer()
+            self.updated_at = time.time()
+            if not self.title:
+                for block in content:
+                    if block.get("type") == "text" and block.get("text"):
+                        self.title = block["text"][:80]
+                        break
+
+        self.state = ConversationState.RESPONDING
         await self._claude.send(content)
 
     async def events(self) -> AsyncIterator[Event]:
-        """Stream events until the turn completes."""
+        """Stream events until the turn completes.
+
+        On ResultEvent: conversation -> READY, suggest -> ARMED.
+        """
         if not self._claude:
             raise RuntimeError(f"Chat {self.id} has no subprocess")
 
@@ -200,23 +281,26 @@ class Chat:
                 if isinstance(event, ResultEvent):
                     if event.session_id:
                         self.session_uuid = event.session_id
-                    self.state = ChatState.IDLE
+                    # State vector transition: turn complete
+                    self.state = ConversationState.READY
+                    self.suggest = SuggestState.ARMED
                     self._start_reap_timer()
                     yield event
                     return
                 yield event
         except Exception:
             self._snapshot_token_state()
-            self.state = ChatState.DEAD
+            self.state = ConversationState.COLD
+            self.suggest = SuggestState.DISARMED
             self._claude = None
             raise
 
     async def interrupt(self) -> None:
-        """Interrupt the current turn. *->DEAD."""
+        """Interrupt the current turn. * -> COLD."""
         await self.reap()
 
     async def reap(self) -> None:
-        """Kill the subprocess. *->DEAD."""
+        """Kill the subprocess. * -> COLD, suggest -> DISARMED."""
         self._cancel_reap_timer()
         if self._claude:
             self._snapshot_token_state()
@@ -225,12 +309,13 @@ class Chat:
             except Exception:
                 pass
             self._claude = None
-        self.state = ChatState.DEAD
+        self.state = ConversationState.COLD
+        self.suggest = SuggestState.DISARMED
 
     async def resurrect(self, system_prompt: str = "", session_uuid: str | None = None) -> None:
-        """Bring a DEAD chat back to life via --resume. DEAD->STARTING->IDLE."""
-        if self.state != ChatState.DEAD:
-            raise RuntimeError(f"Can only resurrect DEAD chats, not {self.state.value}")
+        """Bring a COLD chat back to life via --resume. COLD -> STARTING -> READY."""
+        if self.state != ConversationState.COLD:
+            raise RuntimeError(f"Can only resurrect COLD chats, not {self.state.value}")
 
         uuid = session_uuid or self.session_uuid
         if not uuid:
@@ -238,7 +323,7 @@ class Chat:
 
         prompt = system_prompt or self._system_prompt
 
-        self.state = ChatState.STARTING
+        self.state = ConversationState.STARTING
 
         try:
             self._claude = Claude(
@@ -248,20 +333,15 @@ class Chat:
             )
             await self._claude.start(uuid)
 
-            # --resume loads the session JSONL and restores context silently.
-            # No events are emitted — the subprocess goes READY and waits
-            # for input.  (A previous drain loop here caused a deadlock:
-            # we waited for events that would never come.)
-
-            self.state = ChatState.IDLE
+            self.state = ConversationState.READY
             self._start_reap_timer()
 
         except Exception:
-            self.state = ChatState.DEAD
+            self.state = ConversationState.COLD
             self._claude = None
             raise
 
-    # -- Token state snapshot ----------------------------------------------
+    # -- Token state snapshot --------------------------------------------------
 
     def _snapshot_token_state(self) -> None:
         if self._claude:
@@ -272,7 +352,7 @@ class Chat:
             if window > 0:
                 self._cached_context_window = window
 
-    # -- Reap timer -------------------------------------------------------
+    # -- Reap timer -----------------------------------------------------------
 
     def _start_reap_timer(self) -> None:
         self._cancel_reap_timer()
@@ -283,7 +363,7 @@ class Chat:
             # Don't cancel yourself. When _reap_after() calls reap() which
             # calls us, we ARE the reap task. Self-cancellation raises
             # CancelledError at the next await inside reap(), which prevents
-            # reap() from ever setting state = DEAD. The birthday bug.
+            # reap() from ever setting state = COLD. The birthday bug.
             if self._reap_task is not asyncio.current_task():
                 self._reap_task.cancel()
             self._reap_task = None
