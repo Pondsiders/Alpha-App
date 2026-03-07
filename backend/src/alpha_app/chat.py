@@ -7,6 +7,7 @@ See KERNEL.md for the full design.
 """
 
 import asyncio
+import os
 import secrets
 import time
 from collections.abc import Awaitable, Callable
@@ -19,7 +20,8 @@ from alpha_sdk import Claude, Event, ResultEvent
 MODEL = "claude-haiku-4-5-20251001"
 
 # Idle chat timeout in seconds. After this, subprocess gets reaped.
-REAP_TIMEOUT = 600  # 10 minutes
+# Exposed as env var so e2e tests can shorten it. Defaults to 10 minutes.
+REAP_TIMEOUT = int(os.environ.get("_ALPHA_REAP_TIMEOUT", "600"))
 
 
 def generate_chat_id() -> str:
@@ -278,7 +280,12 @@ class Chat:
 
     def _cancel_reap_timer(self) -> None:
         if self._reap_task:
-            self._reap_task.cancel()
+            # Don't cancel yourself. When _reap_after() calls reap() which
+            # calls us, we ARE the reap task. Self-cancellation raises
+            # CancelledError at the next await inside reap(), which prevents
+            # reap() from ever setting state = DEAD. The birthday bug.
+            if self._reap_task is not asyncio.current_task():
+                self._reap_task.cancel()
             self._reap_task = None
 
     async def _reap_after(self, seconds: float) -> None:

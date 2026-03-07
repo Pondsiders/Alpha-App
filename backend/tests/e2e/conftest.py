@@ -146,6 +146,10 @@ class Backend:
             "ANTHROPIC_BASE_URL": self._mock_api_url,
             # Point at the test database — never touch production.
             "DATABASE_URL": self._test_db_url,
+            # Short reap timeout for testing. Default is 600s (10 min).
+            # 15s is long enough that no existing test accidentally triggers
+            # a reap, short enough that the reap test doesn't take forever.
+            "_ALPHA_REAP_TIMEOUT": "15",
         }
 
         self._proc = subprocess.Popen(
