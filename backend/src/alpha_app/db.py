@@ -19,8 +19,11 @@ Usage:
 
 import json
 import os
+from datetime import datetime, timezone
 
 import asyncpg
+
+from alpha_app.chat import Chat
 
 _pool: asyncpg.Pool | None = None
 
@@ -61,3 +64,75 @@ def get_pool() -> asyncpg.Pool:
     if _pool is None:
         raise RuntimeError("Postgres pool not initialized — call init_pool() first")
     return _pool
+
+
+# -- Chat persistence ---------------------------------------------------------
+
+
+async def persist_chat(chat: Chat) -> None:
+    """Persist chat metadata to Postgres. Upsert by chat ID."""
+    try:
+        pool = get_pool()
+        updated = datetime.fromtimestamp(chat.updated_at, tz=timezone.utc)
+        await pool.execute(
+            """
+            INSERT INTO app.chats (id, updated_at, data)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (id) DO UPDATE
+                SET updated_at = EXCLUDED.updated_at,
+                    data = EXCLUDED.data
+            """,
+            chat.id,
+            updated,
+            chat.to_data(),
+        )
+    except Exception:
+        pass  # Non-fatal
+
+
+async def list_chats() -> list[dict]:
+    """Load chat list from Postgres for sidebar hydration."""
+    try:
+        pool = get_pool()
+        rows = await pool.fetch(
+            """
+            SELECT id, updated_at, data
+            FROM app.chats
+            ORDER BY updated_at DESC
+            LIMIT 100
+            """
+        )
+        result = []
+        for row in rows:
+            data = row["data"]
+            result.append({
+                "chatId": row["id"],
+                "title": data.get("title", ""),
+                "state": "dead",
+                "updatedAt": row["updated_at"].timestamp(),
+                "sessionUuid": data.get("session_uuid", ""),
+                "tokenCount": data.get("token_count", 0) or 0,
+                "contextWindow": data.get("context_window", 0) or 200_000,
+            })
+        return result
+    except Exception:
+        return []
+
+
+async def load_chat(chat_id: str) -> Chat | None:
+    """Load a chat's metadata from Postgres. Returns a DEAD Chat, or None."""
+    try:
+        pool = get_pool()
+        row = await pool.fetchrow(
+            "SELECT id, updated_at, data FROM app.chats WHERE id = $1",
+            chat_id,
+        )
+        if row:
+            return Chat.from_db(
+                chat_id=row["id"],
+                updated_at=row["updated_at"].timestamp(),
+                data=row["data"],
+            )
+        return None
+    except Exception:
+        return None

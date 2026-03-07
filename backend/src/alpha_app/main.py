@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from alpha_sdk import read_soul
+from alpha_sdk import assemble_system_prompt
 from alpha_app.chat import Chat, ChatState, Holster
 from alpha_app.db import init_pool, close_pool
 from alpha_app.routes.sessions import router as sessions_router
@@ -26,12 +26,12 @@ logfire.configure(service_name="alpha-app", scrubbing=False)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """App lifespan — read soul, warm holster, clean shutdown."""
+    """App lifespan — assemble system prompt, warm holster, clean shutdown."""
     # Startup
     await init_pool()
 
     try:
-        soul = read_soul()
+        soul = await assemble_system_prompt()
     except (RuntimeError, FileNotFoundError):
         soul = ""
 
