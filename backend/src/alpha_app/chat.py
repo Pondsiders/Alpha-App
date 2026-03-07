@@ -116,6 +116,11 @@ class Chat:
         self._cached_token_count: int = 0
         self._cached_context_window: int = 200_000
 
+        # Approach light thresholds — each fires exactly once per session.
+        # Reset on resurrect (context shrinks after compaction).
+        self._crossed_yellow: bool = False
+        self._crossed_red: bool = False
+
         # Broadcast callback — called after reap so all clients see the state change.
         # Set externally by the WS handler. Signature: async (chat_id: str) -> None.
         self.on_reap: Callable[[str], Awaitable[None]] | None = None
@@ -210,6 +215,30 @@ class Chat:
         """Set trace context so proxy spans nest under the consumer's trace."""
         if self._claude:
             self._claude.set_trace_context(ctx)
+
+    # -- Approach light -------------------------------------------------------
+
+    def check_approach_threshold(self) -> str | None:
+        """Check if a new approach light threshold was just crossed.
+
+        Returns 'yellow' or 'red' if a NEW threshold was crossed, None otherwise.
+        Each threshold fires exactly once per session. Resets on resurrect.
+
+        Thresholds:
+          65% → yellow (start wrapping up)
+          75% → red (compaction imminent, ~80-85%)
+        """
+        if self.context_window <= 0:
+            return None
+        ratio = self.token_count / self.context_window
+        if ratio >= 0.75 and not self._crossed_red:
+            self._crossed_red = True
+            self._crossed_yellow = True  # Skip yellow if we jumped past it
+            return "red"
+        if ratio >= 0.65 and not self._crossed_yellow:
+            self._crossed_yellow = True
+            return "yellow"
+        return None
 
     # -- Turn lifecycle -------------------------------------------------------
 
@@ -334,6 +363,8 @@ class Chat:
             await self._claude.start(uuid)
 
             self.state = ConversationState.READY
+            self._crossed_yellow = False
+            self._crossed_red = False
             self._start_reap_timer()
 
         except Exception:

@@ -1,18 +1,31 @@
 """streaming.py — Stream events from a Chat to all connected clients.
 
 Handles the inner event loop: reads from chat.events(), broadcasts
-text deltas, thinking deltas, tool calls, context updates, and the
-final result to every connected WebSocket.
+text deltas, thinking deltas, tool calls, context updates, approach
+light interjections, and the final result to every connected WebSocket.
 """
 
 import json
 
+import logfire
 from alpha_sdk import AssistantEvent, ErrorEvent, ResultEvent, StreamEvent
 
 from alpha_app.chat import Chat, ConversationState
 from alpha_app.db import persist_chat
 from alpha_app.routes.broadcast import broadcast
 from alpha_app.routes.spans import set_turn_span_response
+
+# Approach light warning messages — injected as interjections mid-turn.
+_APPROACH_WARNINGS = {
+    "yellow": (
+        "[Context: yellow] Context window is 65% full. "
+        "Start wrapping up — store important memories while there's room."
+    ),
+    "red": (
+        "[Context: red] Context window is 75% full. Compaction is imminent. "
+        "Store critical memories NOW and prepare for handoff."
+    ),
+}
 
 
 async def stream_chat_events(connections: set, chat: Chat, span=None) -> None:
@@ -28,7 +41,7 @@ async def stream_chat_events(connections: set, chat: Chat, span=None) -> None:
 
     try:
         async for event in chat.events():
-            # Real-time context updates
+            # Real-time context updates + async approach lights
             current_tokens = chat.token_count
             if current_tokens != last_token_count:
                 last_token_count = current_tokens
@@ -43,6 +56,33 @@ async def stream_chat_events(connections: set, chat: Chat, span=None) -> None:
                     })
                 except Exception:
                     pass
+
+                # Approach light: check if a threshold was just crossed.
+                # Each fires exactly once — yellow at 65%, red at 75%.
+                # Drops an interjection into the running conversation so
+                # Alpha gets the warning mid-turn, between tool calls.
+                threshold = chat.check_approach_threshold()
+                if threshold is not None:
+                    warning = _APPROACH_WARNINGS[threshold]
+                    logfire.info(
+                        "approach light: {threshold}",
+                        threshold=threshold,
+                        chat_id=chat_id,
+                        token_count=current_tokens,
+                        context_window=chat.context_window,
+                    )
+                    try:
+                        await chat.send([{"type": "text", "text": warning}])
+                    except Exception:
+                        pass  # Don't crash streaming if interjection fails
+                    try:
+                        await broadcast(connections, {
+                            "type": "approach-light",
+                            "chatId": chat_id,
+                            "data": threshold,
+                        })
+                    except Exception:
+                        pass
 
             if isinstance(event, StreamEvent):
                 if event.delta_type == "text_delta":
