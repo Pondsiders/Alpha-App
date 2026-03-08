@@ -329,6 +329,20 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
     }
   }, [assistantIdMapRef]);
 
+  // Buzz — the nonverbal hello. Sends a signal (not a message) to the backend.
+  // The backend constructs a narration message that Alpha sees but the human doesn't.
+  const onBuzz = useCallback(() => {
+    const chatId = activeChatIdRef.current;
+    if (!chatId) return;
+
+    // Create assistant placeholder — the response needs somewhere to land
+    const assistantId = addAssistantPlaceholder();
+    assistantIdMapRef.current[chatId] = assistantId;
+
+    // Send the buzz — no content, no user message, just a knock on the door
+    sendRef.current({ type: "buzz", chatId });
+  }, [addAssistantPlaceholder, assistantIdMapRef]);
+
   const adapters = useMemo(
     () => ({ attachments: new SimpleImageAttachmentAdapter() }),
     []
@@ -357,10 +371,8 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
             <div className="max-w-3xl mx-auto w-full flex-1">
               {messages.length === 0 && !isRunning && (
                 <div className="flex-1 flex items-center justify-center h-full">
-                  <p className="text-muted text-xl">
-                    {connected
-                      ? "How can I help you today?"
-                      : "Connecting..."}
+                  <p className="text-primary/40 text-2xl font-light tracking-wide select-none">
+                    {connected ? "Alpha" : "Connecting..."}
                   </p>
                 </div>
               )}
@@ -396,6 +408,18 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
               <div className="flex justify-end items-center gap-3">
                 {/* Attach image button */}
                 <ComposerAddAttachment />
+
+                {/* Buzz — the nonverbal hello. Only on fresh chats. */}
+                {messages.length === 0 && connected && !isRunning && activeChatId && (
+                  <button
+                    data-testid="buzz-button"
+                    onClick={onBuzz}
+                    className="w-9 h-9 flex items-center justify-center bg-transparent border border-border rounded-lg cursor-pointer hover:border-primary/60 transition-colors text-base"
+                    title="Say hi"
+                  >
+                    🦆
+                  </button>
+                )}
 
                 {/* Send — always visible. Works as interjection when busy (duplex). */}
                 <ComposerPrimitive.Send

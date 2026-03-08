@@ -14,6 +14,7 @@ Client -> Server messages:
   { "type": "list-chats" }
   { "type": "send", "chatId": "...", "content": "Hello" }
   { "type": "send", "chatId": "...", "content": [{ "type": "text", "text": "Hello" }, ...] }
+  { "type": "buzz", "chatId": "..." }  -- nonverbal hello, Alpha talks first
   { "type": "interrupt", "chatId": "..." }
 
 Server -> Client messages (unicast — response to requester only):
@@ -41,6 +42,7 @@ from alpha_app.db import load_chat
 from alpha_app.routes.broadcast import broadcast
 from alpha_app.routes.handlers import handle_create_chat, handle_interrupt, handle_list_chats
 from alpha_app.routes.turn import handle_interjection, handle_new_turn
+from alpha_app.strings import BUZZ_NARRATION
 
 router = APIRouter()
 
@@ -135,6 +137,36 @@ async def websocket_chat(ws: WebSocket) -> None:
                         handle_new_turn(ws, connections, chat, content, turn_input_messages, streaming_tasks)
                     )
                     streaming_tasks[chat_id] = task
+
+            elif msg_type == "buzz":
+                # The nonverbal hello. No user message — just a stage direction
+                # that Alpha sees and the human doesn't.
+                chat_id = raw.get("chatId", "")
+
+                if not chat_id:
+                    await ws.send_json({"type": "error", "data": "Missing chatId"})
+                    continue
+
+                chat = chats.get(chat_id)
+                if not chat:
+                    chat = await load_chat(chat_id)
+                    if chat:
+                        chat.on_reap = on_chat_reap
+                        chats[chat_id] = chat
+                    else:
+                        await ws.send_json({"type": "error", "chatId": chat_id, "data": "Chat not found"})
+                        await ws.send_json({"type": "done", "chatId": chat_id})
+                        continue
+
+                # Narration message — stage direction, not a human message
+                narration = [{"type": "text", "text": BUZZ_NARRATION}]
+
+                # No user-message echo — the narration is invisible to the human.
+                # Go straight to turn, same as send but without the broadcast.
+                task = asyncio.create_task(
+                    handle_new_turn(ws, connections, chat, narration, turn_input_messages, streaming_tasks)
+                )
+                streaming_tasks[chat_id] = task
 
             elif msg_type == "interrupt":
                 chat_id = raw.get("chatId", "")
