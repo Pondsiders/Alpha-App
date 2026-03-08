@@ -29,6 +29,7 @@ alpha-sdk = { path = "../../alpha_sdk-next", editable = true }
 
 [dependency-groups]
 dev = [
+    "pytest-asyncio>=0.23",
     "pytest-playwright>=0.7.2",
     "websockets>=14.0",
 ]

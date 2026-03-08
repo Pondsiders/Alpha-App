@@ -24,6 +24,7 @@ import json
 import re
 from pathlib import Path
 
+import pytest
 import websockets
 from playwright.sync_api import Page, expect
 
@@ -110,7 +111,8 @@ async def _reap_lifecycle_protocol(ws_url: str) -> None:
         )
 
 
-def test_reap_lifecycle_protocol(base_url: str) -> None:
+@pytest.mark.asyncio
+async def test_reap_lifecycle_protocol(base_url: str) -> None:
     """Protocol test: reap timer fires, chat-state:dead arrives via WebSocket.
 
     No browser. No UI. Just the wire protocol. If this fails, the reap
@@ -121,7 +123,7 @@ def test_reap_lifecycle_protocol(base_url: str) -> None:
     then waits for the reap timer to fire and deliver chat-state:dead.
     """
     ws_url = base_url.replace("http://", "ws://") + "/ws"
-    asyncio.run(_reap_lifecycle_protocol(ws_url))
+    await _reap_lifecycle_protocol(ws_url)
 
 
 # ---------------------------------------------------------------------------
