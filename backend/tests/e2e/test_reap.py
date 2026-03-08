@@ -19,14 +19,13 @@ Run with:
     cd Alpha-App/backend && uv run pytest tests/e2e/test_reap.py -v
 """
 
-import asyncio
 import json
 import re
+import time
 from pathlib import Path
 
-import pytest
-import websockets
 from playwright.sync_api import Page, expect
+from websockets.sync.client import connect as ws_connect
 
 # Reuse constants from the streaming tests.
 SCREENSHOT_DIR = Path(__file__).parent / "screenshots"
@@ -56,17 +55,27 @@ def _enter_chat(page: Page, base_url: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _reap_lifecycle_protocol(ws_url: str) -> None:
-    """Connect, create chat, send message, wait for reap, verify death."""
-    async with websockets.connect(ws_url) as ws:
+def test_reap_lifecycle_protocol(base_url: str) -> None:
+    """Protocol test: reap timer fires, chat-state:dead arrives via WebSocket.
+
+    No browser. No UI. Just the wire protocol. If this fails, the reap
+    timer is broken at the backend level — the birthday bug (March 7, 2026).
+
+    Uses synchronous WebSocket (websockets.sync.client) to avoid event loop
+    conflicts with Playwright's sync fixtures. The original async version
+    hit RuntimeError: Runner.run() cannot be called from a running event loop.
+    """
+    ws_url = base_url.replace("http://", "ws://") + "/ws"
+
+    with ws_connect(ws_url) as ws:
         # Create a chat
-        await ws.send(json.dumps({"type": "create-chat"}))
-        msg = json.loads(await ws.recv())
+        ws.send(json.dumps({"type": "create-chat"}))
+        msg = json.loads(ws.recv(timeout=30))
         assert msg["type"] == "chat-created", f"Expected chat-created, got {msg['type']}"
         chat_id = msg["chatId"]
 
         # Send a message
-        await ws.send(json.dumps({
+        ws.send(json.dumps({
             "type": "send",
             "chatId": chat_id,
             "content": "\u00a7echo:Reap me if you can",
@@ -76,7 +85,7 @@ async def _reap_lifecycle_protocol(ws_url: str) -> None:
         # We'll see chat-state:busy, text-delta(s), chat-state:idle, done.
         got_idle = False
         while True:
-            raw = await asyncio.wait_for(ws.recv(), timeout=30)
+            raw = ws.recv(timeout=30)
             msg = json.loads(raw)
             if msg["type"] == "chat-state" and msg.get("chatId") == chat_id:
                 if msg["data"]["state"] == "idle":
@@ -88,12 +97,12 @@ async def _reap_lifecycle_protocol(ws_url: str) -> None:
 
         # Now wait for the reap timer to fire.
         # The backend should send chat-state:dead when the timer fires.
-        deadline = asyncio.get_event_loop().time() + REAP_WAIT_S
+        deadline = time.monotonic() + REAP_WAIT_S
         got_dead = False
-        while asyncio.get_event_loop().time() < deadline:
-            remaining = deadline - asyncio.get_event_loop().time()
+        while time.monotonic() < deadline:
+            remaining = deadline - time.monotonic()
             try:
-                raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
+                raw = ws.recv(timeout=remaining)
                 msg = json.loads(raw)
                 if (
                     msg["type"] == "chat-state"
@@ -102,28 +111,13 @@ async def _reap_lifecycle_protocol(ws_url: str) -> None:
                 ):
                     got_dead = True
                     break
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 break
 
         assert got_dead, (
             f"Reap timer did not fire within {REAP_WAIT_S}s. "
             f"The birthday bug is back."
         )
-
-
-@pytest.mark.asyncio
-async def test_reap_lifecycle_protocol(base_url: str) -> None:
-    """Protocol test: reap timer fires, chat-state:dead arrives via WebSocket.
-
-    No browser. No UI. Just the wire protocol. If this fails, the reap
-    timer is broken at the backend level — the birthday bug (March 7, 2026).
-
-    The test connects a raw WebSocket client to the running backend,
-    creates a chat, sends a message, waits for the turn to complete,
-    then waits for the reap timer to fire and deliver chat-state:dead.
-    """
-    ws_url = base_url.replace("http://", "ws://") + "/ws"
-    await _reap_lifecycle_protocol(ws_url)
 
 
 # ---------------------------------------------------------------------------
