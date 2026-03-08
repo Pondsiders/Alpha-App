@@ -43,6 +43,7 @@ function Layout() {
     updateChatTokens: useWorkshopStore.getState().updateChatTokens,
     addRemoteUserMessage: useWorkshopStore.getState().addRemoteUserMessage,
     addRemoteAssistantPlaceholder: useWorkshopStore.getState().addRemoteAssistantPlaceholder,
+    addApproachLight: useWorkshopStore.getState().addApproachLight,
   });
   // Keep the ref fresh (store actions are stable with immer, but belt & suspenders)
   actionsRef.current = {
@@ -58,6 +59,7 @@ function Layout() {
     updateChatTokens: useWorkshopStore.getState().updateChatTokens,
     addRemoteUserMessage: useWorkshopStore.getState().addRemoteUserMessage,
     addRemoteAssistantPlaceholder: useWorkshopStore.getState().addRemoteAssistantPlaceholder,
+    addApproachLight: useWorkshopStore.getState().addApproachLight,
   };
 
   // Shared assistant ID map — Layout reads, ChatPage writes
@@ -206,6 +208,13 @@ function Layout() {
         if (!eChatId) break;
         const ctx = event.data as { tokenCount: number; tokenLimit: number };
         actions.updateChatTokens(eChatId, ctx.tokenCount, ctx.tokenLimit);
+        break;
+      }
+
+      case "approach-light": {
+        if (!eChatId) break;
+        const alData = event.data as { level: "yellow" | "red"; text: string };
+        actions.addApproachLight(eChatId, alData.level, alData.text);
         break;
       }
 

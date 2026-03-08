@@ -49,11 +49,18 @@ function formatRelative(epochSeconds: number): string {
 // Indicator Light
 // ---------------------------------------------------------------------------
 
-const DOT_STYLES: Record<ChatState, string> = {
-  idle: "bg-green-500",
-  busy: "bg-amber-500 animate-pulse",
-  starting: "bg-amber-500 animate-pulse",
-  dead: "bg-neutral-500",
+const DOT_COLORS: Record<ChatState, string> = {
+  idle: "var(--theme-success)",
+  busy: "var(--theme-primary)",
+  starting: "var(--theme-primary)",
+  dead: "var(--theme-muted)",
+};
+
+const DOT_ANIMATIONS: Record<ChatState, string> = {
+  idle: "",
+  busy: "animate-pulse",
+  starting: "animate-pulse",
+  dead: "",
 };
 
 const STATE_LABELS: Record<ChatState, { text: string; color: string }> = {
@@ -69,7 +76,8 @@ function ChatIndicator({ state, chatId }: { state: ChatState; chatId: string }) 
     <HoverCard openDelay={300} closeDelay={100}>
       <HoverCardTrigger asChild>
         <span
-          className={`shrink-0 w-2 h-2 rounded-full cursor-default ${DOT_STYLES[state]}`}
+          className={`shrink-0 w-2 h-2 rounded-full cursor-default ${DOT_ANIMATIONS[state]}`}
+          style={{ backgroundColor: DOT_COLORS[state] }}
           aria-label={state}
         />
       </HoverCardTrigger>

@@ -23,6 +23,8 @@ export interface ServerEvent {
     | "chat-state"
     | "chat-list"
     | "context-update"
+    | "approach-light"
+    | "enrichment-timestamp"
     | "user-message"
     | "error"
     | "done"

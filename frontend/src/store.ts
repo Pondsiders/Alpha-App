@@ -44,6 +44,11 @@ export interface Message {
 
 export type ChatState = "starting" | "idle" | "busy" | "dead";
 
+export interface ApproachLight {
+  level: "yellow" | "red";
+  text: string;
+}
+
 export interface ChatMeta {
   id: string;
   title: string;
@@ -75,6 +80,9 @@ interface WorkshopState {
   model: string | null;
   tokenCount: number;
   tokenLimit: number;
+
+  // Approach lights (per-chat)
+  approachLights: Record<string, ApproachLight[]>;
 }
 
 interface WorkshopActions {
@@ -117,6 +125,9 @@ interface WorkshopActions {
   setTokens: (count: number, limit: number) => void;
   updateChatTokens: (chatId: string, tokenCount: number, contextWindow: number) => void;
 
+  // Approach lights
+  addApproachLight: (chatId: string, level: "yellow" | "red", text: string) => void;
+
   // Reset
   reset: () => void;
 }
@@ -144,6 +155,7 @@ const initialState: WorkshopState = {
   model: null,
   tokenCount: 0,
   tokenLimit: 0,
+  approachLights: {},
 };
 
 export const useWorkshopStore = create<WorkshopStore>()(
@@ -477,6 +489,17 @@ export const useWorkshopStore = create<WorkshopStore>()(
             ? Math.round((tokenCount / contextWindow) * 1000) / 10
             : 0;
         }
+      });
+    },
+
+    // -- Approach lights ------------------------------------------------------
+
+    addApproachLight: (chatId, level, text) => {
+      set((state) => {
+        if (!state.approachLights[chatId]) {
+          state.approachLights[chatId] = [];
+        }
+        state.approachLights[chatId].push({ level, text });
       });
     },
 

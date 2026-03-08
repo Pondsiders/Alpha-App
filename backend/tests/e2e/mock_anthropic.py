@@ -14,6 +14,8 @@ Control behavior via §-prefix in the last user message:
     §hang     → starts streaming, never sends message_stop
     §empty    → valid SSE response with empty text
     §echo:... → echoes back the text after the colon
+    §tokens:N → lorem ipsum with input_tokens set to N
+    §test_approach_lights_N → scripted beats (1-4) with specific token counts
 
 Usage:
     # Standalone:
@@ -251,6 +253,31 @@ async def messages(request: Request):
             media_type="text/event-stream",
         )
 
+    # -- §tokens:N : lorem ipsum with custom input_tokens ---
+    if command.startswith("§tokens:"):
+        n = int(command[len("§tokens:"):])
+        return StreamingResponse(
+            _stream_text(LOREM, chunk_size=20, delay=0.01, input_tokens=n),
+            media_type="text/event-stream",
+        )
+
+    # -- §test_approach_lights_N: scripted beats for approach light test ---
+    # Four beats with specific input_tokens to cross (or not cross) thresholds.
+    # Context window is 200k. Yellow at 65% (130k), red at 75% (150k).
+    if command.startswith("§test_approach_lights_"):
+        beat = command.split("_")[-1]
+        tokens_map = {
+            "1": 75000,    # 37.5% — below yellow, no alert
+            "2": 135000,   # 67.5% — crosses yellow
+            "3": 155000,   # 77.5% — crosses red
+            "4": 170000,   # 85.0% — no new threshold
+        }
+        tokens = tokens_map.get(beat, 1000)
+        return StreamingResponse(
+            _stream_text(LOREM, chunk_size=20, delay=0.01, input_tokens=tokens),
+            media_type="text/event-stream",
+        )
+
     # -- §slow: lorem ipsum with 200ms delays ---
     if command == "§slow":
         return StreamingResponse(
@@ -365,5 +392,5 @@ if __name__ == "__main__":
     port = int(os.getenv("MOCK_PORT", str(MOCK_PORT)))
     print(f"🎭 Mock Anthropic API on http://127.0.0.1:{port}")
     print(f"   POST /v1/messages — streams SSE responses")
-    print(f"   §-commands: §long, §slow, §error, §hang, §empty, §echo:...")
+    print(f"   §-commands: §long, §slow, §error, §hang, §empty, §echo:..., §tokens:N")
     uvicorn.run(app, host="127.0.0.1", port=port)

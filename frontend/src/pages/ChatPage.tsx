@@ -35,7 +35,13 @@ import {
   type Message,
 } from "../store";
 import { StatusBar } from "@/components/StatusBar";
+import { ApproachLight } from "@/components/ApproachLight";
+import type { ApproachLight as ApproachLightType } from "@/store";
 import type { ClientMessage } from "@/lib/useWebSocket";
+
+// Stable empty array — avoids infinite re-renders with Zustand's Object.is check.
+// `?? []` creates a new reference every call; Zustand sees new !== old and re-renders.
+const EMPTY_LIGHTS: ApproachLightType[] = [];
 
 // -----------------------------------------------------------------------------
 // Props
@@ -172,6 +178,9 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
   const activeChatId = useWorkshopStore((s) => s.activeChatId);
   const activeChat = useWorkshopStore((s) =>
     s.activeChatId ? s.chats[s.activeChatId] : null
+  );
+  const approachLights = useWorkshopStore((s) =>
+    s.activeChatId ? s.approachLights[s.activeChatId] ?? EMPTY_LIGHTS : EMPTY_LIGHTS
   );
 
   // isRunning is derived from chat state — no more global boolean
@@ -362,6 +371,11 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
                   AssistantMessage,
                 }}
               />
+
+              {/* Approach lights — stage directions, not bubbles */}
+              {approachLights.map((light, i) => (
+                <ApproachLight key={`${light.level}-${i}`} {...light} />
+              ))}
 
             </div>
 

@@ -38,6 +38,7 @@ async def stream_chat_events(connections: set, chat: Chat, span=None) -> None:
     turn_completed = False
     last_token_count = chat.token_count
     output_parts: list[dict] = []
+    interjection_count = 0
 
     try:
         async for event in chat.events():
@@ -73,13 +74,14 @@ async def stream_chat_events(connections: set, chat: Chat, span=None) -> None:
                     )
                     try:
                         await chat.send([{"type": "text", "text": warning}])
+                        interjection_count += 1
                     except Exception:
                         pass  # Don't crash streaming if interjection fails
                     try:
                         await broadcast(connections, {
                             "type": "approach-light",
                             "chatId": chat_id,
-                            "data": threshold,
+                            "data": {"level": threshold, "text": warning},
                         })
                     except Exception:
                         pass
@@ -133,6 +135,14 @@ async def stream_chat_events(connections: set, chat: Chat, span=None) -> None:
 
             elif isinstance(event, ErrorEvent):
                 await broadcast(connections, {"type": "error", "chatId": chat_id, "data": event.message})
+
+        # Drain interjection responses. Each approach light interjection
+        # triggers a new subprocess turn; consume those events silently
+        # so they don't contaminate the next user message's event stream.
+        for _ in range(interjection_count):
+            async for drain_event in chat.events():
+                if isinstance(drain_event, ResultEvent):
+                    break
 
     except Exception as e:
         if span:
