@@ -15,6 +15,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from alpha_sdk import assemble_system_prompt
+from alpha_sdk.memories import init_schema as init_cortex_schema, close as close_cortex
+from alpha_sdk.tools import create_cortex_server
 from alpha_app.chat import Chat, ConversationState, Holster
 from alpha_app.db import init_pool, close_pool
 from alpha_app.routes.sessions import router as sessions_router
@@ -30,16 +32,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Startup
     await init_pool()
 
+    # Initialize Cortex schema (idempotent — like kanji)
+    try:
+        await init_cortex_schema()
+    except Exception:
+        pass  # Non-fatal — Cortex tools degrade gracefully without schema
+
     try:
         soul = await assemble_system_prompt()
     except (RuntimeError, FileNotFoundError):
         soul = ""
 
-    holster = Holster(system_prompt=soul)
+    # Create Cortex MCP server — memory tools served in-process
+    cortex_server = create_cortex_server()
+    mcp_servers = {"cortex": cortex_server}
+
+    holster = Holster(system_prompt=soul, mcp_servers=mcp_servers)
     app.state.holster = holster
     app.state.chats = {}  # dict[str, Chat]
     app.state.connections = set()  # set[WebSocket] — all live WS connections (the switch)
     app.state.system_prompt = soul  # Stored for resurrection
+    app.state.mcp_servers = mcp_servers  # Stored for resurrection
 
     await holster.warm()
 
@@ -50,6 +63,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if chat.state != ConversationState.COLD:
             await chat.reap()
     await holster.shutdown()
+    await close_cortex()
     await close_pool()
 
 

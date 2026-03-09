@@ -84,7 +84,10 @@ async def handle_new_turn(
                         "contextWindow": chat.context_window,
                     },
                 })
-                await chat.resurrect(system_prompt=ws.app.state.system_prompt)
+                await chat.resurrect(
+                    system_prompt=ws.app.state.system_prompt,
+                    mcp_servers=getattr(ws.app.state, "mcp_servers", None),
+                )
                 resurrected = True
                 await broadcast(connections, {
                     "type": "chat-state",

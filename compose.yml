@@ -12,8 +12,11 @@ services:
     environment:
       - ALPHA_CWD=/app
       - JE_NE_SAIS_QUOI=/Pondside/Alpha-Home/Alpha
+      - OLLAMA_URL=http://primer.tail8bd569.ts.net:11434
       - SSL_CERTFILE=/certs/primer.tail8bd569.ts.net.crt
       - SSL_KEYFILE=/certs/primer.tail8bd569.ts.net.key
+    dns:
+      - 100.100.100.100
     volumes:
       # Claude auth — r/w so claude can refresh OAuth tokens
       - ${HOME}/.claude/.credentials.json:/home/alpha/.claude/.credentials.json

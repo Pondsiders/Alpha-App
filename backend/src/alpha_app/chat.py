@@ -21,7 +21,7 @@ import secrets
 import time
 from collections.abc import Awaitable, Callable
 from enum import Enum
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 from alpha_sdk import Claude, Event, ResultEvent
 
@@ -341,7 +341,12 @@ class Chat:
         self.state = ConversationState.COLD
         self.suggest = SuggestState.DISARMED
 
-    async def resurrect(self, system_prompt: str = "", session_uuid: str | None = None) -> None:
+    async def resurrect(
+        self,
+        system_prompt: str = "",
+        session_uuid: str | None = None,
+        mcp_servers: dict[str, Any] | None = None,
+    ) -> None:
         """Bring a COLD chat back to life via --resume. COLD -> STARTING -> READY."""
         if self.state != ConversationState.COLD:
             raise RuntimeError(f"Can only resurrect COLD chats, not {self.state.value}")
@@ -359,6 +364,7 @@ class Chat:
                 model=MODEL,
                 system_prompt=prompt or None,
                 permission_mode="bypassPermissions",
+                mcp_servers=mcp_servers,
             )
             await self._claude.start(uuid)
 
@@ -413,8 +419,13 @@ class Chat:
 class Holster:
     """One in the chamber. Always keeps one warm claude subprocess ready."""
 
-    def __init__(self, system_prompt: str = "") -> None:
+    def __init__(
+        self,
+        system_prompt: str = "",
+        mcp_servers: dict[str, Any] | None = None,
+    ) -> None:
         self._system_prompt = system_prompt
+        self._mcp_servers = mcp_servers or {}
         self._warm: Claude | None = None
         self._warming: asyncio.Task | None = None
 
@@ -434,6 +445,7 @@ class Holster:
                 model=MODEL,
                 system_prompt=self._system_prompt or None,
                 permission_mode="bypassPermissions",
+                mcp_servers=self._mcp_servers or None,
             )
             await claude.start(None)
             self._warm = claude
