@@ -325,13 +325,14 @@ export const useWorkshopStore = create<WorkshopStore>()(
         }
         if (!message || message.role !== "assistant") return;
 
-        const thinkingPart = message.content.find(
-          (p): p is { type: "thinking"; thinking: string } => p.type === "thinking"
-        );
-        if (thinkingPart) {
-          thinkingPart.thinking += thinking;
+        // Append to the LAST content part if it's a thinking block.
+        // If something else was inserted since (tool-call, text), start a new
+        // thinking block so interleaved thinking renders in stream order.
+        const last = message.content[message.content.length - 1];
+        if (last?.type === "thinking") {
+          (last as ThinkingPart).thinking += thinking;
         } else {
-          message.content.unshift({ type: "thinking", thinking });
+          message.content.push({ type: "thinking", thinking });
         }
       });
     },
