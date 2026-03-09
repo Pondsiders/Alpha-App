@@ -15,7 +15,8 @@ Control behavior via §-prefix in the last user message:
     §empty    → valid SSE response with empty text
     §echo:... → echoes back the text after the colon
     §tokens:N → lorem ipsum with input_tokens set to N
-    §test_approach_lights_N → scripted beats (1-4) with specific token counts
+    §test_approach_lights_N → scripted beats for approach light testing
+    [Context: yellow/red] → cascade responses for approach light interjections
 
 Usage:
     # Standalone:
@@ -175,6 +176,34 @@ def _extract_command(body: dict) -> str:
     return ""
 
 
+def _last_user_text(body: dict) -> str:
+    """Return the text of the last user message, or empty string.
+
+    Like _extract_command but returns raw text regardless of § prefix.
+    Used to detect approach light interjection messages in the conversation.
+    """
+    messages = body.get("messages", [])
+
+    for msg in reversed(messages):
+        if msg.get("role") != "user":
+            continue
+
+        content = msg.get("content")
+
+        if isinstance(content, str):
+            return content.strip()
+
+        if isinstance(content, list):
+            for block in reversed(content):
+                if isinstance(block, dict) and block.get("type") == "text":
+                    return block.get("text", "").strip()
+            return ""
+
+        return ""
+
+    return ""
+
+
 # -- Streaming generators ----------------------------------------------------
 
 
@@ -262,21 +291,45 @@ async def messages(request: Request):
         )
 
     # -- §test_approach_lights_N: scripted beats for approach light test ---
-    # Four beats with specific input_tokens to cross (or not cross) thresholds.
+    # Two beats: baseline (below yellow) and trigger (crosses yellow).
     # Context window is 200k. Yellow at 65% (130k), red at 75% (150k).
+    # The cascade from yellow → red is handled by interjection detection below.
     if command.startswith("§test_approach_lights_"):
         beat = command.split("_")[-1]
         tokens_map = {
-            "1": 75000,    # 37.5% — below yellow, no alert
-            "2": 135000,   # 67.5% — crosses yellow
-            "3": 155000,   # 77.5% — crosses red
-            "4": 170000,   # 85.0% — no new threshold
+            "1": 75000,    # 37.5% — below yellow, baseline
+            "2": 135000,   # 67.5% — crosses yellow, triggers cascade
         }
         tokens = tokens_map.get(beat, 1000)
         return StreamingResponse(
             _stream_text(LOREM, chunk_size=20, delay=0.01, input_tokens=tokens),
             media_type="text/event-stream",
         )
+
+    # -- Approach light interjection responses (cascade) ---
+    # When an approach light fires, it sends a warning to claude's stdin.
+    # Claude responds by calling the API with the warning in the conversation.
+    # Match on the warning text and return the next stage of the cascade:
+    #   yellow interjection → 77.5% (crosses red) → red fires
+    #   red interjection    → 85%   (no new threshold) → cascade done
+    if not command:
+        last_text = _last_user_text(body)
+        if "[Context: yellow]" in last_text:
+            return StreamingResponse(
+                _stream_text(
+                    "Acknowledged.", chunk_size=20, delay=0.01,
+                    input_tokens=155000,  # 77.5% — crosses red
+                ),
+                media_type="text/event-stream",
+            )
+        if "[Context: red]" in last_text:
+            return StreamingResponse(
+                _stream_text(
+                    "Acknowledged.", chunk_size=20, delay=0.01,
+                    input_tokens=170000,  # 85% — cascade terminus
+                ),
+                media_type="text/event-stream",
+            )
 
     # -- §slow: lorem ipsum with 200ms delays ---
     if command == "§slow":

@@ -28,6 +28,64 @@ _APPROACH_WARNINGS = {
 }
 
 
+async def _check_approach_light(
+    chat: Chat,
+    connections: set,
+    chat_id: str,
+    last_token_count: int,
+) -> tuple[int, int]:
+    """Check for threshold crossing, fire interjection + broadcast if needed.
+
+    Monitors chat.token_count for changes. When a new approach light
+    threshold is crossed, sends the warning as an interjection to claude
+    and broadcasts the approach-light event to all connected clients.
+
+    Returns (updated_last_token_count, interjections_sent).
+    """
+    current_tokens = chat.token_count
+    interjections_sent = 0
+
+    if current_tokens != last_token_count:
+        last_token_count = current_tokens
+        try:
+            await broadcast(connections, {
+                "type": "context-update",
+                "chatId": chat_id,
+                "data": {
+                    "tokenCount": current_tokens,
+                    "tokenLimit": chat.context_window,
+                },
+            })
+        except Exception:
+            pass
+
+        threshold = chat.check_approach_threshold()
+        if threshold is not None:
+            warning = _APPROACH_WARNINGS[threshold]
+            logfire.info(
+                "approach light: {threshold}",
+                threshold=threshold,
+                chat_id=chat_id,
+                token_count=current_tokens,
+                context_window=chat.context_window,
+            )
+            try:
+                await chat.send([{"type": "text", "text": warning}])
+                interjections_sent = 1
+            except Exception:
+                pass
+            try:
+                await broadcast(connections, {
+                    "type": "approach-light",
+                    "chatId": chat_id,
+                    "data": {"level": threshold, "text": warning},
+                })
+            except Exception:
+                pass
+
+    return last_token_count, interjections_sent
+
+
 async def stream_chat_events(connections: set, chat: Chat, span=None) -> None:
     """Stream events from a Chat to ALL connected clients.
 
@@ -43,48 +101,10 @@ async def stream_chat_events(connections: set, chat: Chat, span=None) -> None:
     try:
         async for event in chat.events():
             # Real-time context updates + async approach lights
-            current_tokens = chat.token_count
-            if current_tokens != last_token_count:
-                last_token_count = current_tokens
-                try:
-                    await broadcast(connections, {
-                        "type": "context-update",
-                        "chatId": chat_id,
-                        "data": {
-                            "tokenCount": current_tokens,
-                            "tokenLimit": chat.context_window,
-                        },
-                    })
-                except Exception:
-                    pass
-
-                # Approach light: check if a threshold was just crossed.
-                # Each fires exactly once — yellow at 65%, red at 75%.
-                # Drops an interjection into the running conversation so
-                # Alpha gets the warning mid-turn, between tool calls.
-                threshold = chat.check_approach_threshold()
-                if threshold is not None:
-                    warning = _APPROACH_WARNINGS[threshold]
-                    logfire.info(
-                        "approach light: {threshold}",
-                        threshold=threshold,
-                        chat_id=chat_id,
-                        token_count=current_tokens,
-                        context_window=chat.context_window,
-                    )
-                    try:
-                        await chat.send([{"type": "text", "text": warning}])
-                        interjection_count += 1
-                    except Exception:
-                        pass  # Don't crash streaming if interjection fails
-                    try:
-                        await broadcast(connections, {
-                            "type": "approach-light",
-                            "chatId": chat_id,
-                            "data": {"level": threshold, "text": warning},
-                        })
-                    except Exception:
-                        pass
+            last_token_count, new_interjections = await _check_approach_light(
+                chat, connections, chat_id, last_token_count,
+            )
+            interjection_count += new_interjections
 
             if isinstance(event, StreamEvent):
                 if event.delta_type == "text_delta":
@@ -136,11 +156,18 @@ async def stream_chat_events(connections: set, chat: Chat, span=None) -> None:
             elif isinstance(event, ErrorEvent):
                 await broadcast(connections, {"type": "error", "chatId": chat_id, "data": event.message})
 
-        # Drain interjection responses. Each approach light interjection
-        # triggers a new subprocess turn; consume those events silently
-        # so they don't contaminate the next user message's event stream.
-        for _ in range(interjection_count):
+        # Drain interjection responses, allowing cascading thresholds.
+        # Each interjection triggers a subprocess turn whose response may
+        # push past the next threshold. Yellow's response can trigger red.
+        # With two thresholds the cascade is bounded to at most 2 levels.
+        pending_drains = interjection_count
+        while pending_drains > 0:
+            pending_drains -= 1
             async for drain_event in chat.events():
+                last_token_count, new_interjections = await _check_approach_light(
+                    chat, connections, chat_id, last_token_count,
+                )
+                pending_drains += new_interjections
                 if isinstance(drain_event, ResultEvent):
                     break
 
