@@ -1,28 +1,17 @@
-"""End-to-end test fixtures — mock API + backend lifecycle + Playwright.
+"""Backend protocol test fixtures — WebSocket puppeteering, no browser.
 
-Three-layer test stack:
-  1. Mock Anthropic API  (port 18098) — deterministic SSE responses
-  2. Alpha-App backend   (port 18099) — uvicorn serving the built frontend
-  3. Playwright browser   — headless Chrome driving the real UI
+Starts MockAnthropic + the Alpha-App backend, then tests connect via
+a raw websockets client to validate the WebSocket protocol: send events,
+check what comes back. Everything real except the Anthropic API.
 
-The backend starts with ANTHROPIC_BASE_URL pointed at the mock. The full
-chain runs for real — browser, WebSocket, FastAPI, Postgres, Engine, claude
-subprocess, SDK proxy — except the API call at the very end hits the mock
-instead of api.anthropic.com. "We trust Anthropic." We're testing our plumbing.
-
-Test isolation: tests run against a TEMPORARY DATABASE (alpha_test) created
-at session start and dropped at session end. The production database is
-never touched. Not even a little. Precious cargo.
-
-All tests run against a BUILT frontend served by uvicorn — no Vite dev
-server. Run `vite build` in frontend/ before running these tests.
-This matches production: one process, one port, one reality.
+Run `cd frontend && npm run build` before running — the backend serves
+the built frontend and won't start without it.
 """
 
 import os
 import shutil
-import signal
 import subprocess
+import signal
 import sys
 import time
 from pathlib import Path
@@ -30,19 +19,18 @@ from pathlib import Path
 import pytest
 import requests
 
-from tests.e2e.mock_anthropic import MockAnthropicServer
+from mock_anthropic import MockAnthropicServer
 
-# Screenshots directory — wiped at session start so stale images don't mislead.
+# Screenshots directory (for any future visual debugging)
 SCREENSHOT_DIR = Path(__file__).parent / "screenshots"
 
 # -- Ports (all different so nothing collides) --------------------------------
 MOCK_PORT = 18098   # Mock Anthropic API
-E2E_PORT = 18099    # Alpha-App backend
-E2E_BASE_URL = f"http://localhost:{E2E_PORT}"
+BACKEND_PORT = 18099  # Alpha-App backend
+BACKEND_BASE_URL = f"http://localhost:{BACKEND_PORT}"
+BACKEND_WS_URL = f"ws://localhost:{BACKEND_PORT}/ws"
 
 # -- Test database ------------------------------------------------------------
-# Tests use a completely separate database. The production database (postgres)
-# is never connected to by the backend under test.
 TEST_DB_NAME = "alpha_test"
 
 
@@ -57,22 +45,14 @@ def _prod_database_url() -> str:
 def _test_database_url() -> str:
     """Derive the test DATABASE_URL by swapping the database name."""
     prod_url = _prod_database_url()
-    # URL format: postgresql://user:pass@host:port/dbname
     base, _, _ = prod_url.rpartition("/")
     return f"{base}/{TEST_DB_NAME}"
 
 
 def _create_test_database() -> None:
-    """Create the test database and set up the schema.
-
-    Connects to the production database (postgres) to issue CREATE DATABASE,
-    then connects to the new test database to create the app schema + table.
-    Safe to call repeatedly — uses IF NOT EXISTS everywhere.
-    """
+    """Create the test database and set up the schema."""
     prod_url = _prod_database_url()
 
-    # Step 1: Create the database (connecting to postgres)
-    # DROP first in case a previous run left it behind (e.g. test crash)
     subprocess.run(
         ["psql", prod_url, "-c",
          f"DROP DATABASE IF EXISTS {TEST_DB_NAME}"],
@@ -87,7 +67,6 @@ def _create_test_database() -> None:
     if result.returncode != 0:
         raise RuntimeError(f"Failed to create test database: {result.stderr.strip()}")
 
-    # Step 2: Create schema + table (connecting to alpha_test)
     test_url = _test_database_url()
     sql = (
         "CREATE SCHEMA IF NOT EXISTS app; "
@@ -110,7 +89,7 @@ def _create_test_database() -> None:
 
 
 def _drop_test_database() -> None:
-    """Drop the test database. Connects to postgres to issue the DROP."""
+    """Drop the test database."""
     prod_url = _prod_database_url()
     result = subprocess.run(
         ["psql", prod_url, "-c",
@@ -125,13 +104,13 @@ def _drop_test_database() -> None:
 
 # -- Backend subprocess manager -----------------------------------------------
 
-
 class Backend:
     """Manages a uvicorn subprocess for testing."""
 
     def __init__(self, *, mock_api_url: str, test_db_url: str) -> None:
-        self.port = E2E_PORT
-        self.base_url = E2E_BASE_URL
+        self.port = BACKEND_PORT
+        self.base_url = BACKEND_BASE_URL
+        self.ws_url = BACKEND_WS_URL
         self._mock_api_url = mock_api_url
         self._test_db_url = test_db_url
         self._proc: subprocess.Popen | None = None
@@ -141,14 +120,8 @@ class Backend:
         env = {
             **os.environ,
             "PORT": str(self.port),
-            # Route API requests to the mock instead of Anthropic.
-            # The Engine captures this before overriding it for claude.
             "ANTHROPIC_BASE_URL": self._mock_api_url,
-            # Point at the test database — never touch production.
             "DATABASE_URL": self._test_db_url,
-            # Short reap timeout for testing. Default is 600s (10 min).
-            # 3s keeps the reap test fast while no other test runs long
-            # enough to accidentally trigger a reap.
             "_ALPHA_REAP_TIMEOUT": "3",
         }
 
@@ -164,7 +137,6 @@ class Backend:
             stderr=subprocess.STDOUT,
         )
 
-        # Poll /health until it responds
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
@@ -175,7 +147,6 @@ class Backend:
                 pass
             time.sleep(0.5)
 
-        # If we get here, startup timed out
         self.stop()
         raise TimeoutError(
             f"Backend did not become healthy within {timeout}s on port {self.port}"
@@ -185,7 +156,6 @@ class Backend:
         """Stop the backend gracefully, then force-kill if needed."""
         if self._proc is None:
             return
-
         try:
             self._proc.send_signal(signal.SIGTERM)
             self._proc.wait(timeout=5)
@@ -196,9 +166,9 @@ class Backend:
             self._proc = None
 
     def restart(self, *, timeout: float = 30.0) -> None:
-        """Stop and restart the backend. This is the core of the survival test."""
+        """Stop and restart the backend."""
         self.stop()
-        time.sleep(1)  # Brief pause for port release
+        time.sleep(1)
         self.start(timeout=timeout)
 
     @property
@@ -208,28 +178,9 @@ class Backend:
 
 # -- Fixtures -----------------------------------------------------------------
 
-
-@pytest.fixture(scope="session", autouse=True)
-def _clean_screenshots():
-    """Wipe screenshots at session start so stale images don't mislead.
-
-    Tests take screenshots at key moments for post-mortem diagnosis.
-    Old screenshots from a previous run could confuse investigation if
-    the current test fails before reaching a screenshot call.
-    """
-    if SCREENSHOT_DIR.exists():
-        shutil.rmtree(SCREENSHOT_DIR)
-    SCREENSHOT_DIR.mkdir(exist_ok=True)
-    yield
-
-
 @pytest.fixture(scope="session", autouse=True)
 def _test_db():
-    """Create and destroy the test database.
-
-    Creates alpha_test at session start, drops it at session end.
-    The production database is never touched.
-    """
+    """Create and destroy the test database."""
     _create_test_database()
     yield
     _drop_test_database()
@@ -237,7 +188,7 @@ def _test_db():
 
 @pytest.fixture(scope="session")
 def mock_api():
-    """Session-scoped mock Anthropic API. Starts once, shared across all tests."""
+    """Session-scoped mock Anthropic API."""
     server = MockAnthropicServer(port=MOCK_PORT)
     server.start()
     yield server
@@ -246,11 +197,7 @@ def mock_api():
 
 @pytest.fixture(scope="session")
 def backend(mock_api: MockAnthropicServer, _test_db):
-    """Session-scoped backend. Starts after mock API, shared across all tests.
-
-    The backend is configured with ANTHROPIC_BASE_URL pointing at the mock
-    and DATABASE_URL pointing at the test database, so tests are fully isolated.
-    """
+    """Session-scoped backend, pointed at mock API and test database."""
     b = Backend(
         mock_api_url=mock_api.base_url,
         test_db_url=_test_database_url(),
@@ -261,19 +208,6 @@ def backend(mock_api: MockAnthropicServer, _test_db):
 
 
 @pytest.fixture(scope="session")
-def base_url(backend: Backend) -> str:
-    """Base URL for Playwright — points at the backend."""
-    return backend.base_url
-
-
-# -- Playwright configuration ------------------------------------------------
-# pytest-playwright reads `--base-url` from the CLI or this fixture.
-# Running headless by default (no display needed).
-
-
-@pytest.fixture(scope="session")
-def browser_type_launch_args(request):
-    """Playwright browser launch args — respects --headed flag from CLI."""
-    # pytest-playwright sets this based on --headed flag
-    headed = request.config.getoption("--headed", default=False)
-    return {"headless": not headed}
+def ws_url(backend: Backend) -> str:
+    """WebSocket URL for protocol tests."""
+    return backend.ws_url

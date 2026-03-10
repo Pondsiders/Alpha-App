@@ -395,7 +395,7 @@ class MockAnthropicServer:
         self._proc = subprocess.Popen(
             [
                 sys.executable, "-m", "uvicorn",
-                "tests.e2e.mock_anthropic:app",
+                "mock_anthropic:app",
                 "--host", "127.0.0.1",
                 "--port", str(self.port),
             ],

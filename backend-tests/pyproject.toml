@@ -1,0 +1,22 @@
+[project]
+name = "alpha-app-backend-tests"
+version = "0.1.0"
+description = "Backend protocol tests for Alpha-App"
+requires-python = ">=3.12"
+dependencies = [
+    "pytest>=8.0",
+    "websockets>=14.0",
+    "requests>=2.31",
+    "fastapi>=0.135.0",
+    "uvicorn[standard]>=0.32.0",
+    "alpha-app",
+]
+
+[tool.uv]
+extra-index-url = ["https://pondsiders.github.io/Alpha-SDK/simple/"]
+
+[tool.uv.sources]
+alpha-app = { path = "../backend", editable = true }
+
+[tool.pytest.ini_options]
+testpaths = ["."]
