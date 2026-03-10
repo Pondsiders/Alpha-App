@@ -62,7 +62,7 @@ export const ToolFallback: ToolCallMessagePartComponent = ({
     : "bg-success";
 
   return (
-    <div className="mb-3 rounded-lg border border-border bg-surface overflow-hidden">
+    <div data-testid="tool-call" className="rounded-lg border border-border bg-surface overflow-hidden">
       <button
         onClick={() => setExpanded(!expanded)}
         className="w-full flex items-center gap-2 px-3 py-2.5 bg-transparent border-none cursor-pointer text-text font-mono text-[13px] text-left"

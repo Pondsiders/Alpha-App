@@ -4,6 +4,10 @@ GET /api/chats/{chat_id}/messages loads message history via chatId → session U
 GET /api/sessions/{session_id} loads message history from JSONL files directly.
 """
 
+# NOTE: The /api/chats/{chat_id}/messages endpoint is deprecated.
+# Chat history now replays via WebSocket (see ws.py "replay" handler).
+# This module will be removed once replay is fully tested.
+
 import json
 import os
 from pathlib import Path

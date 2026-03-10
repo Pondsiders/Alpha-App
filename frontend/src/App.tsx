@@ -160,22 +160,33 @@ function Layout() {
       // deltas in the messageCache when the target chat is in the background.
       case "text-delta": {
         if (!eChatId) break;
-        const aid = assistantIdMapRef.current[eChatId];
-        if (aid) actions.appendToAssistant(aid, event.data as string, eChatId);
+        let aid = assistantIdMapRef.current[eChatId];
+        if (!aid) {
+          aid = actions.addRemoteAssistantPlaceholder(eChatId);
+          assistantIdMapRef.current[eChatId] = aid;
+        }
+        actions.appendToAssistant(aid, event.data as string, eChatId);
         break;
       }
 
       case "thinking-delta": {
         if (!eChatId) break;
-        const aid = assistantIdMapRef.current[eChatId];
-        if (aid) actions.appendThinking(aid, event.data as string, eChatId);
+        let aid = assistantIdMapRef.current[eChatId];
+        if (!aid) {
+          aid = actions.addRemoteAssistantPlaceholder(eChatId);
+          assistantIdMapRef.current[eChatId] = aid;
+        }
+        actions.appendThinking(aid, event.data as string, eChatId);
         break;
       }
 
       case "tool-call": {
         if (!eChatId) break;
-        const aid = assistantIdMapRef.current[eChatId];
-        if (!aid) break;
+        let aid = assistantIdMapRef.current[eChatId];
+        if (!aid) {
+          aid = actions.addRemoteAssistantPlaceholder(eChatId);
+          assistantIdMapRef.current[eChatId] = aid;
+        }
         const tc = event.data as {
           toolCallId: string;
           toolName: string;
@@ -234,6 +245,12 @@ function Layout() {
 
       case "interrupted": {
         if (eChatId) assistantIdMapRef.current[eChatId] = null;
+        break;
+      }
+
+      case "replay-done": {
+        // Replay complete — history is fully loaded.
+        // Cache is handled by setActiveChatId on switch-away.
         break;
       }
     }

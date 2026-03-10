@@ -34,11 +34,14 @@ Server -> Client messages (broadcast — all connections):
 """
 
 import asyncio
+import json
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from alpha_sdk import AssistantEvent, UserEvent, replay_session
+
 from alpha_app.chat import Chat, ConversationState, Holster
-from alpha_app.db import load_chat
+from alpha_app.db import get_pool, load_chat
 from alpha_app.routes.broadcast import broadcast
 from alpha_app.routes.handlers import handle_create_chat, handle_interrupt, handle_list_chats
 from alpha_app.routes.turn import handle_interjection, handle_new_turn
@@ -171,6 +174,103 @@ async def websocket_chat(ws: WebSocket) -> None:
             elif msg_type == "interrupt":
                 chat_id = raw.get("chatId", "")
                 await handle_interrupt(ws, connections, chats, chat_id, streaming_tasks)
+
+            elif msg_type == "replay":
+                chat_id = raw.get("chatId")
+                if not chat_id:
+                    await ws.send_json({"type": "error", "data": "Missing chatId"})
+                    continue
+
+                # Look up session UUID from Postgres
+                try:
+                    pool = get_pool()
+                    row = await pool.fetchrow(
+                        "SELECT data FROM app.chats WHERE id = $1",
+                        chat_id,
+                    )
+                except Exception:
+                    await ws.send_json({"type": "error", "chatId": chat_id, "data": "Database error"})
+                    continue
+
+                session_uuid = None
+                if row:
+                    session_uuid = row["data"].get("session_uuid")
+
+                if not session_uuid:
+                    # No history — just signal done
+                    await ws.send_json({"type": "replay-done", "chatId": chat_id})
+                    continue
+
+                # Find the sessions directory (same as sessions.py uses)
+                from alpha_app.routes.sessions import SESSIONS_DIR
+
+                try:
+                    async for event in replay_session(session_uuid, sessions_dir=SESSIONS_DIR):
+                        if isinstance(event, UserEvent):
+                            # Transform user content for frontend
+                            user_content = []
+                            raw_content = event.content
+                            for block in raw_content:
+                                if isinstance(block, str):
+                                    user_content.append({"type": "text", "text": block})
+                                elif isinstance(block, dict):
+                                    block_type = block.get("type")
+                                    if block_type == "text":
+                                        user_content.append({"type": "text", "text": block.get("text", "")})
+                                    elif block_type == "image":
+                                        source = block.get("source", {})
+                                        if source.get("type") == "base64" and source.get("data"):
+                                            media_type = source.get("media_type", "image/png")
+                                            data_uri = f"data:{media_type};base64,{source['data']}"
+                                            user_content.append({"type": "image", "image": data_uri})
+                            if user_content:
+                                await ws.send_json({
+                                    "type": "user-message",
+                                    "chatId": chat_id,
+                                    "data": {"content": user_content},
+                                })
+
+                        elif isinstance(event, AssistantEvent):
+                            for block in event.content:
+                                if not isinstance(block, dict):
+                                    continue
+                                block_type = block.get("type")
+                                if block_type == "text":
+                                    text = block.get("text", "")
+                                    if text:
+                                        await ws.send_json({
+                                            "type": "text-delta",
+                                            "chatId": chat_id,
+                                            "data": text,
+                                        })
+                                elif block_type == "thinking":
+                                    thinking = block.get("thinking", "")
+                                    if thinking:
+                                        await ws.send_json({
+                                            "type": "thinking-delta",
+                                            "chatId": chat_id,
+                                            "data": thinking,
+                                        })
+                                elif block_type == "tool_use":
+                                    tool_input = block.get("input", {})
+                                    await ws.send_json({
+                                        "type": "tool-call",
+                                        "chatId": chat_id,
+                                        "data": {
+                                            "toolCallId": block.get("id", ""),
+                                            "toolName": block.get("name", ""),
+                                            "args": tool_input,
+                                            "argsText": json.dumps(tool_input),
+                                        },
+                                    })
+                            # End of this assistant turn
+                            await ws.send_json({"type": "done", "chatId": chat_id})
+
+                except FileNotFoundError:
+                    # JSONL file missing — not an error, just no history
+                    pass
+
+                await ws.send_json({"type": "replay-done", "chatId": chat_id})
 
             else:
                 pass

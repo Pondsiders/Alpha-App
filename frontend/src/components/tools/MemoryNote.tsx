@@ -52,7 +52,8 @@ export const MemoryNote: ToolCallMessagePartComponent = ({
 
   return (
     <div
-      className={`my-[1.25lh] flex items-start gap-2 ${overflows && !expanded ? "cursor-pointer" : ""}`}
+      data-testid="memory-note"
+      className={`flex items-start gap-2 ${overflows && !expanded ? "cursor-pointer" : ""}`}
       onClick={() => overflows && setExpanded(!expanded)}
       role={overflows ? "button" : undefined}
       tabIndex={overflows ? 0 : undefined}

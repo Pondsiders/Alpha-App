@@ -35,11 +35,15 @@ export type ToolCallPart = {
 };
 export type ContentPart = TextPart | ThinkingPart | ImagePart | ToolCallPart;
 
+/** Who initiated this message. Undefined = human (the default). */
+export type MessageSource = "human" | "intro" | "infrastructure";
+
 export interface Message {
   id: string;
   role: "user" | "assistant";
   content: ContentPart[];
   createdAt: Date;
+  source?: MessageSource;
 }
 
 export type ChatState = "starting" | "idle" | "busy" | "dead";
@@ -93,7 +97,7 @@ interface WorkshopActions {
   setActiveChatId: (chatId: string | null) => void;
 
   // Messages
-  addUserMessage: (content: string, attachments?: Array<{ type: "image"; image: string }>) => string;
+  addUserMessage: (content: string, attachments?: Array<{ type: "image"; image: string }>, source?: MessageSource) => string;
   addAssistantPlaceholder: () => string;
   appendToAssistant: (messageId: string, text: string, chatId?: string) => void;
   appendThinking: (messageId: string, thinking: string, chatId?: string) => void;
@@ -255,7 +259,7 @@ export const useWorkshopStore = create<WorkshopStore>()(
 
     // -- Messages -------------------------------------------------------------
 
-    addUserMessage: (content, attachments) => {
+    addUserMessage: (content, attachments, source) => {
       const id = generateId();
       const parts: ContentPart[] = [];
 
@@ -279,6 +283,7 @@ export const useWorkshopStore = create<WorkshopStore>()(
           role: "user",
           content: parts,
           createdAt: new Date(),
+          source,
         });
       });
       return id;

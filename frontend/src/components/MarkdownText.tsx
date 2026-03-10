@@ -13,6 +13,7 @@ interface MarkdownTextProps {
 export const MarkdownText: FC<MarkdownTextProps> = ({ text }) => {
   return (
     <Markdown
+      className="markdown-text"
       remarkPlugins={[remarkGfm]}
       components={{
         p: ({ children }) => (

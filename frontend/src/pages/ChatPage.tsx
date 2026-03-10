@@ -61,6 +61,11 @@ interface ChatPageProps {
 const UserMessage = () => {
   const message = useMessage();
 
+  // Look up our source tag from the store (assistant-ui doesn't carry custom fields)
+  const source = useWorkshopStore((s) =>
+    s.messages.find((m) => m.id === message.id)?.source
+  );
+
   // Separate image and text parts for individual bubbles
   const imageParts = (message.content as Array<{ type: string; image?: string }>)
     .filter((p) => p.type === "image" && !!p.image) as Array<{ type: "image"; image: string }>;
@@ -69,8 +74,21 @@ const UserMessage = () => {
     .map((p) => p.text!)
     .join("\n");
 
+  // Non-human messages render as stage directions, not bubbles
+  if (source && source !== "human") {
+    return (
+      <MessagePrimitive.Root data-testid="system-message" className="my-3 flex items-center gap-3">
+        <div className="flex-1 h-px bg-muted/20" />
+        <span className="text-xs italic text-muted/60 whitespace-nowrap select-none">
+          {textContent || "…"}
+        </span>
+        <div className="flex-1 h-px bg-muted/20" />
+      </MessagePrimitive.Root>
+    );
+  }
+
   return (
-    <MessagePrimitive.Root className="flex flex-col items-end mb-4 gap-2">
+    <MessagePrimitive.Root data-testid="user-message" className="flex flex-col items-end mb-4 gap-2">
       {/* Image bubble(s) — separate from text */}
       {imageParts.map((img, i) => (
         <div
@@ -98,7 +116,7 @@ const ThinkingBlock = ({ text, status }: { text: string; status: unknown }) => {
   const isStreaming = (status as { type?: string })?.type === "running";
 
   return (
-    <details className="mb-3 group">
+    <details data-testid="thinking-block" className="group">
       <summary className="cursor-pointer text-muted italic select-none list-none flex items-center gap-2 text-[13px]">
         <span className="text-muted/60 group-open:rotate-90 transition-transform inline-block">{"\u25B6"}</span>
         {isStreaming ? "Thinking..." : "Thought"}
@@ -125,8 +143,8 @@ const AssistantMessage = () => {
   };
 
   return (
-    <MessagePrimitive.Root className="mb-6 pl-2 pr-12 group/assistant">
-      <div className="text-text leading-relaxed">
+    <MessagePrimitive.Root data-testid="assistant-message" className="mb-6 pl-2 pr-12 group/assistant">
+      <div className="text-text leading-relaxed flex flex-col gap-3">
         <MessagePrimitive.Parts
           components={{
             Text: MarkdownText,
@@ -194,7 +212,6 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
   const addAssistantPlaceholder = useWorkshopStore((s) => s.addAssistantPlaceholder);
   const appendToAssistant = useWorkshopStore((s) => s.appendToAssistant);
   const setMessages = useWorkshopStore((s) => s.setMessages);
-  const loadMessages = useWorkshopStore((s) => s.loadMessages);
 
   // Keep refs for stable access in callbacks
   const activeChatIdRef = useRef(activeChatId);
@@ -209,37 +226,10 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
     // If we already have messages (restored from cache by setActiveChatId), skip
     if (useWorkshopStore.getState().messages.length > 0) return;
 
-    // Fetch from backend — maps chatId → session UUID → JSONL
-    const controller = new AbortController();
-    fetch(`/api/chats/${activeChatId}/messages`, { signal: controller.signal })
-      .then((r) => {
-        if (!r.ok) throw new Error("Not found");
-        return r.json();
-      })
-      .then((data) => {
-        const loaded: Message[] = (data.messages || []).map(
-          (m: { role: string; content: unknown }, i: number) => ({
-            id: `loaded-${i}`,
-            role: m.role as "user" | "assistant",
-            content: Array.isArray(m.content)
-              ? m.content
-              : [{ type: "text", text: String(m.content) }],
-            createdAt: new Date(),
-          })
-        );
-        // Only apply if still the same active chat and no messages appeared
-        const current = useWorkshopStore.getState();
-        if (current.activeChatId === activeChatId && current.messages.length === 0 && loaded.length > 0) {
-          loadMessages(activeChatId, loaded);
-        }
-      })
-      .catch((err) => {
-        if (err.name === "AbortError") return;
-        console.error("[Alpha] Failed to load chat messages:", err.message);
-      });
-
-    return () => controller.abort();
-  }, [activeChatId, loadMessages]);
+    // Request replay over WebSocket — events arrive through the same
+    // handlers as live streaming (user-message, text-delta, tool-call, done)
+    send({ type: "replay", chatId: activeChatId });
+  }, [activeChatId, send]);
 
   // ---- Send handler ----
   const onNew = useCallback(

@@ -28,14 +28,15 @@ export interface ServerEvent {
     | "user-message"
     | "error"
     | "done"
-    | "interrupted";
+    | "interrupted"
+    | "replay-done";
   chatId?: string;
   data?: unknown;
 }
 
 // Messages TO the server
 export interface ClientMessage {
-  type: "send" | "interrupt" | "create-chat" | "list-chats" | "buzz";
+  type: "send" | "interrupt" | "create-chat" | "list-chats" | "buzz" | "replay";
   chatId?: string;
   content?: string | Array<Record<string, unknown>>;
 }
