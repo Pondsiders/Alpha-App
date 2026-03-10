@@ -4,8 +4,6 @@ services:
   alpha:
     build:
       context: .
-      additional_contexts:
-        sdk: ../alpha_sdk-next
     ports:
       - "18010:18010"
     env_file: .env

@@ -4,7 +4,7 @@ Formats input/output messages and sets response attributes on turn spans
 following the OpenTelemetry gen_ai conventions that Logfire understands.
 """
 
-from alpha_sdk import ResultEvent
+from alpha_app import ResultEvent
 
 from alpha_app.chat import Chat
 

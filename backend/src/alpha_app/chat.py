@@ -23,7 +23,7 @@ from collections.abc import Awaitable, Callable
 from enum import Enum
 from typing import Any, AsyncIterator
 
-from alpha_sdk import Claude, Event, ResultEvent
+from alpha_app import Claude, Event, ResultEvent
 
 # The mannequin model. Haiku for speed and cheapness.
 MODEL = "claude-haiku-4-5-20251001"

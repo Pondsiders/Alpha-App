@@ -14,9 +14,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from alpha_sdk import assemble_system_prompt
-from alpha_sdk.memories import init_schema as init_cortex_schema, close as close_cortex
-from alpha_sdk.tools import create_cortex_server
+from alpha_app import assemble_system_prompt
+from alpha_app.memories import init_schema as init_cortex_schema, close as close_cortex
+from alpha_app.tools import create_cortex_server
 from alpha_app.chat import Chat, ConversationState, Holster
 from alpha_app.db import init_pool, close_pool
 from alpha_app.routes.sessions import router as sessions_router

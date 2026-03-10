@@ -8,7 +8,7 @@ light interjections, and the final result to every connected WebSocket.
 import json
 
 import logfire
-from alpha_sdk import AssistantEvent, ErrorEvent, ResultEvent, StreamEvent
+from alpha_app import AssistantEvent, ErrorEvent, ResultEvent, StreamEvent
 
 from alpha_app.chat import Chat, ConversationState
 from alpha_app.db import persist_chat

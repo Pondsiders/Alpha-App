@@ -38,7 +38,7 @@ import json
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from alpha_sdk import AssistantEvent, UserEvent, replay_session
+from alpha_app import AssistantEvent, UserEvent, replay_session
 
 from alpha_app.chat import Chat, ConversationState, Holster
 from alpha_app.db import get_pool, load_chat
