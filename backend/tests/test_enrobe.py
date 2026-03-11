@@ -26,6 +26,7 @@ class ChatStub:
     def __init__(self, *, needs_orientation: bool = True, chat_id: str = "test-abc123"):
         self.id = chat_id
         self._needs_orientation = needs_orientation
+        self._pending_intro = None
 
 
 # ---------------------------------------------------------------------------

@@ -10,9 +10,8 @@ and assert the output matches first_turn_blocks() and normal_turn_blocks().
 Failures show exactly which blocks are missing or misordered — each failure
 is a TODO for enrobe.py.
 
-Status: ORIENTATION GREEN, RECALL GREEN, INTRO RED.
-Orientation + timestamp + recall fully wired. Intro suggestions are next —
-the 2 remaining failures are those.
+Status: ALL GREEN.
+Orientation + recall + intro + timestamp fully wired.
 
 Two shapes:
     first_turn  — orientation + memories + timestamp + user message (18 blocks)
@@ -58,9 +57,16 @@ from tests.fixtures.golden_reference import (
 class ChatStub:
     """Minimal stand-in for Chat. Only the attributes enrobe touches."""
 
-    def __init__(self, *, needs_orientation: bool = True, chat_id: str = "test-golden-001"):
+    def __init__(
+        self,
+        *,
+        needs_orientation: bool = True,
+        chat_id: str = "test-golden-001",
+        pending_intro: str | None = None,
+    ):
         self.id = chat_id
         self._needs_orientation = needs_orientation
+        self._pending_intro = pending_intro
 
 
 # -- First turn tests ---------------------------------------------------------
@@ -171,7 +177,7 @@ class TestNormalTurnShape:
     def enrobe_normal_turn(self):
         """Run enrobe for a normal-turn message with deterministic mocks."""
         async def _run():
-            chat = ChatStub(needs_orientation=False)
+            chat = ChatStub(needs_orientation=False, pending_intro=INTRO_SPEAKS)
             content = [{"type": "text", "text": USER_MESSAGE_NORMAL}]
 
             with (

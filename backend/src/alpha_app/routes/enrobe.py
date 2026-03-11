@@ -6,18 +6,16 @@ and timestamps before being sent to Claude.
 The name: to enrobe is to coat something in chocolate. The user message
 is the truffle center; everything we add is the shell.
 
-Currently implements:
+Implements:
   1. Orientation (full data: capsules, letter, today, here, context,
      events, todos — fetched from Postgres, Redis, and filesystem)
-  2. Timestamp injection (PSO-8601 format)
+  2. Intro memorables from previous turn (read from chat._pending_intro)
   3. Memory recall (dual-strategy search, session dedup, formatted blocks)
+  4. Timestamp injection (PSO-8601 format)
 
 Approach lights moved to streaming.py — they fire asynchronously
 mid-turn as interjections when context thresholds are crossed,
 rather than being injected at turn start when it might be too late.
-
-TODO:
-  4. Intro memorables from previous turn
 """
 
 from __future__ import annotations
@@ -80,11 +78,11 @@ async def enrobe(content: list[dict], *, chat: "Chat") -> EnrobeResult:
         blocks.extend(orientation_blocks)
         chat._needs_orientation = False
 
-    # 2. Intro memorables from previous turn (TODO)
-    # memorables = get_pending_memorables(chat_id=chat.id)
-    # if memorables:
-    #     blocks.append({"type": "text", "text": f"## Intro speaks\n\n{memorables}"})
-    #     events.append({"type": "enrichment-suggest", "data": memorables})
+    # 2. Intro memorables from previous turn
+    if chat._pending_intro:
+        blocks.append({"type": "text", "text": chat._pending_intro})
+        events.append({"type": "enrichment-suggest", "data": chat._pending_intro})
+        chat._pending_intro = None
 
     # 3. Memory recall — dual-strategy search, session-scoped dedup
     user_text = " ".join(
