@@ -67,31 +67,31 @@ async def enrobe(content: list[dict], *, chat: "Chat") -> EnrobeResult:
     events: list[dict] = []
     blocks: list[dict] = []
 
-    # 1. Timestamp — always injected
-    timestamp = _format_timestamp()
-    blocks.append({"type": "text", "text": f"[{timestamp}]"})
-    events.append({"type": "enrichment-timestamp", "data": timestamp})
-
-    # 1b. Orientation — injected on first message of a new/resumed context window
+    # 1. Orientation — injected on first message of a new/resumed context window
     if chat._needs_orientation:
         here_str = get_here()
         orientation_blocks = assemble_orientation(here=here_str)
         blocks.extend(orientation_blocks)
         chat._needs_orientation = False
 
-    # 2. Memory recall (TODO)
-    # memories = await recall(content, chat_id=chat.id)
-    # for memory in memories:
-    #     blocks.append({"type": "text", "text": f"[Memory] {memory.text}"})
-    #     events.append({"type": "enrichment-memory", "data": memory.to_dict()})
-
-    # 3. Intro memorables from previous turn (TODO)
+    # 2. Intro memorables from previous turn (TODO)
     # memorables = get_pending_memorables(chat_id=chat.id)
     # if memorables:
     #     blocks.append({"type": "text", "text": f"## Intro speaks\n\n{memorables}"})
     #     events.append({"type": "enrichment-suggest", "data": memorables})
 
-    # Enrichment blocks come first, then the original user message
+    # 3. Memory recall (TODO)
+    # memories = await recall(content, chat_id=chat.id)
+    # for memory in memories:
+    #     blocks.append({"type": "text", "text": memory.formatted})
+    #     events.append({"type": "enrichment-memory", "data": memory.to_dict()})
+
+    # 4. Timestamp — always present, just before the user message
+    timestamp = _format_timestamp()
+    blocks.append({"type": "text", "text": f"[Sent {timestamp}]"})
+    events.append({"type": "enrichment-timestamp", "data": timestamp})
+
+    # User message is ALWAYS the last block
     blocks.extend(content)
 
     return EnrobeResult(content=blocks, events=events)

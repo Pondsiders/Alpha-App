@@ -94,8 +94,8 @@ class TestEnrobeOrientation:
 
         assert chat._needs_orientation is False
 
-    async def test_block_order_timestamp_orientation_user(self, user_content):
-        """Order: timestamp first, then orientation blocks, then user content."""
+    async def test_block_order_orientation_timestamp_user(self, user_content):
+        """Order: orientation first, then timestamp, then user content."""
         chat = ChatStub(needs_orientation=True)
 
         with patch("alpha_app.routes.enrobe.get_here", return_value=FAKE_HERE):
@@ -103,17 +103,15 @@ class TestEnrobeOrientation:
 
         blocks = result.content
 
-        # First block is always the timestamp
-        assert blocks[0]["text"].startswith("[")
-        assert blocks[0]["text"].endswith("]")
+        # First block is orientation (here)
+        assert "[Narrator]" in blocks[0]["text"]
+
+        # Second-to-last block is the timestamp
+        assert blocks[-2]["text"].startswith("[Sent ")
+        assert blocks[-2]["text"].endswith("]")
 
         # Last block is always the user content
         assert blocks[-1]["text"] == "Hello, world!"
-
-        # Orientation blocks are in between
-        orientation_blocks = blocks[1:-1]
-        assert len(orientation_blocks) >= 1
-        assert "[Narrator]" in orientation_blocks[0]["text"]
 
     async def test_orientation_blocks_are_proper_content_dicts(self, user_content):
         """Orientation blocks must be {"type": "text", "text": "..."} dicts."""
