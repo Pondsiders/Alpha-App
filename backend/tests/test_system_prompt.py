@@ -10,35 +10,22 @@ FIXTURES = Path(__file__).parent / "fixtures" / "jnsq"
 
 
 async def test_full_assembly():
-    """Soul + bill of rights + here, byte-for-byte against golden reference."""
-    result = await assemble_system_prompt(
-        identity_dir=FIXTURES,
-        here="You are in a test.",
-    )
+    """Soul + bill of rights, byte-for-byte against golden reference."""
+    result = await assemble_system_prompt(identity_dir=FIXTURES)
     expected = (FIXTURES / "expected_full.txt").read_text()
     assert result == expected
 
 
 async def test_no_bill_of_rights(tmp_path):
-    """Soul + here, no bill of rights. Proves optional pieces are skipped."""
+    """Soul only, no bill of rights. Proves optional pieces are skipped."""
     # Build a minimal JNSQ with just a soul doc
     prompts = tmp_path / "prompts" / "system"
     prompts.mkdir(parents=True)
     soul = (FIXTURES / "prompts" / "system" / "soul.md").read_text()
     (prompts / "soul.md").write_text(soul)
 
-    result = await assemble_system_prompt(
-        identity_dir=tmp_path,
-        here="You are in a test.",
-    )
+    result = await assemble_system_prompt(identity_dir=tmp_path)
     expected = (FIXTURES / "expected_no_bill.txt").read_text()
-    assert result == expected
-
-
-async def test_no_here():
-    """Full fixture but no here string. Soul + bill of rights only."""
-    result = await assemble_system_prompt(identity_dir=FIXTURES)
-    expected = (FIXTURES / "expected_no_here.txt").read_text()
     assert result == expected
 
 
