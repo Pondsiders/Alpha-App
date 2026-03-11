@@ -10,12 +10,9 @@ Public API:
 Internal helpers load each piece. If a piece doesn't exist, it's silently
 skipped — the frog gets just the soul, Alpha gets the full stack.
 
-The five pieces (in order):
+The two pieces (in order):
     1. Soul doc          — prompts/system/soul.md (required)
     2. Bill of Rights    — prompts/system/bill-of-rights.md (optional)
-    3. Here              — runtime context: client, weather (TODO)
-    4. Capsules          — yesterday + last night summaries (TODO)
-    5. Letter            — letter from last night (TODO)
 """
 
 from __future__ import annotations
@@ -63,31 +60,13 @@ def _load_bill_of_rights(identity_dir: Path) -> str:
     return ""
 
 
-async def _load_capsules() -> str:
-    """Load yesterday's capsules (what happened yesterday, last night).
-
-    TODO: Build this out. Needs Postgres or file reads.
-    """
-    return ""
-
-
-async def _load_letter() -> str:
-    """Load the letter from last night.
-
-    TODO: Build this out. Needs Postgres or file reads.
-    """
-    return ""
-
-
 # -- Public API ---------------------------------------------------------------
 
 
 async def assemble_system_prompt(
     identity_dir: str | Path | None = None,
-    *,
-    here: str | None = None,
 ) -> str:
-    """Assemble the full system prompt from identity documents and context.
+    """Assemble the full system prompt from identity documents.
 
     Reads from the identity directory pointed to by JE_NE_SAIS_QUOI
     (or the provided identity_dir). Concatenates all available pieces
@@ -96,8 +75,6 @@ async def assemble_system_prompt(
     Args:
         identity_dir: Path to the identity directory. If None, reads
                       from $JE_NE_SAIS_QUOI environment variable.
-        here: Client context string, owned by the consumer.
-              E.g. "You are in Alpha-App, Alpha's sovereign chat application."
 
     Returns:
         The assembled system prompt as a single string.
@@ -117,20 +94,6 @@ async def assemble_system_prompt(
     bill = _load_bill_of_rights(idir)
     if bill:
         parts.append(bill)
-
-    # 3. Here — runtime context, provided by the consumer
-    if here:
-        parts.append(here)
-
-    # 4. Capsules — yesterday + last night (TODO)
-    capsules = await _load_capsules()
-    if capsules:
-        parts.append(capsules)
-
-    # 5. Letter — from last night (TODO)
-    letter = await _load_letter()
-    if letter:
-        parts.append(letter)
 
     return "\n\n".join(parts)
 
