@@ -10,13 +10,13 @@ Currently implements:
   1. Orientation (full data: capsules, letter, today, here, context,
      events, todos — fetched from Postgres, Redis, and filesystem)
   2. Timestamp injection (PSO-8601 format)
+  3. Memory recall (dual-strategy search, session dedup, formatted blocks)
 
 Approach lights moved to streaming.py — they fire asynchronously
 mid-turn as interjections when context thresholds are crossed,
 rather than being injected at turn start when it might be too late.
 
 TODO:
-  3. Memory recall (query extraction -> search -> dedup -> format)
   4. Intro memorables from previous turn
 """
 
@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING
 
 import pendulum
 
+from alpha_app.memories.recall import recall_memories
 from alpha_app.orientation import assemble_orientation
 from alpha_app.sources import fetch_all_orientation
 
@@ -55,10 +56,12 @@ def _format_timestamp() -> str:
 async def enrobe(content: list[dict], *, chat: "Chat") -> EnrobeResult:
     """Enrich a user message with context.
 
-    Wraps the user's raw content blocks in enrichment: timestamp
-    and (eventually) recalled memories and intro suggestions. Returns
-    both the enriched content for Claude and a list of events for the
-    WebSocket.
+    Wraps the user's raw content blocks in enrichment: orientation,
+    recalled memories, intro suggestions, and timestamps. Returns both
+    the enriched content for Claude and a list of events for the WebSocket.
+
+    Block order:
+        [orientation] → [intro] → [memories] → timestamp → user message
 
     Args:
         content: The raw user message content blocks.
@@ -83,11 +86,15 @@ async def enrobe(content: list[dict], *, chat: "Chat") -> EnrobeResult:
     #     blocks.append({"type": "text", "text": f"## Intro speaks\n\n{memorables}"})
     #     events.append({"type": "enrichment-suggest", "data": memorables})
 
-    # 3. Memory recall (TODO)
-    # memories = await recall(content, chat_id=chat.id)
-    # for memory in memories:
-    #     blocks.append({"type": "text", "text": memory.formatted})
-    #     events.append({"type": "enrichment-memory", "data": memory.to_dict()})
+    # 3. Memory recall — dual-strategy search, session-scoped dedup
+    user_text = " ".join(
+        b.get("text", "") for b in content if b.get("type") == "text"
+    )
+    if user_text.strip():
+        memory_texts = await recall_memories(user_text, session_id=chat.id)
+        for mem_text in memory_texts:
+            blocks.append({"type": "text", "text": mem_text})
+            events.append({"type": "enrichment-memory", "data": mem_text})
 
     # 4. Timestamp — always present, just before the user message
     timestamp = _format_timestamp()

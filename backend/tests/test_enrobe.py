@@ -61,6 +61,15 @@ def _mock_orientation(**overrides):
 class TestEnrobeOrientation:
     """Tests for orientation injection via _needs_orientation flag."""
 
+    @pytest.fixture(autouse=True)
+    def mock_recall(self):
+        """Mock recall_memories to return [] — these tests are about orientation."""
+        with patch(
+            "alpha_app.routes.enrobe.recall_memories",
+            AsyncMock(return_value=[]),
+        ):
+            yield
+
     @pytest.fixture
     def user_content(self):
         """A simple user message content block list."""

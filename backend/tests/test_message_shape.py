@@ -10,9 +10,9 @@ and assert the output matches first_turn_blocks() and normal_turn_blocks().
 Failures show exactly which blocks are missing or misordered — each failure
 is a TODO for enrobe.py.
 
-Status: ORIENTATION GREEN, MEMORIES RED.
-Orientation + timestamp fully wired. Memory recall and intro suggestions
-are next — the 4 remaining failures are those.
+Status: ORIENTATION GREEN, RECALL GREEN, INTRO RED.
+Orientation + timestamp + recall fully wired. Intro suggestions are next —
+the 2 remaining failures are those.
 
 Two shapes:
     first_turn  — orientation + memories + timestamp + user message (18 blocks)
@@ -107,6 +107,10 @@ class TestFirstTurnShape:
                     "alpha_app.routes.enrobe.fetch_all_orientation",
                     mock_orientation,
                 ),
+                patch(
+                    "alpha_app.routes.enrobe.recall_memories",
+                    AsyncMock(return_value=MEMORIES_FIRST_TURN),
+                ),
             ):
                 result = await enrobe(content, chat=chat)
 
@@ -170,9 +174,15 @@ class TestNormalTurnShape:
             chat = ChatStub(needs_orientation=False)
             content = [{"type": "text", "text": USER_MESSAGE_NORMAL}]
 
-            with patch(
-                "alpha_app.routes.enrobe._format_timestamp",
-                return_value="Wed Mar 11 2026, 12:32 PM",
+            with (
+                patch(
+                    "alpha_app.routes.enrobe._format_timestamp",
+                    return_value="Wed Mar 11 2026, 12:32 PM",
+                ),
+                patch(
+                    "alpha_app.routes.enrobe.recall_memories",
+                    AsyncMock(return_value=MEMORIES_NORMAL_TURN),
+                ),
             ):
                 result = await enrobe(content, chat=chat)
 
