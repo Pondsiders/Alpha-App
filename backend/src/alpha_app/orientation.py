@@ -55,6 +55,7 @@ def assemble_orientation(
     today_so_far: str | None = None,
     weather: str | None = None,
     context_files: list[dict] | None = None,
+    context_available: str | None = None,
     events: str | None = None,
     todos: str | None = None,
 ) -> list[dict]:
@@ -63,12 +64,13 @@ def assemble_orientation(
     Pure assembly — takes pre-fetched source data as keyword arguments and
     returns a list of content block dicts. No I/O.
 
-    Block order:
-        here → yesterday → last night → letter → today so far →
-        weather → context files → events → todos
+    Block order (matches Duckpond capture):
+        yesterday → last night → letter → today so far → here →
+        weather → context files → context available → events → todos
 
     Args:
-        here: Always present. Passed through as-is (has [Narrator] tag).
+        here: Always present. Passed through as-is (has ## Here header
+              or [Narrator] tag depending on source).
         yesterday: Passed through as-is (pre-formatted with its own header).
         last_night: Passed through as-is.
         letter: Passed through as-is.
@@ -76,6 +78,9 @@ def assemble_orientation(
         weather: Passed through as-is (no header added).
         context_files: List of {"label": str, "content": str}. Each gets a
                        ## Context: {label} header.
+        context_available: Passed through as-is (pre-formatted with its own
+                          header). The index of context files available on
+                          demand.
         events: Gets a ## Events header added.
         todos: Gets a ## Todos header added.
 
@@ -88,15 +93,11 @@ def assemble_orientation(
     def _add(text: str) -> None:
         blocks.append({"type": "text", "text": text})
 
-    # here — passed through as-is (already has [Narrator] tag)
-    if here:
-        _add(here)
-
-    # yesterday — passed through as-is
+    # yesterday — passed through as-is (capsule, already has ## header)
     if yesterday:
         _add(yesterday)
 
-    # last_night — passed through as-is
+    # last_night — passed through as-is (capsule, already has ## header)
     if last_night:
         _add(last_night)
 
@@ -108,6 +109,10 @@ def assemble_orientation(
     if today_so_far:
         _add(today_so_far)
 
+    # here — passed through as-is
+    if here:
+        _add(here)
+
     # weather — passed through as-is (no header)
     if weather:
         _add(weather)
@@ -116,6 +121,10 @@ def assemble_orientation(
     if context_files:
         for cf in context_files:
             _add(f"## Context: {cf['label']}\n\n{cf['content']}")
+
+    # context_available — passed through as-is (already has ## header)
+    if context_available:
+        _add(context_available)
 
     # events — gets ## Events header
     if events:

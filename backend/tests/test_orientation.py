@@ -70,6 +70,11 @@ class TestAssembleOrientation:
 
     def test_full_orientation_all_sources(self):
         """All sources present. Correct number of blocks, correct order."""
+        context_available = (
+            "## Context available\n\n"
+            "**BLOCKING REQUIREMENT:** Read the file BEFORE proceeding."
+        )
+
         result = assemble_orientation(
             here=HERE,
             yesterday=YESTERDAY,
@@ -78,6 +83,7 @@ class TestAssembleOrientation:
             today_so_far=TODAY_SO_FAR,
             weather=WEATHER,
             context_files=CONTEXT_FILES,
+            context_available=context_available,
             events=EVENTS,
             todos=TODOS,
         )
@@ -87,25 +93,28 @@ class TestAssembleOrientation:
         assert all(isinstance(b, dict) for b in result)
         assert all(b["type"] == "text" for b in result)
 
-        # Count: 1 here + 1 yesterday + 1 last_night + 1 letter +
-        #        1 today + 1 weather + 2 context files + 1 events +
-        #        1 todos = 10 blocks
-        assert len(result) == 10
+        # Count: 1 yesterday + 1 last_night + 1 letter + 1 today +
+        #        1 here + 1 weather + 2 context files + 1 context_available +
+        #        1 events + 1 todos = 11 blocks
+        assert len(result) == 11
 
         texts = [b["text"] for b in result]
 
-        # Verify order by checking distinguishing content in each block
-        assert "[Narrator]" in texts[0]                        # here (narrator tag)
-        assert "Alpha v1.0.0" in texts[0]                     # here (content)
-        assert "## Tuesday, March 10" in texts[1]            # yesterday
-        assert "## Tuesday night" in texts[2]                # last night
-        assert "## Letter from last night" in texts[3]       # letter
-        assert "## Today so far" in texts[4]                 # today so far
-        assert "☀️" in texts[5]                              # weather (no header)
-        assert "## Context: ALPHA.md" in texts[6]            # context file 1
-        assert "## Context: Barn/Duckpond/ALPHA.md" in texts[7]  # context file 2
-        assert "## Events" in texts[8]                       # events (header added)
-        assert "## Todos" in texts[9]                        # todos (header added)
+        # Verify order matches Duckpond capture:
+        # capsules → letter → today → here → weather → context files →
+        # context available → events → todos
+        assert "## Tuesday, March 10" in texts[0]               # yesterday
+        assert "## Tuesday night" in texts[1]                   # last night
+        assert "## Letter from last night" in texts[2]          # letter
+        assert "## Today so far" in texts[3]                    # today so far
+        assert "[Narrator]" in texts[4]                         # here
+        assert "Alpha v1.0.0" in texts[4]                       # here (content)
+        assert "☀️" in texts[5]                                 # weather (no header)
+        assert "## Context: ALPHA.md" in texts[6]               # context file 1
+        assert "## Context: Barn/Duckpond/ALPHA.md" in texts[7] # context file 2
+        assert "## Context available" in texts[8]               # context available
+        assert "## Events" in texts[9]                          # events (header added)
+        assert "## Todos" in texts[10]                          # todos (header added)
 
     def test_here_only(self):
         """Only required source (here) present. Minimal valid orientation."""
@@ -125,12 +134,12 @@ class TestAssembleOrientation:
 
         assert len(result) == 3
         texts = [b["text"] for b in result]
-        assert "Alpha v1.0.0" in texts[0]     # here
-        assert "## Tuesday" in texts[1]         # yesterday
-        assert "☀️" in texts[2]                # weather
+        assert "## Tuesday" in texts[0]         # yesterday (capsules before here)
+        assert "Alpha v1.0.0" in texts[1]       # here
+        assert "☀️" in texts[2]                 # weather
 
-    def test_here_is_always_first(self):
-        """Even if only here and todos, here comes first."""
+    def test_here_before_todos_when_no_capsules(self):
+        """Without capsules, here is first. Todos always at the end."""
         result = assemble_orientation(here=HERE, todos=TODOS)
 
         assert len(result) == 2

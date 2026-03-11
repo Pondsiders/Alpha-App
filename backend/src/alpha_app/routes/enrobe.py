@@ -7,15 +7,17 @@ The name: to enrobe is to coat something in chocolate. The user message
 is the truffle center; everything we add is the shell.
 
 Currently implements:
-  1. Timestamp injection (PSO-8601 format)
+  1. Orientation (full data: capsules, letter, today, here, context,
+     events, todos — fetched from Postgres, Redis, and filesystem)
+  2. Timestamp injection (PSO-8601 format)
 
 Approach lights moved to streaming.py — they fire asynchronously
 mid-turn as interjections when context thresholds are crossed,
 rather than being injected at turn start when it might be too late.
 
 TODO:
-  2. Memory recall (query extraction -> search -> dedup -> format)
-  3. Intro memorables from previous turn
+  3. Memory recall (query extraction -> search -> dedup -> format)
+  4. Intro memorables from previous turn
 """
 
 from __future__ import annotations
@@ -25,7 +27,8 @@ from typing import TYPE_CHECKING
 
 import pendulum
 
-from alpha_app.orientation import assemble_orientation, get_here
+from alpha_app.orientation import assemble_orientation
+from alpha_app.sources import fetch_all_orientation
 
 if TYPE_CHECKING:
     from alpha_app.chat import Chat
@@ -69,8 +72,8 @@ async def enrobe(content: list[dict], *, chat: "Chat") -> EnrobeResult:
 
     # 1. Orientation — injected on first message of a new/resumed context window
     if chat._needs_orientation:
-        here_str = get_here()
-        orientation_blocks = assemble_orientation(here=here_str)
+        orientation_data = await fetch_all_orientation()
+        orientation_blocks = assemble_orientation(**orientation_data)
         blocks.extend(orientation_blocks)
         chat._needs_orientation = False
 

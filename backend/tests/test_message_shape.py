@@ -10,15 +10,16 @@ and assert the output matches first_turn_blocks() and normal_turn_blocks().
 Failures show exactly which blocks are missing or misordered — each failure
 is a TODO for enrobe.py.
 
-Status: RED. Enrobe currently only implements timestamp + here orientation.
-The test encodes the target; the implementation catches up.
+Status: ORIENTATION GREEN, MEMORIES RED.
+Orientation + timestamp fully wired. Memory recall and intro suggestions
+are next — the 4 remaining failures are those.
 
 Two shapes:
     first_turn  — orientation + memories + timestamp + user message (18 blocks)
     normal_turn — intro + memories + timestamp + user message (6 blocks)
 """
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -84,14 +85,27 @@ class TestFirstTurnShape:
             chat = ChatStub(needs_orientation=True)
             content = [{"type": "text", "text": USER_MESSAGE_FIRST}]
 
+            # Mock orientation sources — returns kwargs for assemble_orientation
+            mock_orientation = AsyncMock(return_value={
+                "yesterday": CAPSULE_YESTERDAY,
+                "last_night": CAPSULE_LAST_NIGHT,
+                "letter": LETTER,
+                "today_so_far": TODAY_SO_FAR,
+                "here": HERE,
+                "context_files": CONTEXT_FILES,
+                "context_available": CONTEXT_AVAILABLE,
+                "events": EVENTS,
+                "todos": TODOS,
+            })
+
             with (
                 patch(
                     "alpha_app.routes.enrobe._format_timestamp",
                     return_value="Wed Mar 11 2026, 12:25 PM",
                 ),
                 patch(
-                    "alpha_app.routes.enrobe.get_here",
-                    return_value=HERE,
+                    "alpha_app.routes.enrobe.fetch_all_orientation",
+                    mock_orientation,
                 ),
             ):
                 result = await enrobe(content, chat=chat)
