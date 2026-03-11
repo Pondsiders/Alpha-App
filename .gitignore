@@ -21,6 +21,10 @@ data/
 # Test artifacts
 backend/tests/e2e/screenshots/
 
+# Probe artifacts
+backend/scripts/logs/
+backend/scripts/.gatsby_cache.txt
+
 # OS
 .DS_Store
 
