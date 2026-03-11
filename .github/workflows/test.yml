@@ -1,15 +1,12 @@
-# CI — run the full e2e test suite on every PR and push to main.
+# CI — backend unit tests on every PR and push to main.
 #
-# Three-layer test stack (same as local):
-#   1. Mock Anthropic API  — deterministic SSE responses, no real API calls
-#   2. Alpha-App backend   — uvicorn serving the built frontend
-#   3. Playwright browser   — headless Chromium driving the real UI
+# Fast, no infrastructure: just Python + uv + pytest.
+# No Postgres, no Playwright, no Node, no Docker.
+# Integration tests are excluded via marker.
 #
-# The mock means zero API cost, zero secrets needed for inference.
-# Postgres runs as a service container for the test database (alpha_test).
-# The claude binary is bundled inside claude-agent-sdk (pip), which is
-# pulled in by alpha-sdk. No separate install needed. In CI it talks
-# to the mock, not Anthropic — ANTHROPIC_BASE_URL is set by conftest.
+# Future jobs (when ready):
+#   backend-protocol — WebSocket puppeteering with MockAnthropic + Postgres
+#   frontend-isolation — Playwright browser tests
 
 name: Tests
 
@@ -19,79 +16,22 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  backend-unit:
     runs-on: ubuntu-latest
 
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_PASSWORD: postgres
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
-
-    env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
-      ANTHROPIC_API_KEY: test-key-not-real
-
     steps:
-      # -- Checkout both repos side by side -----------------------------------
-      # Layout: $WORKSPACE/Alpha-App/  and  $WORKSPACE/alpha_sdk-next/
-      # pyproject.toml: alpha-sdk = { path = "../../alpha_sdk-next" }
-      # From Alpha-App/backend/, ../../alpha_sdk-next -> $WORKSPACE/alpha_sdk-next/
       - uses: actions/checkout@v4
-        with:
-          path: Alpha-App
 
-      - uses: actions/checkout@v4
-        with:
-          repository: Pondsiders/Alpha-SDK
-          ref: sdk-next
-          path: alpha_sdk-next
-
-      # -- Toolchain ----------------------------------------------------------
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
       - uses: astral-sh/setup-uv@v5
 
-      # -- Backend dependencies -----------------------------------------------
       - name: Install backend
-        working-directory: Alpha-App/backend
+        working-directory: backend
         run: uv sync --group dev
 
-      # -- Frontend build -----------------------------------------------------
-      # Tests run against the built frontend served by uvicorn. No Vite dev server.
-      - name: Build frontend
-        working-directory: Alpha-App/frontend
-        run: npm ci && npm run build
-
-      # -- Playwright ---------------------------------------------------------
-      - name: Install Playwright browsers
-        working-directory: Alpha-App/backend
-        run: uv run playwright install --with-deps chromium
-
-      # -- Tests --------------------------------------------------------------
-      - name: Run e2e tests
-        working-directory: Alpha-App/backend
-        run: uv run pytest tests/e2e/ -v -x
-
-      # -- Artifacts ----------------------------------------------------------
-      # Upload screenshots on failure for post-mortem diagnosis.
-      - name: Upload test screenshots
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: e2e-screenshots
-          path: Alpha-App/backend/tests/e2e/screenshots/
-          retention-days: 7
+      - name: Run unit tests
+        working-directory: backend
+        run: uv run pytest tests/ -v --ignore=tests/test_e2e.py -k "not integration"
