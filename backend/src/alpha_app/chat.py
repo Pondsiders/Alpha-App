@@ -28,6 +28,17 @@ from alpha_app import Claude, Event, ResultEvent
 # The mannequin model. Haiku for speed and cheapness.
 MODEL = "claude-haiku-4-5-20251001"
 
+# Mock mode — swap Claude for MockClaude in tests.
+_MOCK_CLAUDE = os.environ.get("_ALPHA_MOCK_CLAUDE", "").strip() == "1"
+
+
+def _make_claude(**kwargs) -> "Claude":
+    """Factory for Claude instances. Returns MockClaude when _ALPHA_MOCK_CLAUDE=1."""
+    if _MOCK_CLAUDE:
+        from alpha_app.mock_claude import MockClaude
+        return MockClaude(**kwargs)
+    return Claude(**kwargs)
+
 # Idle chat timeout in seconds. After this, subprocess gets reaped.
 # Exposed as env var so e2e tests can shorten it. Defaults to 10 minutes.
 REAP_TIMEOUT = int(os.environ.get("_ALPHA_REAP_TIMEOUT", "600"))
@@ -115,6 +126,10 @@ class Chat:
         # Cached token state — survives subprocess death
         self._cached_token_count: int = 0
         self._cached_context_window: int = 200_000
+
+        # Orientation flag — True means the next message needs orientation
+        # injected. New chats need it on first message; resumed chats need it too.
+        self._needs_orientation: bool = True
 
         # Approach light thresholds — each fires exactly once per session.
         # Reset on resurrect (context shrinks after compaction).
@@ -360,7 +375,7 @@ class Chat:
         self.state = ConversationState.STARTING
 
         try:
-            self._claude = Claude(
+            self._claude = _make_claude(
                 model=MODEL,
                 system_prompt=prompt or None,
                 permission_mode="bypassPermissions",
@@ -371,6 +386,7 @@ class Chat:
             self.state = ConversationState.READY
             self._crossed_yellow = False
             self._crossed_red = False
+            self._needs_orientation = True
             self._start_reap_timer()
 
         except Exception:
@@ -441,7 +457,7 @@ class Holster:
 
     async def _do_warm(self) -> None:
         try:
-            claude = Claude(
+            claude = _make_claude(
                 model=MODEL,
                 system_prompt=self._system_prompt or None,
                 permission_mode="bypassPermissions",

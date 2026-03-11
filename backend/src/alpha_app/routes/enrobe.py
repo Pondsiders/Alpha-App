@@ -25,6 +25,8 @@ from typing import TYPE_CHECKING
 
 import pendulum
 
+from alpha_app.orientation import assemble_orientation, get_here
+
 if TYPE_CHECKING:
     from alpha_app.chat import Chat
 
@@ -69,6 +71,13 @@ async def enrobe(content: list[dict], *, chat: "Chat") -> EnrobeResult:
     timestamp = _format_timestamp()
     blocks.append({"type": "text", "text": f"[{timestamp}]"})
     events.append({"type": "enrichment-timestamp", "data": timestamp})
+
+    # 1b. Orientation — injected on first message of a new/resumed context window
+    if chat._needs_orientation:
+        here_str = get_here()
+        orientation_blocks = assemble_orientation(here=here_str)
+        blocks.extend(orientation_blocks)
+        chat._needs_orientation = False
 
     # 2. Memory recall (TODO)
     # memories = await recall(content, chat_id=chat.id)

@@ -45,26 +45,39 @@ The core abstraction. `Chat` objects each own a Claude subprocess with a 2D stat
 - Idle chats are reaped after 10 min (`_ALPHA_REAP_TIMEOUT`), resurrected via `--resume`
 - Wire value mapping converts internal states for the WebSocket protocol: READY→"idle", ENRICHING/RESPONDING→"busy", COLD→"dead"
 
+### Turn Lifecycle (`backend/src/alpha_app/routes/turn.py`)
+A turn flows: resurrect (if COLD) → begin_turn → enrobe → send → stream. Interjections feed to a RESPONDING subprocess mid-turn (full duplex). The streaming loop (`routes/streaming.py`) reads `chat.events()`, broadcasts deltas to all WebSocket connections, and monitors token thresholds for approach light interjections.
+
 ### WebSocket Protocol (`backend/src/alpha_app/routes/ws.py`)
 Single multiplexed connection. All messages carry a `chatId` field.
-- Client → Server: `create-chat`, `send`, `interrupt`, `list-chats`, `buzz`
-- Server → Client: `chat-created`, `chat-state`, `text-delta`, `thinking-delta`, `tool-call`, `done`, `context-update`, `error`
-- Streaming events are broadcast to all connected clients
+- Client → Server: `create-chat`, `send`, `interrupt`, `list-chats`, `buzz`, `replay`
+- Server → Client: `chat-created`, `chat-state`, `text-delta`, `thinking-delta`, `tool-call`, `done`, `context-update`, `approach-light`, `error`
+- Streaming events are broadcast to all connected clients (multi-tab sync)
+- `replay` loads message history from JSONL session files
+
+### Approach Lights (Context Pressure)
+Async interjections fired mid-turn when token usage crosses thresholds: 65% (yellow, "start wrapping up") and 75% (red, "compaction imminent"). Interjections feed to the RESPONDING subprocess via stdin — Claude reads between tool calls and continues the same turn. Cascading is bounded: yellow's response may push past red, triggering at most one additional interjection.
 
 ### System Prompt Assembly (`backend/src/alpha_app/system_prompt.py`)
 Concatenates identity documents: soul doc (from `JE_NE_SAIS_QUOI` env var path) + bill of rights. Golden reference fixtures live in `backend/tests/fixtures/jnsq/`.
 
-### Cortex MCP Tools (`backend/src/alpha_app/tools/cortex.py`)
-In-process MCP server for memory operations (store/search). Uses Ollama for embeddings, Postgres for vector storage (`backend/src/alpha_app/memories/`).
-
-### Frontend State (`frontend/src/store.ts`)
-Zustand store, multi-chat aware. `chats` map + `activeChatId`. Messages for the active chat in `messages`, background chats in `messageCache`. Context meter tracks token usage with approach lights at 65% (yellow) and 75% (red).
-
 ### Orientation Assembly (`backend/src/alpha_app/orientation.py`)
-Pure assembly functions that build the orientation block injected at the start of each turn. Supports here, yesterday, weather, context files, events, todos, etc. Three public functions: `assemble_orientation`, `check_venue_change`, `get_here`.
+Pure assembly functions that build the orientation block injected at the start of each turn. Supports here, yesterday, weather, context files, events, todos, etc. Three public functions: `assemble_orientation`, `check_venue_change`, `get_here`. Orientation re-injects after compaction (triggered by `compact_boundary` SystemEvent setting `_needs_orientation = True`).
 
 ### Message Enrichment (`backend/src/alpha_app/routes/enrobe.py`)
-"Enrobe" pattern: outgoing messages are enriched with recalled memories before being sent to Claude.
+"Enrobe" pattern: wraps user messages with timestamp (PST-8601), orientation (on first message of new/resumed context window), recalled memories, and intro suggestions. Returns `EnrobeResult` with enriched content blocks and broadcast events.
+
+### Proxy (`backend/src/alpha_app/proxy.py`)
+HTTP proxy for Claude's API channel. Sniffs SSE streams for token usage data and quota headers (5h, 7d) without extra API calls. Handles compact request rewriting. Debug mode via `ALPHA_SDK_CAPTURE_REQUESTS`.
+
+### Cortex MCP Tools (`backend/src/alpha_app/tools/cortex.py`)
+In-process FastMCP server for memory operations (store/search/recent/get). Uses Ollama for 768-dim embeddings, Postgres with pgvector for hybrid search (exact match + full-text + semantic). Soft-delete via `forgotten` flag. Schema in `alpha_app/memories/db.py`.
+
+### Database (`backend/src/alpha_app/db.py`)
+asyncpg pool (min 2, max 10 connections). Schema `app.chats` stores chat metadata as JSONB, upserted on each turn. JSONB codec registered per-connection for automatic dict serialization. Connection pools in both `db.py` and `memories/db.py` are lazily initialized.
+
+### Frontend State (`frontend/src/store.ts`)
+Zustand store with Immer middleware, multi-chat aware. `chats` map + `activeChatId`. Messages for the active chat in `messages`, background chats in `messageCache` (streaming deltas update cache so switching back is instant). Context meter tracks token usage with approach lights at 65% (yellow) and 75% (red).
 
 ### Test Suites
 - **Backend unit tests** (`backend/tests/`) — fast, no external services; integration tests marked with `@pytest.mark.integration`
@@ -79,5 +92,19 @@ Pure assembly functions that build the orientation block injected at the start o
 - Frontend port 18011 (Vite dev), backend port 18010 (uvicorn), production serves both on 18010
 - Vite proxies `/api` and `/ws` to the backend in dev mode
 - Session transcripts stored as JSONL in `data/claude/`
-- Redis metadata TTL: 29 days (before Claude's ~30 day JSONL auto-prune)
+- Chat metadata TTL: 29 days (before Claude's ~30 day JSONL auto-prune)
 - `KERNEL.md` is the approved design doc for the multi-chat kernel architecture
+- Docker runs as non-root user `alpha` (UID 1000, matches host user)
+- Multi-stage Dockerfile: Node 22 builds frontend, Python 3.12 runs backend
+
+## Environment Variables
+
+- `DATABASE_URL` — Postgres DSN (Neon)
+- `JE_NE_SAIS_QUOI` — path to identity directory containing `prompts/system/{soul.md, bill-of-rights.md}`
+- `OLLAMA_URL` — embeddings service endpoint
+- `HOST_HOSTNAME` — container hostname override
+- `ALPHA_CWD` — working directory (used for JSONL session paths)
+- `SSL_CERTFILE`, `SSL_KEYFILE` — TLS certificate paths
+- `_ALPHA_REAP_TIMEOUT` — idle reap timeout in seconds (default: 600)
+- `ALPHA_SDK_CAPTURE_REQUESTS` — enable proxy request capture for debugging
+- `LOGFIRE_TOKEN` — structured observability token

@@ -12,14 +12,14 @@ and check_venue_change() is pure comparison.
 
 import pytest
 
-from alpha_app.orientation import assemble_orientation, check_venue_change
+from alpha_app.orientation import assemble_orientation, check_venue_change, get_here
 
 
 # ---------------------------------------------------------------------------
 # Fixture data — controlled inputs for deterministic tests
 # ---------------------------------------------------------------------------
 
-HERE = "Alpha v1.0.0 on primer, Docker, branch: main"
+HERE = "[Narrator] You are in Alpha v1.0.0 running in a Docker container on `primer`."
 
 YESTERDAY = (
     "## Tuesday, March 10, 2026\n\n"
@@ -95,8 +95,8 @@ class TestAssembleOrientation:
         texts = [b["text"] for b in result]
 
         # Verify order by checking distinguishing content in each block
-        assert "## Here" in texts[0]                        # here (header added)
-        assert "Alpha v1.0.0 on primer" in texts[0]         # here (content)
+        assert "[Narrator]" in texts[0]                        # here (narrator tag)
+        assert "Alpha v1.0.0" in texts[0]                     # here (content)
         assert "## Tuesday, March 10" in texts[1]            # yesterday
         assert "## Tuesday night" in texts[2]                # last night
         assert "## Letter from last night" in texts[3]       # letter
@@ -112,7 +112,7 @@ class TestAssembleOrientation:
         result = assemble_orientation(here=HERE)
 
         assert len(result) == 1
-        assert "## Here" in result[0]["text"]
+        assert "[Narrator]" in result[0]["text"]
         assert "Alpha v1.0.0" in result[0]["text"]
 
     def test_partial_sources(self):
@@ -134,7 +134,7 @@ class TestAssembleOrientation:
         result = assemble_orientation(here=HERE, todos=TODOS)
 
         assert len(result) == 2
-        assert "## Here" in result[0]["text"]
+        assert "[Narrator]" in result[0]["text"]
         assert "## Todos" in result[1]["text"]
 
     def test_empty_strings_are_skipped(self):
@@ -195,8 +195,8 @@ class TestVenueChange:
     def test_venue_changed_different_host(self):
         """Different hostname → returns a notice block."""
         result = check_venue_change(
-            current="Alpha v1.0.0 on primer, Docker, branch: main",
-            previous="Alpha v1.0.0 on jefferys-mbp, bare metal, branch: main",
+            current="[Narrator] You are in Alpha v1.0.0 running in a Docker container on `primer`.",
+            previous="[Narrator] You are in Alpha v1.0.0 running on bare metal on `jefferys-mbp`.",
         )
 
         assert result is not None
@@ -206,7 +206,7 @@ class TestVenueChange:
 
     def test_venue_unchanged(self):
         """Same venue → returns None. No noise on resume."""
-        venue = "Alpha v1.0.0 on primer, Docker, branch: main"
+        venue = "[Narrator] You are in Alpha v1.0.0 running in a Docker container on `primer`."
         result = check_venue_change(current=venue, previous=venue)
 
         assert result is None
@@ -214,28 +214,17 @@ class TestVenueChange:
     def test_no_previous_venue(self):
         """No previous venue (first session ever) → returns None."""
         result = check_venue_change(
-            current="Alpha v1.0.0 on primer, Docker, branch: main",
+            current="[Narrator] You are in Alpha v1.0.0 running in a Docker container on `primer`.",
             previous=None,
         )
 
         assert result is None
 
-    def test_branch_change_detected(self):
-        """Same machine, different branch → still a venue change."""
-        result = check_venue_change(
-            current="Alpha v1.1.0-dev on primer, Docker, branch: feature/foo",
-            previous="Alpha v1.0.0 on primer, Docker, branch: main",
-        )
-
-        assert result is not None
-        assert "feature/foo" in result["text"]
-        assert "main" in result["text"]
-
     def test_version_change_detected(self):
-        """Same machine and branch, different version → venue change."""
+        """Different version → venue change."""
         result = check_venue_change(
-            current="Alpha v1.1.0 on primer, Docker, branch: main",
-            previous="Alpha v1.0.0 on primer, Docker, branch: main",
+            current="[Narrator] You are in Alpha v1.1.0 running in a Docker container on `primer`.",
+            previous="[Narrator] You are in Alpha v1.0.0 running in a Docker container on `primer`.",
         )
 
         assert result is not None
@@ -243,8 +232,46 @@ class TestVenueChange:
     def test_docker_to_bare_metal_detected(self):
         """Docker to bare metal on same machine → venue change."""
         result = check_venue_change(
-            current="Alpha v1.0.0 on primer, bare metal, branch: main",
-            previous="Alpha v1.0.0 on primer, Docker, branch: main",
+            current="[Narrator] You are in Alpha v1.0.0 running on bare metal on `primer`.",
+            previous="[Narrator] You are in Alpha v1.0.0 running in a Docker container on `primer`.",
         )
 
         assert result is not None
+
+
+# ---------------------------------------------------------------------------
+# get_here() hostname detection
+# ---------------------------------------------------------------------------
+
+
+class TestGetHereHostname:
+    """Tests for get_here() hostname fallback chain."""
+
+    def test_host_hostname_env_var_wins(self, monkeypatch):
+        """HOST_HOSTNAME env var overrides socket.gethostname()."""
+        monkeypatch.setenv("HOST_HOSTNAME", "primer")
+        result = get_here()
+        assert "on `primer`" in result
+
+    def test_narrator_format(self, monkeypatch):
+        """Output uses narrator-style phrasing."""
+        monkeypatch.setenv("HOST_HOSTNAME", "primer")
+        result = get_here()
+        assert result.startswith("[Narrator] You are in Alpha v")
+        assert "running " in result
+
+    def test_falls_back_to_socket_when_env_missing(self, monkeypatch):
+        """Without HOST_HOSTNAME, uses socket.gethostname()."""
+        monkeypatch.delenv("HOST_HOSTNAME", raising=False)
+        result = get_here()
+        # Should contain SOME hostname — not empty
+        assert "on `" in result
+        assert result.endswith(".")
+
+    def test_falls_back_to_socket_when_env_empty(self, monkeypatch):
+        """Empty HOST_HOSTNAME is treated as absent."""
+        monkeypatch.setenv("HOST_HOSTNAME", "")
+        result = get_here()
+        # Empty string is falsy, so should fall through to socket
+        # The hostname won't be empty — it'll be whatever socket returns
+        assert "on ``" not in result  # No empty hostname in output

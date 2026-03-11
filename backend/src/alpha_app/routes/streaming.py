@@ -8,7 +8,7 @@ light interjections, and the final result to every connected WebSocket.
 import json
 
 import logfire
-from alpha_app import AssistantEvent, ErrorEvent, ResultEvent, StreamEvent
+from alpha_app import AssistantEvent, ErrorEvent, ResultEvent, StreamEvent, SystemEvent
 
 from alpha_app.chat import Chat, ConversationState
 from alpha_app.db import persist_chat
@@ -106,7 +106,15 @@ async def stream_chat_events(connections: set, chat: Chat, span=None) -> None:
             )
             interjection_count += new_interjections
 
-            if isinstance(event, StreamEvent):
+            if isinstance(event, SystemEvent) and event.subtype == "compact_boundary":
+                chat._needs_orientation = True
+                logfire.info(
+                    "compact_boundary detected",
+                    chat_id=chat_id,
+                    subtype=event.subtype,
+                )
+
+            elif isinstance(event, StreamEvent):
                 if event.delta_type == "text_delta":
                     text = event.delta_text
                     if text:

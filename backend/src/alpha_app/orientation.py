@@ -12,15 +12,17 @@ window. It is the "here + now" layer of the prompt architecture.
 
 from __future__ import annotations
 
+import os
 import socket
-import subprocess
 from pathlib import Path
 
 
 def get_here() -> str:
-    """Detect current runtime environment and return a human-readable string.
+    """Detect current runtime environment and return a narrator-style string.
 
-    Returns a string like: "Alpha v1.0.0 on primer, Docker, branch: main"
+    Returns something like:
+        "You are in Alpha v0.1.0 running in a Docker container on `primer`."
+        "You are in Alpha v0.1.0 running on bare metal on `jefferys-mbp`."
     """
     # App version
     try:
@@ -30,25 +32,18 @@ def get_here() -> str:
     except Exception:
         app_version = "unknown"
 
-    # Hostname
-    hostname = socket.gethostname()
+    # Hostname — HOST_HOSTNAME (set in compose from host's $HOSTNAME)
+    # wins over socket.gethostname() (which returns container ID in Docker)
+    hostname = os.environ.get("HOST_HOSTNAME") or socket.gethostname()
 
     # Docker vs bare metal
-    environment = "Docker" if Path("/.dockerenv").exists() else "bare metal"
+    in_docker = Path("/.dockerenv").exists()
+    env_phrase = "in a Docker container" if in_docker else "on bare metal"
 
-    # Git branch
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        branch = result.stdout.strip() if result.returncode == 0 else "unknown"
-    except Exception:
-        branch = "unknown"
-
-    return f"Alpha v{app_version} on {hostname}, {environment}, branch: {branch}"
+    return (
+        f"[Narrator] You are in Alpha v{app_version} "
+        f"running {env_phrase} on `{hostname}`."
+    )
 
 
 def assemble_orientation(
@@ -73,7 +68,7 @@ def assemble_orientation(
         weather → context files → events → todos
 
     Args:
-        here: Always present. Gets a ## Here header added.
+        here: Always present. Passed through as-is (has [Narrator] tag).
         yesterday: Passed through as-is (pre-formatted with its own header).
         last_night: Passed through as-is.
         letter: Passed through as-is.
@@ -93,9 +88,9 @@ def assemble_orientation(
     def _add(text: str) -> None:
         blocks.append({"type": "text", "text": text})
 
-    # here — required, gets ## Here header
+    # here — passed through as-is (already has [Narrator] tag)
     if here:
-        _add(f"## Here\n\n{here}")
+        _add(here)
 
     # yesterday — passed through as-is
     if yesterday:
