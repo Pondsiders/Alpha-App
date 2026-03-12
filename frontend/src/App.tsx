@@ -8,12 +8,114 @@ import { AppSidebar } from "@/components/AppSidebar";
 import { useWebSocket, type ServerEvent } from "@/lib/useWebSocket";
 import {
   useWorkshopStore,
+  generateId,
   type ChatMeta,
   type ChatState,
   type ContentPart,
   type JSONObject,
   type JSONValue,
+  type Message,
+  type ToolCallPart,
 } from "./store";
+
+// ---------------------------------------------------------------------------
+// Replay buffering — build full Message[] from buffered events in one pass
+// ---------------------------------------------------------------------------
+
+const REPLAY_BUFFERED_EVENTS = new Set([
+  "user-message", "text-delta", "thinking-delta", "tool-call", "tool-result", "done",
+]);
+
+function processReplayBuffer(events: ServerEvent[]): Message[] {
+  const messages: Message[] = [];
+  let currentAssistant: Message | null = null;
+
+  for (const event of events) {
+    switch (event.type) {
+      case "user-message": {
+        const data = event.data as { content: ContentPart[] };
+        messages.push({
+          id: generateId(),
+          role: "user",
+          content: data.content || [],
+          createdAt: new Date(),
+        });
+        currentAssistant = null;
+        break;
+      }
+      case "text-delta": {
+        if (!currentAssistant) {
+          currentAssistant = { id: generateId(), role: "assistant", content: [], createdAt: new Date() };
+          messages.push(currentAssistant);
+        }
+        const text = event.data as string;
+        const last = currentAssistant.content[currentAssistant.content.length - 1];
+        if (last?.type === "text") {
+          (last as { type: "text"; text: string }).text += text;
+        } else {
+          currentAssistant.content.push({ type: "text", text });
+        }
+        break;
+      }
+      case "thinking-delta": {
+        if (!currentAssistant) {
+          currentAssistant = { id: generateId(), role: "assistant", content: [], createdAt: new Date() };
+          messages.push(currentAssistant);
+        }
+        const thinking = event.data as string;
+        const last = currentAssistant.content[currentAssistant.content.length - 1];
+        if (last?.type === "thinking") {
+          (last as { type: "thinking"; thinking: string }).thinking += thinking;
+        } else {
+          currentAssistant.content.push({ type: "thinking", thinking });
+        }
+        break;
+      }
+      case "tool-call": {
+        if (!currentAssistant) {
+          currentAssistant = { id: generateId(), role: "assistant", content: [], createdAt: new Date() };
+          messages.push(currentAssistant);
+        }
+        const tc = event.data as {
+          toolCallId: string;
+          toolName: string;
+          args: JSONObject;
+          argsText: string;
+        };
+        currentAssistant.content.push({
+          type: "tool-call",
+          toolCallId: tc.toolCallId,
+          toolName: tc.toolName,
+          args: tc.args,
+          argsText: tc.argsText,
+        });
+        break;
+      }
+      case "tool-result": {
+        if (!currentAssistant) break;
+        const { toolCallId, result, isError } = event.data as {
+          toolCallId: string;
+          result: JSONValue;
+          isError?: boolean;
+        };
+        const toolCall = currentAssistant.content.find(
+          (p): p is ToolCallPart => p.type === "tool-call" && p.toolCallId === toolCallId
+        );
+        if (toolCall) {
+          toolCall.result = result;
+          toolCall.isError = isError;
+        }
+        break;
+      }
+      case "done": {
+        currentAssistant = null;
+        break;
+      }
+    }
+  }
+
+  return messages;
+}
 
 // ---------------------------------------------------------------------------
 // Layout — owns the WebSocket, dispatches all events to the store
@@ -44,6 +146,7 @@ function Layout() {
     addRemoteUserMessage: useWorkshopStore.getState().addRemoteUserMessage,
     addRemoteAssistantPlaceholder: useWorkshopStore.getState().addRemoteAssistantPlaceholder,
     addApproachLight: useWorkshopStore.getState().addApproachLight,
+    loadMessages: useWorkshopStore.getState().loadMessages,
   });
   // Keep the ref fresh (store actions are stable with immer, but belt & suspenders)
   actionsRef.current = {
@@ -60,10 +163,14 @@ function Layout() {
     addRemoteUserMessage: useWorkshopStore.getState().addRemoteUserMessage,
     addRemoteAssistantPlaceholder: useWorkshopStore.getState().addRemoteAssistantPlaceholder,
     addApproachLight: useWorkshopStore.getState().addApproachLight,
+    loadMessages: useWorkshopStore.getState().loadMessages,
   };
 
   // Shared assistant ID map — Layout reads, ChatPage writes
   const assistantIdMapRef = useRef<Record<string, string | null>>({});
+
+  // Replay buffer — accumulates events per chatId until replay-done
+  const replayBuffersRef = useRef<Record<string, ServerEvent[]>>({});
 
   // Guard for auto-create at /chat
   const createPendingRef = useRef(false);
@@ -72,6 +179,12 @@ function Layout() {
   const onEvent = useCallback((event: ServerEvent) => {
     const eChatId = event.chatId;
     const actions = actionsRef.current;
+
+    // Buffer message-content events during replay — apply all at once on replay-done
+    if (eChatId && eChatId in replayBuffersRef.current && REPLAY_BUFFERED_EVENTS.has(event.type)) {
+      replayBuffersRef.current[eChatId].push(event);
+      return;
+    }
 
     switch (event.type) {
       // -- Meta events --
@@ -249,8 +362,14 @@ function Layout() {
       }
 
       case "replay-done": {
-        // Replay complete — history is fully loaded.
-        // Cache is handled by setActiveChatId on switch-away.
+        // Flush the replay buffer: build the full message list and render once.
+        if (!eChatId) break;
+        const buffer = replayBuffersRef.current[eChatId];
+        if (buffer !== undefined) {
+          delete replayBuffersRef.current[eChatId];
+          const msgs = processReplayBuffer(buffer);
+          actions.loadMessages(eChatId, msgs);
+        }
         break;
       }
     }
@@ -263,6 +382,14 @@ function Layout() {
     [setConnected]
   );
   const { send, connected } = useWebSocket({ onEvent, onConnectionChange });
+
+  // Intercept replay sends to initialize the buffer for that chatId
+  const wrappedSend = useCallback((msg: ClientMessage) => {
+    if (msg.type === "replay" && msg.chatId) {
+      replayBuffersRef.current[msg.chatId] = [];
+    }
+    return send(msg);
+  }, [send]);
 
   // ---- Hydrate sidebar on connect ----
   useEffect(() => {
@@ -296,7 +423,7 @@ function Layout() {
       <AppSidebar />
       <main className="flex-1 flex flex-col min-w-0 h-svh">
         <ChatPage
-          send={send}
+          send={wrappedSend}
           connected={connected}
           assistantIdMapRef={assistantIdMapRef}
         />
