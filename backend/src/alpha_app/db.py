@@ -119,6 +119,35 @@ async def list_chats() -> list[dict]:
         return []
 
 
+# -- Event store --------------------------------------------------------------
+
+
+async def store_event(chat_id: str, event: dict) -> None:
+    """Append an event to the event stream for a chat."""
+    try:
+        pool = get_pool()
+        await pool.execute(
+            "INSERT INTO app.events (chat_id, event) VALUES ($1, $2)",
+            chat_id,
+            event,
+        )
+    except Exception:
+        pass  # Non-fatal — don't break streaming if the INSERT fails
+
+
+async def replay_events(chat_id: str) -> list[dict]:
+    """Load all events for a chat, ordered by insertion. For UI replay."""
+    pool = get_pool()
+    rows = await pool.fetch(
+        "SELECT event FROM app.events WHERE chat_id = $1 ORDER BY id",
+        chat_id,
+    )
+    return [row["event"] for row in rows]
+
+
+# -- Chat loading -------------------------------------------------------------
+
+
 async def load_chat(chat_id: str) -> Chat | None:
     """Load a chat's metadata from Postgres. Returns a DEAD Chat, or None."""
     try:
