@@ -27,15 +27,14 @@ import frontmatter
 import pendulum
 import redis.asyncio as aioredis
 
+from alpha_app.constants import CONTEXT_FILE_NAME, REDIS_URL
 from alpha_app.memories.db import get_pool
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-REDIS_URL = os.environ.get("REDIS_URL", "redis://alpha-pi:6379")
-CONTEXT_ROOT = Path(os.environ.get("CONTEXT_ROOT", "/Pondside"))
-CONTEXT_FILE_NAME = "ALPHA.md"
+CONTEXT_ROOT = Path("/Pondside")
 
 # Client narratives — what am I doing?
 _CLIENT_NARRATIVES: dict[str, str] = {

@@ -7,14 +7,10 @@ Uses nomic-embed-text with proper task prefixes:
 Ported from alpha_sdk v0.x.
 """
 
-import os
-
 import httpx
 import logfire
 
-# Configuration from environment — no defaults, fail loud at point of use
-OLLAMA_URL = os.environ.get("OLLAMA_URL")
-OLLAMA_EMBED_MODEL = os.environ.get("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+from alpha_app.constants import OLLAMA_EMBED_MODEL, OLLAMA_URL
 
 
 class EmbeddingError(Exception):

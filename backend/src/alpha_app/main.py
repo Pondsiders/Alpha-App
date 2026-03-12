@@ -133,13 +133,14 @@ def run() -> None:
     """Entry point for `uv run alpha` (bare metal deployment)."""
     import uvicorn
 
-    port = int(os.getenv("PORT", "18010"))
+    from alpha_app.constants import PORT
+
     ssl_certfile = os.getenv("SSL_CERTFILE")
     ssl_keyfile = os.getenv("SSL_KEYFILE")
     uvicorn.run(
         app,
         host="0.0.0.0",
-        port=port,
+        port=PORT,
         ssl_certfile=ssl_certfile or None,
         ssl_keyfile=ssl_keyfile or None,
     )

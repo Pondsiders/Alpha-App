@@ -17,12 +17,13 @@ The two pieces (in order):
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
+
+from alpha_app.constants import JE_NE_SAIS_QUOI
 
 
 def _resolve_identity_dir(identity_dir: str | Path | None = None) -> Path:
-    """Resolve the identity directory from argument or environment.
+    """Resolve the identity directory from argument or constant.
 
     Raises:
         RuntimeError: If no identity directory is configured.
@@ -30,13 +31,7 @@ def _resolve_identity_dir(identity_dir: str | Path | None = None) -> Path:
     if identity_dir is not None:
         return Path(identity_dir)
 
-    env_dir = os.environ.get("JE_NE_SAIS_QUOI")
-    if not env_dir:
-        raise RuntimeError(
-            "No identity directory configured. "
-            "Set JE_NE_SAIS_QUOI or pass identity_dir."
-        )
-    return Path(env_dir)
+    return JE_NE_SAIS_QUOI
 
 
 def _load_soul(identity_dir: Path) -> str:

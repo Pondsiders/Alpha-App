@@ -10,12 +10,10 @@ Ported from alpha_sdk v0.x.
 
 import base64
 import hashlib
-import os
 from io import BytesIO
 from pathlib import Path
 
-# Where thumbnails live — syncs via Syncthing, persists across sessions
-THUMBNAIL_DIR = Path(os.environ.get("THUMBNAIL_DIR", "/Pondside/Alpha-Home/images/thumbnails"))
+from alpha_app.constants import THUMBNAIL_DIR
 
 # Processing parameters (from the Mind's Eye token experiment, Feb 8 2026)
 MAX_LONG_EDGE = 768   # pixels — 464 tokens, readable, good quality
