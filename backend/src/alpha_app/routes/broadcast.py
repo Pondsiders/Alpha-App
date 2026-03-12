@@ -19,7 +19,15 @@ async def broadcast(
 
     Dead connections (send fails) are silently removed from the set.
     Uses asyncio.gather for parallel delivery.
+
+    Events carrying a chatId are persisted to the Postgres event store
+    (fire-and-forget via asyncio.create_task — never blocks the hot path).
     """
+    # Persist to event store — fire-and-forget, never blocks streaming
+    if "chatId" in event:
+        from alpha_app.db import store_event
+        asyncio.create_task(store_event(event["chatId"], event))
+
     targets = [c for c in connections if c is not exclude]
     if not targets:
         return
