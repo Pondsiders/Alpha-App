@@ -8,7 +8,7 @@ import asyncio
 
 from fastapi import WebSocket
 
-from alpha_app.chat import Chat, ConversationState, Holster, generate_chat_id
+from alpha_app.chat import Chat, ConversationState, generate_chat_id
 from alpha_app.db import list_chats, persist_chat
 from alpha_app.routes.broadcast import broadcast
 
@@ -16,16 +16,14 @@ from alpha_app.routes.broadcast import broadcast
 async def handle_create_chat(
     ws: WebSocket,
     connections: set,
-    holster: Holster,
     chats: dict[str, Chat],
     on_reap,
 ) -> None:
-    """Handle create-chat: claim from holster, persist, broadcast to all."""
+    """Handle create-chat: born COLD, persist, broadcast to all."""
     try:
-        claude = await holster.claim()
         chat_id = generate_chat_id()
-        system_prompt = ws.app.state.system_prompt
-        chat = Chat.from_holster(id=chat_id, claude=claude, system_prompt=system_prompt)
+        chat = Chat(id=chat_id)
+        chat._system_prompt = ws.app.state.system_prompt
         chat.on_reap = on_reap
         chats[chat_id] = chat
 

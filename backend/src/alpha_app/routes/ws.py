@@ -21,7 +21,7 @@ Server -> Client messages (unicast — response to requester only):
   { "type": "chat-list", "data": [...] }
 
 Server -> Client messages (broadcast — all connections):
-  { "type": "chat-created", "chatId": "...", "data": { "state": "idle" } }
+  { "type": "chat-created", "chatId": "...", "data": { "state": "dead" } }  -- born COLD, wakes on first message
   { "type": "chat-state", "chatId": "...", "data": { "state": "busy", "title": "...", ... } }
   { "type": "user-message", "chatId": "...", "data": { "content": [...] } }
   { "type": "text-delta", "chatId": "...", "data": "chunk" }
@@ -40,7 +40,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from alpha_app import AssistantEvent, UserEvent, replay_session
 
-from alpha_app.chat import Chat, ConversationState, Holster
+from alpha_app.chat import Chat, ConversationState
 from alpha_app.db import get_pool, load_chat
 from alpha_app.routes.broadcast import broadcast
 from alpha_app.routes.handlers import handle_create_chat, handle_interrupt, handle_list_chats
@@ -76,7 +76,6 @@ async def websocket_chat(ws: WebSocket) -> None:
     connections: set = ws.app.state.connections
     connections.add(ws)
 
-    holster: Holster = ws.app.state.holster
     chats: dict[str, Chat] = ws.app.state.chats
 
     # Reap callback — when a chat's idle timer fires, broadcast DEAD to all.
@@ -97,7 +96,7 @@ async def websocket_chat(ws: WebSocket) -> None:
             msg_type = raw.get("type")
 
             if msg_type == "create-chat":
-                await handle_create_chat(ws, connections, holster, chats, on_chat_reap)
+                await handle_create_chat(ws, connections, chats, on_chat_reap)
 
             elif msg_type == "list-chats":
                 await handle_list_chats(ws, chats)

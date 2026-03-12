@@ -23,6 +23,7 @@ from alpha_app.routes.broadcast import broadcast
 from alpha_app.routes.enrobe import enrobe
 from alpha_app.routes.spans import build_prompt_preview, format_input_messages
 from alpha_app.routes.streaming import stream_chat_events
+from alpha_app.tools import create_cortex_server, create_handoff_server
 
 
 async def handle_new_turn(
@@ -62,17 +63,13 @@ async def handle_new_turn(
         },
     ) as span:
         try:
-            # -- Resurrect if COLD -----------------------------------------
+            # -- Wake or resurrect if COLD ---------------------------------
             resurrected = False
             if chat.state == ConversationState.COLD:
-                if not chat.session_uuid:
-                    await broadcast(connections, {
-                        "type": "error",
-                        "chatId": chat_id,
-                        "data": "Chat is cold with no session to resume",
-                    })
-                    await broadcast(connections, {"type": "done", "chatId": chat_id})
-                    return
+                # Create per-Claude MCP servers
+                cortex = create_cortex_server()
+                handoff = create_handoff_server(chat)
+                mcp_servers = {"cortex": cortex, "handoff": handoff}
 
                 await broadcast(connections, {
                     "type": "chat-state",
@@ -84,11 +81,21 @@ async def handle_new_turn(
                         "contextWindow": chat.context_window,
                     },
                 })
-                await chat.resurrect(
-                    system_prompt=ws.app.state.system_prompt,
-                    mcp_servers=getattr(ws.app.state, "mcp_servers", None),
-                )
-                resurrected = True
+
+                if not chat.session_uuid:
+                    # Fresh chat — first message ever
+                    await chat.wake(
+                        system_prompt=ws.app.state.system_prompt,
+                        mcp_servers=mcp_servers,
+                    )
+                else:
+                    # Resumed chat — has a session to continue
+                    await chat.resurrect(
+                        system_prompt=ws.app.state.system_prompt,
+                        mcp_servers=mcp_servers,
+                    )
+                    resurrected = True
+
                 await broadcast(connections, {
                     "type": "chat-state",
                     "chatId": chat_id,
