@@ -34,7 +34,7 @@ from alpha_app.memories.db import get_pool
 # ---------------------------------------------------------------------------
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://alpha-pi:6379")
-CONTEXT_ROOT = Path("/Pondside")
+CONTEXT_ROOT = Path(os.environ.get("CONTEXT_ROOT", "/Pondside"))
 CONTEXT_FILE_NAME = "ALPHA.md"
 
 # Client narratives — what am I doing?

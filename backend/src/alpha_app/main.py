@@ -9,6 +9,11 @@ from pathlib import Path
 from typing import AsyncIterator
 
 import logfire
+from dotenv import load_dotenv
+
+# Load .env from repo root (no-op if not present — Docker sets env directly)
+load_dotenv(Path(__file__).resolve().parents[3] / ".env")
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -124,8 +129,21 @@ if FRONTEND_DIR.is_dir():
         return FileResponse(FRONTEND_DIR / "index.html")
 
 
-if __name__ == "__main__":
+def run() -> None:
+    """Entry point for `uv run alpha` (bare metal deployment)."""
     import uvicorn
 
     port = int(os.getenv("PORT", "18010"))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    ssl_certfile = os.getenv("SSL_CERTFILE")
+    ssl_keyfile = os.getenv("SSL_KEYFILE")
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=port,
+        ssl_certfile=ssl_certfile or None,
+        ssl_keyfile=ssl_keyfile or None,
+    )
+
+
+if __name__ == "__main__":
+    run()

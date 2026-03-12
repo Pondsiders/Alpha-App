@@ -14,7 +14,11 @@ dependencies = [
     "logfire>=3.0.0",
     "redis>=5.0.0",
     "python-frontmatter>=1.1.0",
+    "python-dotenv>=1.0.0",
 ]
+
+[project.scripts]
+alpha = "alpha_app.main:run"
 
 [build-system]
 requires = ["hatchling"]
