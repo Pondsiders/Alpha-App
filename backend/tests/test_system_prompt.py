@@ -39,9 +39,14 @@ async def test_no_soul_raises(tmp_path):
         await assemble_system_prompt(identity_dir=tmp_path)
 
 
-async def test_no_identity_dir_raises(monkeypatch):
-    """No identity_dir and no env var. Must fail loud."""
-    monkeypatch.delenv("JE_NE_SAIS_QUOI", raising=False)
+async def test_default_uses_constant():
+    """No identity_dir argument — uses JE_NE_SAIS_QUOI from constants."""
+    from alpha_app.constants import JE_NE_SAIS_QUOI
 
-    with pytest.raises(RuntimeError, match="No identity directory configured"):
+    # This should not raise — JE_NE_SAIS_QUOI is always defined.
+    # It may raise FileNotFoundError if the identity dir doesn't exist
+    # on the test runner, but never RuntimeError for "not configured."
+    try:
         await assemble_system_prompt()
+    except FileNotFoundError:
+        pass  # Expected on CI where /Pondside doesn't exist

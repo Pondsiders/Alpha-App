@@ -13,8 +13,7 @@ import hashlib
 from io import BytesIO
 from pathlib import Path
 
-# Where thumbnails live — syncs via Syncthing, persists across sessions
-THUMBNAIL_DIR = Path("/Pondside/Alpha-Home/images/thumbnails")
+from alpha_app.constants import THUMBNAIL_DIR
 
 # Processing parameters (from the Mind's Eye token experiment, Feb 8 2026)
 MAX_LONG_EDGE = 768   # pixels — 464 tokens, readable, good quality

@@ -731,7 +731,10 @@ class Claude:
         if self.extra_args:
             cmd.extend(self.extra_args)
 
+        from alpha_app.constants import CLAUDE_CONFIG_DIR, CLAUDE_CWD
+
         env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+        env["CLAUDE_CONFIG_DIR"] = str(CLAUDE_CONFIG_DIR)
         if self._proxy and self._proxy.port:
             env["ANTHROPIC_BASE_URL"] = self._proxy.base_url
 
@@ -741,6 +744,7 @@ class Claude:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
+            cwd=str(CLAUDE_CWD),
         )
 
     async def _init_handshake(self) -> InitEvent:

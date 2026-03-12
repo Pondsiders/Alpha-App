@@ -18,26 +18,21 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from typing import Any
 
 import httpx
 import logfire
 import pendulum
 
+from alpha_app.constants import OLLAMA_CHAT_MODEL, OLLAMA_URL
+
 from .cortex import search as cortex_search
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
+# -- Recall search parameters (internal to this module) -----------------------
 
-OLLAMA_URL = os.environ.get("OLLAMA_URL")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL")
-
-# Search parameters
-DIRECT_LIMIT = 1   # Top 1 for "what is Jeffery talking about generally"
-QUERY_LIMIT = 1    # Top 1 per extracted query
-MIN_SCORE = 0.1    # Minimum similarity threshold
+_DIRECT_LIMIT = 1    # Top 1 for overall semantic similarity
+_QUERY_LIMIT = 1     # Top 1 per extracted query
+_MIN_SCORE = 0.1     # Minimum similarity threshold
 
 # Query extraction prompt
 QUERY_EXTRACTION_PROMPT = """Jeffery just said:
@@ -106,7 +101,7 @@ async def _extract_queries(message: str) -> list[str]:
     Returns 0-3 descriptive queries, or empty list if Ollama unavailable
     or message doesn't warrant search.
     """
-    if not OLLAMA_URL or not OLLAMA_MODEL:
+    if not OLLAMA_URL or not OLLAMA_CHAT_MODEL:
         return []
 
     prompt = QUERY_EXTRACTION_PROMPT.format(message=message[:2000])
@@ -117,7 +112,7 @@ async def _extract_queries(message: str) -> list[str]:
             **{
                 "gen_ai.system": "ollama",
                 "gen_ai.operation.name": "chat",
-                "gen_ai.request.model": OLLAMA_MODEL,
+                "gen_ai.request.model": OLLAMA_CHAT_MODEL,
                 "gen_ai.output.type": "json",
             },
         ) as span:
@@ -125,7 +120,7 @@ async def _extract_queries(message: str) -> list[str]:
                 response = await client.post(
                     f"{OLLAMA_URL}/api/chat",
                     json={
-                        "model": OLLAMA_MODEL,
+                        "model": OLLAMA_CHAT_MODEL,
                         "messages": [{"role": "user", "content": prompt}],
                         "stream": False,
                         "format": "json",
@@ -170,9 +165,9 @@ async def _search_extracted_queries(
     async def search_one(query: str) -> dict[str, Any] | None:
         results = await cortex_search(
             query=query,
-            limit=QUERY_LIMIT,
+            limit=_QUERY_LIMIT,
             exclude=exclude,
-            min_score=MIN_SCORE,
+            min_score=_MIN_SCORE,
         )
         return results[0] if results else None
 
@@ -265,9 +260,9 @@ async def recall_memories(
     with logfire.span("recall", session_id=session_id):
         direct_task = cortex_search(
             query=text,
-            limit=DIRECT_LIMIT,
+            limit=_DIRECT_LIMIT,
             exclude=seen_list if seen_list else None,
-            min_score=MIN_SCORE,
+            min_score=_MIN_SCORE,
         )
         extract_task = _extract_queries(text)
 
