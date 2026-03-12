@@ -9,7 +9,6 @@ GET /api/sessions/{session_id} loads message history from JSONL files directly.
 # This module will be removed once replay is fully tested.
 
 import json
-import os
 from pathlib import Path
 from typing import Any
 
@@ -19,16 +18,12 @@ from alpha_app.db import get_pool
 
 router = APIRouter()
 
-# Claude Code stores sessions as JSONL files at ~/.claude/projects/{cwd-with-dashes}/.
-# Inside the container, claude's CWD is the container's CWD (usually /app).
-_cwd = os.environ.get("ALPHA_CWD", os.getcwd())
-_formatted_cwd = os.path.realpath(_cwd).replace("/", "-")
-SESSIONS_DIR = Path(
-    os.getenv(
-        "SESSIONS_DIR",
-        os.path.expanduser(f"~/.claude/projects/{_formatted_cwd}"),
-    )
-)
+# Claude stores sessions as JSONL at {CLAUDE_CONFIG_DIR}/projects/{cwd-with-dashes}/.
+# Both constants live in constants.py so Docker and bare metal agree on paths.
+from alpha_app.constants import CLAUDE_CONFIG_DIR, CLAUDE_CWD
+
+_formatted_cwd = str(CLAUDE_CWD.resolve()).replace("/", "-")
+SESSIONS_DIR = CLAUDE_CONFIG_DIR / "projects" / _formatted_cwd
 
 
 def extract_display_messages(lines: list[str]) -> list[dict[str, Any]]:
