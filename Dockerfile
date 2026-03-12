@@ -34,14 +34,12 @@ COPY --from=frontend-build /build/dist/ /app/frontend/dist/
 
 # Non-root user — UID 1000 matches jefferyharrell on the host
 RUN useradd --uid 1000 --create-home --shell /bin/bash alpha \
-    && mkdir -p /home/alpha/.claude \
-    && chown alpha:alpha /home/alpha/.claude \
     && echo 'alpha ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/alpha \
     && chmod 0440 /etc/sudoers.d/alpha
 USER alpha
 
 EXPOSE 18010
 
-# SSL cert/key paths come from env vars (set in compose.yml).
+# SSL cert/key paths come from env vars (set in .env).
 CMD uvicorn alpha_app.main:app --host 0.0.0.0 --port 18010 \
     --ssl-certfile "$SSL_CERTFILE" --ssl-keyfile "$SSL_KEYFILE"
