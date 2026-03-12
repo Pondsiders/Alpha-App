@@ -731,7 +731,10 @@ class Claude:
         if self.extra_args:
             cmd.extend(self.extra_args)
 
-        from alpha_app.constants import CLAUDE_CONFIG_DIR, CLAUDE_CWD
+        from alpha_app.constants import CLAUDE_CONFIG_DIR, CLAUDE_CWD, JE_NE_SAIS_QUOI
+
+        if JE_NE_SAIS_QUOI.exists():
+            cmd.extend(["--plugin-dir", str(JE_NE_SAIS_QUOI)])
 
         env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
         env["CLAUDE_CONFIG_DIR"] = str(CLAUDE_CONFIG_DIR)
