@@ -21,8 +21,8 @@ services:
       - ${HOME}/.claude/.credentials.json:/home/alpha/.claude/.credentials.json
       # Session JSONL files
       - ./data/claude:/home/alpha/.claude/projects
-      # Pondside access (read-only)
-      - /Pondside:/Pondside:ro
+      # Pondside access
+      - /Pondside:/Pondside
       # TLS certs
       - /Pondside/Basement/Files/certs:/certs:ro
     restart: unless-stopped

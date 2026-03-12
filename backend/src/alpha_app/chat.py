@@ -25,8 +25,8 @@ from typing import Any, AsyncIterator
 
 from alpha_app import Claude, Event, ResultEvent
 
-# The mannequin model. Haiku for speed and cheapness.
-MODEL = "claude-haiku-4-5-20251001"
+# The model IS part of the definition. When we upgrade, we change this line.
+MODEL = "claude-opus-4-6"
 
 # Mock mode — swap Claude for MockClaude in tests.
 _MOCK_CLAUDE = os.environ.get("_ALPHA_MOCK_CLAUDE", "").strip() == "1"
@@ -130,6 +130,10 @@ class Chat:
         # Orientation flag — True means the next message needs orientation
         # injected. New chats need it on first message; resumed chats need it too.
         self._needs_orientation: bool = True
+
+        # Intro memorables — set by the suggest pipeline after a turn,
+        # consumed by enrobe on the next turn.
+        self._pending_intro: str | None = None
 
         # Approach light thresholds — each fires exactly once per session.
         # Reset on resurrect (context shrinks after compaction).
