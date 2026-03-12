@@ -1,7 +1,6 @@
-"""Chat kernel — Chat + Holster for subprocess lifecycle management.
+"""Chat kernel — Chat subprocess lifecycle management.
 
 The Chat class wraps a Claude subprocess with a state machine and reap timer.
-The Holster keeps one warm subprocess ready for instant startup.
 
 State is a vector with two orthogonal dimensions:
   - Conversation: STARTING / READY / ENRICHING / RESPONDING / COLD
@@ -98,13 +97,13 @@ class Chat:
       suggest:      DISARMED / ARMED / FIRING
 
     Lifecycle:
-        from_holster()  -> (READY, DISARMED)
+        wake()          -> COLD -> STARTING -> READY (fresh start)
         begin_turn()    -> READY -> ENRICHING, suggest -> DISARMED
         send()          -> ENRICHING/READY -> RESPONDING (or interjection)
         events()        -> RESPONDING -> READY, suggest -> ARMED
         interrupt()     -> * -> COLD, suggest -> DISARMED
         reap()          -> * -> COLD, suggest -> DISARMED
-        resurrect()     -> COLD -> STARTING -> READY
+        resurrect()     -> COLD -> STARTING -> READY (resume existing session)
     """
 
     def __init__(self, *, id: str, claude: Claude | None = None) -> None:
@@ -143,14 +142,6 @@ class Chat:
         # Broadcast callback — called after reap so all clients see the state change.
         # Set externally by the WS handler. Signature: async (chat_id: str) -> None.
         self.on_reap: Callable[[str], Awaitable[None]] | None = None
-
-    @classmethod
-    def from_holster(cls, *, id: str, claude: Claude, system_prompt: str = "") -> "Chat":
-        """Create a Chat with a pre-warmed Claude. Born READY."""
-        chat = cls(id=id, claude=claude)
-        chat._system_prompt = system_prompt
-        chat._start_reap_timer()
-        return chat
 
     @classmethod
     def from_db(cls, chat_id: str, updated_at: float, data: dict) -> "Chat":
@@ -360,6 +351,35 @@ class Chat:
         self.state = ConversationState.COLD
         self.suggest = SuggestState.DISARMED
 
+    async def wake(
+        self,
+        system_prompt: str = "",
+        mcp_servers: dict[str, Any] | None = None,
+    ) -> None:
+        """Start a fresh Claude subprocess. COLD -> STARTING -> READY."""
+        if self.state != ConversationState.COLD:
+            raise RuntimeError(f"Can only wake COLD chats, not {self.state.value}")
+
+        prompt = system_prompt or self._system_prompt
+        self.state = ConversationState.STARTING
+
+        try:
+            self._claude = _make_claude(
+                model=MODEL,
+                system_prompt=prompt or None,
+                permission_mode="bypassPermissions",
+                mcp_servers=mcp_servers,
+            )
+            await self._claude.start(None)  # Fresh start, no resume
+
+            self.state = ConversationState.READY
+            self._needs_orientation = True
+            self._start_reap_timer()
+        except Exception:
+            self.state = ConversationState.COLD
+            self._claude = None
+            raise
+
     async def resurrect(
         self,
         system_prompt: str = "",
@@ -436,70 +456,3 @@ class Chat:
             pass
 
 
-class Holster:
-    """One in the chamber. Always keeps one warm claude subprocess ready."""
-
-    def __init__(
-        self,
-        system_prompt: str = "",
-        mcp_servers: dict[str, Any] | None = None,
-    ) -> None:
-        self._system_prompt = system_prompt
-        self._mcp_servers = mcp_servers or {}
-        self._warm: Claude | None = None
-        self._warming: asyncio.Task | None = None
-
-    @property
-    def ready(self) -> bool:
-        return self._warm is not None
-
-    async def warm(self) -> None:
-        """Start warming a new Claude in the background."""
-        if self._warming or self._warm:
-            return
-        self._warming = asyncio.create_task(self._do_warm())
-
-    async def _do_warm(self) -> None:
-        try:
-            claude = _make_claude(
-                model=MODEL,
-                system_prompt=self._system_prompt or None,
-                permission_mode="bypassPermissions",
-                mcp_servers=self._mcp_servers or None,
-            )
-            await claude.start(None)
-            self._warm = claude
-            self._warming = None
-        except Exception:
-            self._warming = None
-
-    async def claim(self) -> Claude:
-        """Take the warm Claude. Immediately start warming a replacement."""
-        if self._warm is not None:
-            claude = self._warm
-            self._warm = None
-            self._warming = None
-            await self.warm()
-            return claude
-
-        if self._warming is not None:
-            await self._warming
-            return await self.claim()
-
-        await self._do_warm()
-        return await self.claim()
-
-    async def shutdown(self) -> None:
-        if self._warming:
-            self._warming.cancel()
-            try:
-                await self._warming
-            except asyncio.CancelledError:
-                pass
-            self._warming = None
-        if self._warm:
-            try:
-                await self._warm.stop()
-            except Exception:
-                pass
-            self._warm = None

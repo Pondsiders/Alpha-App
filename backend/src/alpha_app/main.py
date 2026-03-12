@@ -21,8 +21,7 @@ from fastapi.staticfiles import StaticFiles
 
 from alpha_app import assemble_system_prompt
 from alpha_app.memories import init_schema as init_cortex_schema, close as close_cortex
-from alpha_app.tools import create_cortex_server
-from alpha_app.chat import Chat, ConversationState, Holster
+from alpha_app.chat import Chat, ConversationState
 from alpha_app.db import init_pool, close_pool
 from alpha_app.routes.sessions import router as sessions_router
 from alpha_app.routes.ws import router as ws_router
@@ -33,7 +32,7 @@ logfire.configure(service_name="alpha-app", scrubbing=False)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """App lifespan — assemble system prompt, warm holster, clean shutdown."""
+    """App lifespan — assemble system prompt, clean shutdown."""
     # Startup
     await init_pool()
 
@@ -48,18 +47,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except (RuntimeError, FileNotFoundError):
         soul = ""
 
-    # Create Cortex MCP server — memory tools served in-process
-    cortex_server = create_cortex_server()
-    mcp_servers = {"cortex": cortex_server}
-
-    holster = Holster(system_prompt=soul, mcp_servers=mcp_servers)
-    app.state.holster = holster
     app.state.chats = {}  # dict[str, Chat]
     app.state.connections = set()  # set[WebSocket] — all live WS connections (the switch)
     app.state.system_prompt = soul  # Stored for resurrection
-    app.state.mcp_servers = mcp_servers  # Stored for resurrection
-
-    await holster.warm()
 
     yield
 
@@ -67,7 +57,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     for chat in list(app.state.chats.values()):
         if chat.state != ConversationState.COLD:
             await chat.reap()
-    await holster.shutdown()
     await close_cortex()
     await close_pool()
 
@@ -96,13 +85,11 @@ app.include_router(ws_router)
 @app.get("/health")
 async def health() -> dict:
     """Health check endpoint."""
-    holster: Holster = app.state.holster
     chats: dict[str, Chat] = app.state.chats
     alive = [c for c in chats.values() if c.state != ConversationState.COLD]
     busy = [c for c in chats.values() if c.state in (ConversationState.ENRICHING, ConversationState.RESPONDING)]
     return {
         "status": "healthy",
-        "holster_ready": holster.ready,
         "chats_total": len(chats),
         "chats_alive": len(alive),
         "chats_busy": len(busy),
