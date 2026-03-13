@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 import asyncpg
 
 from alpha_app.chat import Chat
+from alpha_app.constants import CONTEXT_WINDOW
 
 _pool: asyncpg.Pool | None = None
 
@@ -126,7 +127,7 @@ async def list_chats() -> list[dict]:
                 "updatedAt": row["updated_at"].timestamp(),
                 "sessionUuid": data.get("session_uuid", ""),
                 "tokenCount": data.get("token_count", 0) or 0,
-                "contextWindow": data.get("context_window", 0) or 200_000,
+                "contextWindow": data.get("context_window", 0) or CONTEXT_WINDOW,
             })
         return result
     except Exception:

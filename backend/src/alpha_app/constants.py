@@ -26,5 +26,9 @@ PORT = 18020
 
 # -- Models -------------------------------------------------------------------
 
+# The model IS the definition. When we upgrade, we change these and bump the version.
+CLAUDE_MODEL = "claude-opus-4-6[1m]"
+CONTEXT_WINDOW = 1_000_000
+
 OLLAMA_EMBED_MODEL = "nomic-embed-text"
 OLLAMA_CHAT_MODEL = "gemma3:12b-it-qat"

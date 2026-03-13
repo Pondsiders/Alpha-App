@@ -24,8 +24,7 @@ from typing import Any, AsyncIterator
 
 from alpha_app import Claude, Event, ResultEvent
 
-# The model IS part of the definition. When we upgrade, we change this line.
-MODEL = "claude-opus-4-6"
+from alpha_app.constants import CLAUDE_MODEL as MODEL, CONTEXT_WINDOW
 
 # Mock mode — swap Claude for MockClaude in tests.
 _MOCK_CLAUDE = os.environ.get("_ALPHA_MOCK_CLAUDE", "").strip() == "1"
@@ -124,7 +123,7 @@ class Chat:
 
         # Cached token state — survives subprocess death
         self._cached_token_count: int = 0
-        self._cached_context_window: int = 200_000
+        self._cached_context_window: int = CONTEXT_WINDOW
 
         # Orientation flag — True means the next message needs orientation
         # injected. New chats need it on first message; resumed chats need it too.
@@ -153,7 +152,7 @@ class Chat:
         chat.created_at = data.get("created_at", 0) or 0
         chat.updated_at = updated_at
         chat._cached_token_count = data.get("token_count", 0) or 0
-        chat._cached_context_window = data.get("context_window", 0) or 200_000
+        chat._cached_context_window = data.get("context_window", 0) or CONTEXT_WINDOW
         return chat
 
     # -- Token state properties -----------------------------------------------

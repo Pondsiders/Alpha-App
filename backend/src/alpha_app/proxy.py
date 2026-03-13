@@ -40,6 +40,8 @@ import httpx
 import logfire
 from aiohttp import web
 
+from alpha_app.constants import CONTEXT_WINDOW
+
 
 ANTHROPIC_API_URL = "https://api.anthropic.com"
 
@@ -312,7 +314,7 @@ class _Proxy:
         await proxy.stop()
     """
 
-    DEFAULT_CONTEXT_WINDOW = 200_000  # Opus 4.5
+    DEFAULT_CONTEXT_WINDOW = CONTEXT_WINDOW
 
     def __init__(
         self,

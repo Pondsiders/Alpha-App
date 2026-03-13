@@ -18,6 +18,8 @@ Usage:
 from __future__ import annotations
 
 import uuid
+
+from alpha_app.constants import CONTEXT_WINDOW
 from dataclasses import dataclass, field
 from typing import AsyncIterator
 
@@ -91,7 +93,7 @@ class MockClaude:
 
     @property
     def context_window(self) -> int:
-        return 200000
+        return CONTEXT_WINDOW
 
     @property
     def usage_7d(self) -> float | None:

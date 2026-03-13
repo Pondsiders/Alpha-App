@@ -29,7 +29,7 @@ Server -> Client messages (broadcast — all connections):
   { "type": "tool-call", "chatId": "...", "data": { "toolCallId", "toolName", "args", "argsText" } }
   { "type": "done", "chatId": "..." }
   { "type": "interrupted", "chatId": "..." }
-  { "type": "context-update", "chatId": "...", "data": { "tokenCount": 12345, "tokenLimit": 200000 } }
+  { "type": "context-update", "chatId": "...", "data": { "tokenCount": 12345, "tokenLimit": 1000000 } }
   { "type": "error", "chatId": "...", "data": "something broke" }
 """
 
