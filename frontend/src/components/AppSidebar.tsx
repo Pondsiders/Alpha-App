@@ -6,7 +6,7 @@
  * "New Chat" navigates to /chat which triggers auto-create in Layout.
  */
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Plus } from "lucide-react";
 import {
@@ -112,9 +112,18 @@ interface AppSidebarProps {
 export function AppSidebar({ onNewChat }: AppSidebarProps) {
   const { chatId } = useParams<{ chatId?: string }>();
   const navigate = useNavigate();
-  const { setOpenMobile, isMobile } = useSidebar();
+  const { setOpenMobile, setOpen, isMobile } = useSidebar();
 
   const chats = useWorkshopStore((s) => s.chats);
+  const activeChatId = useWorkshopStore((s) => s.activeChatId);
+  const isEmpty = !activeChatId;
+
+  // Auto-open sidebar when in empty state (no active chat)
+  useEffect(() => {
+    if (isEmpty) {
+      setOpen(true);
+    }
+  }, [isEmpty, setOpen]);
 
   // Sort by updatedAt descending
   const sortedChats = useMemo(
@@ -150,6 +159,7 @@ export function AppSidebar({ onNewChat }: AppSidebarProps) {
               onClick={handleNewChat}
               tooltip="New chat"
               disabled={hasUnusedChat}
+              className={isEmpty && !hasUnusedChat ? "animate-breathe" : undefined}
             >
               <Plus size={16} />
               <span>New chat</span>

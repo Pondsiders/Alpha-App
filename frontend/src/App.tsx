@@ -211,7 +211,7 @@ function Layout() {
         // If the URL chatId isn't in the list, the stored chat no longer exists —
         // clear localStorage and fall through to the empty state.
         const currentChatId = chatIdRef.current;
-        if (currentChatId && !chatList.find((c) => c.chatId === currentChatId)) {
+        if (currentChatId && !chatList.find((c) => c.id === currentChatId)) {
           localStorage.removeItem("alpha.activeChatUrl");
           navigateRef.current("/chat", { replace: true });
         }
@@ -405,7 +405,7 @@ function Layout() {
     }
   }, [connected, send]);
 
-  // ---- Create-chat callback (used by sidebar + empty state button) ----
+  // ---- Create-chat callback (used by sidebar New Chat button) ----
   const handleCreateChat = useCallback(() => {
     if (!createPendingRef.current) {
       createPendingRef.current = true;
@@ -436,7 +436,6 @@ function Layout() {
           send={wrappedSend}
           connected={connected}
           assistantIdMapRef={assistantIdMapRef}
-          onNewChat={handleCreateChat}
         />
       </main>
     </SidebarProvider>

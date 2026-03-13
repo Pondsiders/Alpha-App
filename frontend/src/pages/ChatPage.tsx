@@ -10,7 +10,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { ArrowUp, Square, Copy, Check, Plus } from "lucide-react";
+import { ArrowUp, Square, Copy, Check } from "lucide-react";
 import { ToolFallback } from "../components/ToolFallback";
 import { MemoryNote } from "../components/tools/MemoryNote";
 import {
@@ -52,7 +52,6 @@ interface ChatPageProps {
   send: (msg: ClientMessage) => boolean;
   connected: boolean;
   assistantIdMapRef: React.MutableRefObject<Record<string, string | null>>;
-  onNewChat: () => void;
 }
 
 // -----------------------------------------------------------------------------
@@ -196,23 +195,11 @@ const convertMessage = (message: Message): ThreadMessageLike => {
 // Empty State — shown when no chat is active
 // -----------------------------------------------------------------------------
 
-function EmptyState({ onNewChat, connected }: { onNewChat: () => void; connected: boolean }) {
+function EmptyState() {
   return (
     <div className="h-full flex flex-col bg-background">
       <StatusBar />
-      {/* Main content — centered New Chat button */}
-      <div className="flex-1 flex items-center justify-center">
-        <button
-          onClick={onNewChat}
-          disabled={!connected}
-          className="flex items-center gap-2 px-6 py-3 rounded-2xl bg-primary text-[#1c1c1c] font-medium text-base
-                     border-2 border-primary/30 disabled:opacity-50 disabled:cursor-default
-                     cursor-pointer animate-breathe"
-        >
-          <Plus size={18} strokeWidth={2.5} />
-          New Chat
-        </button>
-      </div>
+      <div className="flex-1" />
       {/* Grayed-out composer (visual affordance only — not interactive) */}
       <footer className="px-6 py-4 bg-background chat-font">
         <div className="max-w-3xl mx-auto opacity-30 pointer-events-none select-none">
@@ -497,7 +484,7 @@ export default function ChatPage(props: ChatPageProps) {
   const activeChatId = useWorkshopStore((s) => s.activeChatId);
 
   if (!activeChatId) {
-    return <EmptyState onNewChat={props.onNewChat} connected={props.connected} />;
+    return <EmptyState />;
   }
 
   return <ThreadView {...props} />;
