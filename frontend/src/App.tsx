@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, useParams, useNavigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useParams, useNavigate } from "react-router-dom";
 import { useCallback, useEffect, useRef } from "react";
 import ChatPage from "./pages/ChatPage";
 import DevContextMeter from "./pages/DevContextMeter";
@@ -208,6 +208,13 @@ function Layout() {
           contextWindow: c.contextWindow,
         }));
         actions.setChats(chatList);
+        // If the URL chatId isn't in the list, the stored chat no longer exists —
+        // clear localStorage and fall through to the empty state.
+        const currentChatId = chatIdRef.current;
+        if (currentChatId && !chatList.find((c) => c.chatId === currentChatId)) {
+          localStorage.removeItem("alpha.activeChatUrl");
+          navigateRef.current("/chat", { replace: true });
+        }
         break;
       }
 
@@ -398,38 +405,51 @@ function Layout() {
     }
   }, [connected, send]);
 
-  // ---- Auto-create chat when at /chat (no chatId) ----
-  useEffect(() => {
-    if (connected && !chatId && !createPendingRef.current) {
+  // ---- Create-chat callback (used by sidebar + empty state button) ----
+  const handleCreateChat = useCallback(() => {
+    if (!createPendingRef.current) {
       createPendingRef.current = true;
       send({ type: "create-chat" });
     }
-    // Reset guard when we land on a chat
-    if (chatId) {
-      createPendingRef.current = false;
-    }
-  }, [connected, chatId, send]);
+  }, [send]);
 
-  // ---- Sync URL chatId → store activeChatId ----
-  const setActiveChatId = useWorkshopStore((s) => s.setActiveChatId);
+  // ---- Persist active chat URL to localStorage ----
   useEffect(() => {
     if (chatId) {
-      setActiveChatId(chatId);
+      localStorage.setItem("alpha.activeChatUrl", `/chat/${chatId}`);
+      // Reset create guard when we've landed on a chat
+      createPendingRef.current = false;
     }
+  }, [chatId]);
+
+  // ---- Sync URL chatId ↔ store activeChatId ----
+  const setActiveChatId = useWorkshopStore((s) => s.setActiveChatId);
+  useEffect(() => {
+    setActiveChatId(chatId ?? null);
   }, [chatId, setActiveChatId]);
 
   return (
     <SidebarProvider>
-      <AppSidebar />
+      <AppSidebar onNewChat={handleCreateChat} />
       <main className="flex-1 flex flex-col min-w-0 h-svh">
         <ChatPage
           send={wrappedSend}
           connected={connected}
           assistantIdMapRef={assistantIdMapRef}
+          onNewChat={handleCreateChat}
         />
       </main>
     </SidebarProvider>
   );
+}
+
+// ---------------------------------------------------------------------------
+// RootRedirect — restore last active chat from localStorage, or empty state
+// ---------------------------------------------------------------------------
+
+function RootRedirect() {
+  const stored = localStorage.getItem("alpha.activeChatUrl");
+  return <Navigate to={stored || "/chat"} replace />;
 }
 
 // ---------------------------------------------------------------------------
@@ -440,7 +460,7 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<Layout />} />
+        <Route path="/" element={<RootRedirect />} />
         <Route path="/chat" element={<Layout />} />
         <Route path="/chat/:chatId" element={<Layout />} />
         <Route path="/dev/context-meter" element={<DevContextMeter />} />

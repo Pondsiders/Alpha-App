@@ -10,7 +10,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { ArrowUp, Square, Copy, Check } from "lucide-react";
+import { ArrowUp, Square, Copy, Check, Plus } from "lucide-react";
 import { ToolFallback } from "../components/ToolFallback";
 import { MemoryNote } from "../components/tools/MemoryNote";
 import {
@@ -52,6 +52,7 @@ interface ChatPageProps {
   send: (msg: ClientMessage) => boolean;
   connected: boolean;
   assistantIdMapRef: React.MutableRefObject<Record<string, string | null>>;
+  onNewChat: () => void;
 }
 
 // -----------------------------------------------------------------------------
@@ -190,6 +191,48 @@ const convertMessage = (message: Message): ThreadMessageLike => {
     createdAt: message.createdAt,
   };
 };
+
+// -----------------------------------------------------------------------------
+// Empty State — shown when no chat is active
+// -----------------------------------------------------------------------------
+
+function EmptyState({ onNewChat, connected }: { onNewChat: () => void; connected: boolean }) {
+  return (
+    <div className="h-full flex flex-col bg-background">
+      <StatusBar />
+      {/* Main content — centered New Chat button */}
+      <div className="flex-1 flex items-center justify-center">
+        <button
+          onClick={onNewChat}
+          disabled={!connected}
+          className="flex items-center gap-2 px-6 py-3 rounded-2xl bg-primary text-[#1c1c1c] font-medium text-base
+                     border-2 border-primary/30 disabled:opacity-50 disabled:cursor-default
+                     cursor-pointer animate-breathe"
+        >
+          <Plus size={18} strokeWidth={2.5} />
+          New Chat
+        </button>
+      </div>
+      {/* Grayed-out composer (visual affordance only — not interactive) */}
+      <footer className="px-6 py-4 bg-background chat-font">
+        <div className="max-w-3xl mx-auto opacity-30 pointer-events-none select-none">
+          <div className="flex flex-col gap-3 p-4 bg-composer rounded-2xl shadow-[0_0.25rem_1.25rem_rgba(0,0,0,0.4),0_0_0_0.5px_rgba(108,106,96,0.15)]">
+            <div className="w-full py-2 text-muted/60 italic text-[18px]">Message Alpha...</div>
+            <div className="flex justify-end items-center gap-3">
+              {/* Attachment button placeholder */}
+              <div className="w-9 h-9 rounded-lg border border-border" />
+              {/* Send button placeholder */}
+              <div className="w-9 h-9 rounded-lg bg-primary" />
+            </div>
+          </div>
+          <p className="text-right text-muted mt-2 text-[11px]">
+            Alpha remembers everything. Except when she doesn't. 🦆
+          </p>
+        </div>
+      </footer>
+    </div>
+  );
+}
 
 // -----------------------------------------------------------------------------
 // Thread View
@@ -451,5 +494,11 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
 // -----------------------------------------------------------------------------
 
 export default function ChatPage(props: ChatPageProps) {
+  const activeChatId = useWorkshopStore((s) => s.activeChatId);
+
+  if (!activeChatId) {
+    return <EmptyState onNewChat={props.onNewChat} connected={props.connected} />;
+  }
+
   return <ThreadView {...props} />;
 }

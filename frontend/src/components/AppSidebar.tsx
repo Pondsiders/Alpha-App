@@ -105,7 +105,11 @@ function ChatIndicator({ state, chatId }: { state: ChatState; chatId: string }) 
 // AppSidebar
 // ---------------------------------------------------------------------------
 
-export function AppSidebar() {
+interface AppSidebarProps {
+  onNewChat: () => void;
+}
+
+export function AppSidebar({ onNewChat }: AppSidebarProps) {
   const { chatId } = useParams<{ chatId?: string }>();
   const navigate = useNavigate();
   const { setOpenMobile, isMobile } = useSidebar();
@@ -118,7 +122,7 @@ export function AppSidebar() {
     [chats]
   );
 
-  // New Chat guard: disable if there's already an unused warm chat
+  // New Chat guard: disable if there's already an empty (zero-message) chat
   const hasUnusedChat = useMemo(
     () => sortedChats.some((c) => c.state === "idle" && !c.title),
     [sortedChats]
@@ -133,10 +137,9 @@ export function AppSidebar() {
   );
 
   const handleNewChat = useCallback(() => {
-    // Navigate to /chat — Layout auto-creates via WebSocket
-    navigate("/chat");
+    onNewChat();
     if (isMobile) setOpenMobile(false);
-  }, [navigate, isMobile, setOpenMobile]);
+  }, [onNewChat, isMobile, setOpenMobile]);
 
   return (
     <Sidebar side="left" variant="sidebar" collapsible="offcanvas">
