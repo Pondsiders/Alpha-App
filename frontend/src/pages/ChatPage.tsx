@@ -192,6 +192,36 @@ const convertMessage = (message: Message): ThreadMessageLike => {
 };
 
 // -----------------------------------------------------------------------------
+// Empty State — shown when no chat is active
+// -----------------------------------------------------------------------------
+
+function EmptyState() {
+  return (
+    <div className="h-full flex flex-col bg-background">
+      <StatusBar />
+      <div className="flex-1" />
+      {/* Grayed-out composer (visual affordance only — not interactive) */}
+      <footer className="px-6 py-4 bg-background chat-font">
+        <div className="max-w-3xl mx-auto opacity-30 pointer-events-none select-none">
+          <div className="flex flex-col gap-3 p-4 bg-composer rounded-2xl shadow-[0_0.25rem_1.25rem_rgba(0,0,0,0.4),0_0_0_0.5px_rgba(108,106,96,0.15)]">
+            <div className="w-full py-2 text-muted/60 italic text-[18px]">Message Alpha...</div>
+            <div className="flex justify-end items-center gap-3">
+              {/* Attachment button placeholder */}
+              <div className="w-9 h-9 rounded-lg border border-border" />
+              {/* Send button placeholder */}
+              <div className="w-9 h-9 rounded-lg bg-primary" />
+            </div>
+          </div>
+          <p className="text-right text-muted mt-2 text-[11px]">
+            Alpha remembers everything. Except when she doesn't. 🦆
+          </p>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+// -----------------------------------------------------------------------------
 // Thread View
 // -----------------------------------------------------------------------------
 
@@ -219,9 +249,10 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
   const sendRef = useRef(send);
   sendRef.current = send;
 
-  // ---- Load messages when active chat changes ----
+  // ---- Load messages when active chat changes or connection is established ----
   useEffect(() => {
     if (!activeChatId) return;
+    if (!connected) return; // Wait until the WebSocket is open
 
     // If we already have messages (restored from cache by setActiveChatId), skip
     if (useWorkshopStore.getState().messages.length > 0) return;
@@ -229,7 +260,7 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
     // Request replay over WebSocket — events arrive through the same
     // handlers as live streaming (user-message, text-delta, tool-call, done)
     send({ type: "replay", chatId: activeChatId });
-  }, [activeChatId, send]);
+  }, [activeChatId, connected, send]);
 
   // ---- Send handler ----
   const onNew = useCallback(
@@ -451,5 +482,11 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
 // -----------------------------------------------------------------------------
 
 export default function ChatPage(props: ChatPageProps) {
+  const activeChatId = useWorkshopStore((s) => s.activeChatId);
+
+  if (!activeChatId) {
+    return <EmptyState />;
+  }
+
   return <ThreadView {...props} />;
 }

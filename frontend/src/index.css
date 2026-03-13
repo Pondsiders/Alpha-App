@@ -68,9 +68,18 @@
   50% { opacity: 1; transform: scale(1); }
 }
 
+@keyframes breathe {
+  0%, 100% { box-shadow: 0 0 0 0px rgba(212, 165, 116, 0.0); }
+  50%       { box-shadow: 0 0 0 6px rgba(212, 165, 116, 0.25); }
+}
+
 @layer utilities {
   .animate-pulse-dot {
     animation: pulse-dot 1.5s ease-in-out infinite;
+  }
+
+  .animate-breathe {
+    animation: breathe 2.5s ease-in-out infinite;
   }
 }
 

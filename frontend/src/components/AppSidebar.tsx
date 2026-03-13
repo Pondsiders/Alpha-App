@@ -6,7 +6,7 @@
  * "New Chat" navigates to /chat which triggers auto-create in Layout.
  */
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Plus } from "lucide-react";
 import {
@@ -105,12 +105,25 @@ function ChatIndicator({ state, chatId }: { state: ChatState; chatId: string }) 
 // AppSidebar
 // ---------------------------------------------------------------------------
 
-export function AppSidebar() {
+interface AppSidebarProps {
+  onNewChat: () => void;
+}
+
+export function AppSidebar({ onNewChat }: AppSidebarProps) {
   const { chatId } = useParams<{ chatId?: string }>();
   const navigate = useNavigate();
-  const { setOpenMobile, isMobile } = useSidebar();
+  const { setOpenMobile, setOpen, isMobile } = useSidebar();
 
   const chats = useWorkshopStore((s) => s.chats);
+  const activeChatId = useWorkshopStore((s) => s.activeChatId);
+  const isEmpty = !activeChatId;
+
+  // Auto-open sidebar when in empty state (no active chat)
+  useEffect(() => {
+    if (isEmpty) {
+      setOpen(true);
+    }
+  }, [isEmpty, setOpen]);
 
   // Sort by updatedAt descending
   const sortedChats = useMemo(
@@ -118,7 +131,7 @@ export function AppSidebar() {
     [chats]
   );
 
-  // New Chat guard: disable if there's already an unused warm chat
+  // New Chat guard: disable if there's already an empty (zero-message) chat
   const hasUnusedChat = useMemo(
     () => sortedChats.some((c) => c.state === "idle" && !c.title),
     [sortedChats]
@@ -133,10 +146,9 @@ export function AppSidebar() {
   );
 
   const handleNewChat = useCallback(() => {
-    // Navigate to /chat — Layout auto-creates via WebSocket
-    navigate("/chat");
+    onNewChat();
     if (isMobile) setOpenMobile(false);
-  }, [navigate, isMobile, setOpenMobile]);
+  }, [onNewChat, isMobile, setOpenMobile]);
 
   return (
     <Sidebar side="left" variant="sidebar" collapsible="offcanvas">
@@ -147,6 +159,7 @@ export function AppSidebar() {
               onClick={handleNewChat}
               tooltip="New chat"
               disabled={hasUnusedChat}
+              className={isEmpty && !hasUnusedChat ? "animate-breathe" : undefined}
             >
               <Plus size={16} />
               <span>New chat</span>
