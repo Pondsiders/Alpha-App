@@ -53,6 +53,8 @@ async def init_pool() -> None:
     # Idempotent migration: add seq column to app.events if not already present.
     # seq captures true broadcast order and is safe to ORDER BY (unlike BIGSERIAL
     # id, which can be assigned out of order across pool connections).
+    # Note: any pre-migration rows with seq = NULL will sort LAST in PostgreSQL's
+    # default ASC ordering (NULLs last), after all correctly-sequenced new rows.
     async with _pool.acquire() as conn:
         await conn.execute(
             "ALTER TABLE app.events ADD COLUMN IF NOT EXISTS seq INTEGER"

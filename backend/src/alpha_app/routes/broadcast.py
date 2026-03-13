@@ -33,9 +33,18 @@ async def broadcast(
     """
     # Persist to event store — fire-and-forget, never blocks streaming
     if "chatId" in event:
-        from alpha_app.db import store_event
+        from alpha_app.db import get_pool, store_event
         chat_id = event["chatId"]
-        seq = _seq_counters.get(chat_id, 0)
+        if chat_id not in _seq_counters:
+            # First encounter after (re)start — initialize from Postgres so we
+            # don't overlap with pre-restart seq values and scramble replay order.
+            pool = get_pool()
+            row = await pool.fetchrow(
+                "SELECT COALESCE(MAX(seq) + 1, 0) AS next_seq FROM app.events WHERE chat_id = $1",
+                chat_id,
+            )
+            _seq_counters[chat_id] = row["next_seq"]
+        seq = _seq_counters[chat_id]
         _seq_counters[chat_id] = seq + 1
         asyncio.create_task(store_event(chat_id, event, seq))
 
