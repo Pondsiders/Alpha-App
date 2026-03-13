@@ -23,7 +23,6 @@ from alpha_app import assemble_system_prompt
 from alpha_app.memories import init_schema as init_cortex_schema, close as close_cortex
 from alpha_app.chat import Chat, ConversationState
 from alpha_app.db import init_pool, close_pool
-from alpha_app.routes.sessions import router as sessions_router
 from alpha_app.routes.ws import router as ws_router
 
 # Observability — one place to look for everything.
@@ -78,7 +77,6 @@ app.add_middleware(
 )
 
 # Mount routes
-app.include_router(sessions_router)
 app.include_router(ws_router)
 
 
