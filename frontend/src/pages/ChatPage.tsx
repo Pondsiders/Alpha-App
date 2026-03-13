@@ -249,9 +249,10 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
   const sendRef = useRef(send);
   sendRef.current = send;
 
-  // ---- Load messages when active chat changes ----
+  // ---- Load messages when active chat changes or connection is established ----
   useEffect(() => {
     if (!activeChatId) return;
+    if (!connected) return; // Wait until the WebSocket is open
 
     // If we already have messages (restored from cache by setActiveChatId), skip
     if (useWorkshopStore.getState().messages.length > 0) return;
@@ -259,7 +260,7 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
     // Request replay over WebSocket — events arrive through the same
     // handlers as live streaming (user-message, text-delta, tool-call, done)
     send({ type: "replay", chatId: activeChatId });
-  }, [activeChatId, send]);
+  }, [activeChatId, connected, send]);
 
   // ---- Send handler ----
   const onNew = useCallback(
