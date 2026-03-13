@@ -6,7 +6,7 @@
  * "New Chat" navigates to /chat which triggers auto-create in Layout.
  */
 
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Plus } from "lucide-react";
 import {
@@ -131,11 +131,20 @@ export function AppSidebar({ onNewChat }: AppSidebarProps) {
     [chats]
   );
 
-  // New Chat guard: disable if there's already an empty (zero-message) chat
+  // New Chat guard: disable if there's already a pending (zero-message) chat.
+  // Include "starting" so rapid double-clicks are also blocked before the
+  // subprocess finishes warming up.
   const hasUnusedChat = useMemo(
-    () => sortedChats.some((c) => c.state === "idle" && !c.title),
+    () => sortedChats.some((c) => (c.state === "idle" || c.state === "starting") && !c.title),
     [sortedChats]
   );
+
+  // Optimistic pending state: disable the button immediately on click so rapid
+  // double-clicks are blocked even before the WebSocket round-trip completes.
+  const [isPending, setIsPending] = useState(false);
+  useEffect(() => {
+    if (hasUnusedChat) setIsPending(false);
+  }, [hasUnusedChat]);
 
   const handleChatClick = useCallback(
     (id: string) => {
@@ -146,6 +155,7 @@ export function AppSidebar({ onNewChat }: AppSidebarProps) {
   );
 
   const handleNewChat = useCallback(() => {
+    setIsPending(true);
     onNewChat();
     if (isMobile) setOpenMobile(false);
   }, [onNewChat, isMobile, setOpenMobile]);
@@ -158,7 +168,7 @@ export function AppSidebar({ onNewChat }: AppSidebarProps) {
             <SidebarMenuButton
               onClick={handleNewChat}
               tooltip="New chat"
-              disabled={hasUnusedChat}
+              disabled={isPending || hasUnusedChat}
               className={isEmpty && !hasUnusedChat ? "animate-breathe" : undefined}
             >
               <Plus size={16} />
