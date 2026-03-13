@@ -17,12 +17,13 @@ import asyncio
 import logfire
 from fastapi import WebSocket
 
-from alpha_app.chat import MODEL, Chat, ConversationState
+from alpha_app.chat import MODEL, Chat, ConversationState, SuggestState
 from alpha_app.db import persist_chat
 from alpha_app.routes.broadcast import broadcast
 from alpha_app.routes.enrobe import enrobe
 from alpha_app.routes.spans import build_prompt_preview, format_input_messages
 from alpha_app.routes.streaming import stream_chat_events
+from alpha_app.suggest import suggest, format_intro_block
 from alpha_app.tools import create_cortex_server, create_handoff_server
 
 
@@ -54,6 +55,31 @@ def _tag_content_roles(blocks: list[dict]) -> list[dict]:
             role = "user-input"
         tagged.append({**block, "role": role})
     return tagged
+
+
+async def _run_suggest(chat: Chat, user_text: str, assistant_text: str) -> None:
+    """Fire-and-forget suggest pipeline. Populates chat._pending_intro.
+
+    Runs as a background task after the turn's streaming completes.
+    On success, the intro block is picked up by enrobe() on the next turn.
+    On failure (timeout, Ollama down, empty result), silently returns.
+    """
+    chat.suggest = SuggestState.FIRING
+    try:
+        memorables = await suggest(user_text, assistant_text)
+        block = format_intro_block(memorables)
+        if block:
+            chat._pending_intro = block
+            logfire.info(
+                "suggest: {count} memorables",
+                count=len(memorables),
+                memorables=memorables,
+                chat_id=chat.id,
+            )
+    except Exception:
+        pass
+    finally:
+        chat.suggest = SuggestState.DISARMED
 
 
 async def handle_new_turn(
@@ -211,7 +237,18 @@ async def handle_new_turn(
             await persist_chat(chat)
 
             # -- Stream events to all connections -------------------------
-            await stream_chat_events(connections, chat, span)
+            assistant_text = await stream_chat_events(connections, chat, span)
+
+            # -- Fire suggest in dead time ---------------------------------
+            user_text = " ".join(
+                b.get("text", "") for b in content if b.get("type") == "text"
+            )
+            if (
+                chat.suggest == SuggestState.ARMED
+                and user_text.strip()
+                and assistant_text.strip()
+            ):
+                asyncio.create_task(_run_suggest(chat, user_text, assistant_text))
 
         except asyncio.CancelledError:
             pass

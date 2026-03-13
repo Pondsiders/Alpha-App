@@ -86,11 +86,14 @@ async def _check_approach_light(
     return last_token_count, interjections_sent
 
 
-async def stream_chat_events(connections: set, chat: Chat, span=None) -> None:
+async def stream_chat_events(connections: set, chat: Chat, span=None) -> str:
     """Stream events from a Chat to ALL connected clients.
 
     All emitted events carry the chatId and broadcast to every connection.
     On turn completion, emits chat-state with the updated state, then done.
+
+    Returns:
+        The assistant's text output from this turn (for suggest pipeline).
     """
     chat_id = chat.id
     turn_completed = False
@@ -195,3 +198,10 @@ async def stream_chat_events(connections: set, chat: Chat, span=None) -> None:
         await broadcast(connections, {"type": "done", "chatId": chat_id})
     except Exception:
         pass
+
+    # Return assistant text for suggest pipeline
+    return " ".join(
+        block.get("text", "")
+        for block in output_parts
+        if block.get("type") == "text"
+    )
