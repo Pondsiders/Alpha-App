@@ -76,7 +76,16 @@ def _create_test_database() -> None:
         "  data JSONB NOT NULL DEFAULT '{}'"
         "); "
         "CREATE INDEX IF NOT EXISTS idx_chats_updated_at "
-        "  ON app.chats (updated_at DESC);"
+        "  ON app.chats (updated_at DESC); "
+        "CREATE TABLE IF NOT EXISTS app.events ("
+        "  id BIGSERIAL PRIMARY KEY,"
+        "  chat_id TEXT NOT NULL,"
+        "  ts TIMESTAMPTZ NOT NULL DEFAULT now(),"
+        "  event JSONB NOT NULL,"
+        "  seq INTEGER"
+        "); "
+        "CREATE INDEX IF NOT EXISTS idx_events_chat_seq "
+        "  ON app.events (chat_id, seq);"
     )
     result = subprocess.run(
         ["psql", test_url, "-c", sql],

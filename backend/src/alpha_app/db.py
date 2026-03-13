@@ -50,6 +50,18 @@ async def init_pool() -> None:
 
     _pool = await asyncpg.create_pool(dsn, min_size=2, max_size=10, init=_init_connection)
 
+    # Idempotent migration: add seq column to app.events if not already present.
+    # seq captures true broadcast order and is safe to ORDER BY (unlike BIGSERIAL
+    # id, which can be assigned out of order across pool connections).
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "ALTER TABLE app.events ADD COLUMN IF NOT EXISTS seq INTEGER"
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_events_chat_seq"
+            " ON app.events (chat_id, seq)"
+        )
+
 
 async def close_pool() -> None:
     """Close the connection pool. Call once at shutdown."""
@@ -122,24 +134,30 @@ async def list_chats() -> list[dict]:
 # -- Event store --------------------------------------------------------------
 
 
-async def store_event(chat_id: str, event: dict) -> None:
-    """Append an event to the event stream for a chat."""
+async def store_event(chat_id: str, event: dict, seq: int) -> None:
+    """Append an event to the event stream for a chat.
+
+    seq is a monotonically increasing counter assigned at broadcast time
+    (before any await), capturing true event order regardless of which pool
+    connection commits first.
+    """
     try:
         pool = get_pool()
         await pool.execute(
-            "INSERT INTO app.events (chat_id, event) VALUES ($1, $2)",
+            "INSERT INTO app.events (chat_id, event, seq) VALUES ($1, $2, $3)",
             chat_id,
             event,
+            seq,
         )
     except Exception:
         pass  # Non-fatal — don't break streaming if the INSERT fails
 
 
 async def replay_events(chat_id: str) -> list[dict]:
-    """Load all events for a chat, ordered by insertion. For UI replay."""
+    """Load all events for a chat, ordered by seq. For UI replay."""
     pool = get_pool()
     rows = await pool.fetch(
-        "SELECT event FROM app.events WHERE chat_id = $1 ORDER BY id",
+        "SELECT event FROM app.events WHERE chat_id = $1 ORDER BY seq",
         chat_id,
     )
     return [row["event"] for row in rows]
