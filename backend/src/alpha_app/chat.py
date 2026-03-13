@@ -410,7 +410,7 @@ class Chat:
             self.state = ConversationState.READY
             self._crossed_yellow = False
             self._crossed_red = False
-            self._needs_orientation = True
+            self._needs_orientation = False
             self._start_reap_timer()
 
         except Exception:
