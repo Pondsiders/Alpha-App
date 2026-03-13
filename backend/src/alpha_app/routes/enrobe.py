@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 
 import pendulum
 
+from alpha_app.images import process_image_blocks
 from alpha_app.memories.recall import recall_memories
 from alpha_app.orientation import assemble_orientation
 from alpha_app.sources import fetch_all_orientation
@@ -68,6 +69,9 @@ async def enrobe(content: list[dict], *, chat: "Chat") -> EnrobeResult:
     Returns:
         EnrobeResult with enriched content and broadcast events.
     """
+    # Process images: resize to ≤1MP, compress to JPEG
+    content = process_image_blocks(content)
+
     events: list[dict] = []
     blocks: list[dict] = []
 
