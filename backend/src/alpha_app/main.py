@@ -148,9 +148,14 @@ def _rebuild_frontend_if_stale(frontend_dir: Path) -> None:
 
 def run() -> None:
     """Entry point for `uv run alpha` (bare metal deployment)."""
+    import argparse
     import uvicorn
 
     from alpha_app.constants import PORT
+
+    parser = argparse.ArgumentParser(description="Alpha backend server")
+    parser.add_argument("--port", type=int, default=PORT, help=f"Port to serve on (default: {PORT})")
+    args = parser.parse_args()
 
     # Rebuild frontend if source is newer than the bundle (bare-metal only).
     if not _DOCKER_DIST.is_dir():
@@ -161,7 +166,7 @@ def run() -> None:
     uvicorn.run(
         app,
         host="0.0.0.0",
-        port=PORT,
+        port=args.port,
         ssl_certfile=ssl_certfile or None,
         ssl_keyfile=ssl_keyfile or None,
     )
