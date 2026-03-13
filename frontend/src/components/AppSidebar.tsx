@@ -131,9 +131,11 @@ export function AppSidebar({ onNewChat }: AppSidebarProps) {
     [chats]
   );
 
-  // New Chat guard: disable if there's already an empty (zero-message) chat
+  // New Chat guard: disable if there's already a pending (zero-message) chat.
+  // Include "starting" so rapid double-clicks are also blocked before the
+  // subprocess finishes warming up.
   const hasUnusedChat = useMemo(
-    () => sortedChats.some((c) => c.state === "idle" && !c.title),
+    () => sortedChats.some((c) => (c.state === "idle" || c.state === "starting") && !c.title),
     [sortedChats]
   );
 
