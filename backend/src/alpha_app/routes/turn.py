@@ -127,8 +127,17 @@ async def handle_new_turn(
             # -- Wake or resurrect if COLD ---------------------------------
             resurrected = False
             if chat.state == ConversationState.COLD:
-                # Create per-Claude MCP servers
-                cortex = create_cortex_server()
+                # Create per-Claude MCP servers.
+                # clear_memorables closes the feedback loop with Intro:
+                # when Alpha stores a memory, the pending suggestions clear
+                # so she doesn't get nagged about things she already stored.
+                def _clear() -> int:
+                    if chat._pending_intro:
+                        chat._pending_intro = None
+                        return 1
+                    return 0
+
+                cortex = create_cortex_server(clear_memorables=_clear)
                 handoff = create_handoff_server(chat)
                 mcp_servers = {"cortex": cortex, "handoff": handoff}
 

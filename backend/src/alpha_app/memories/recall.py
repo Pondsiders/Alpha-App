@@ -30,8 +30,8 @@ from .cortex import search as cortex_search
 
 # -- Recall search parameters (internal to this module) -----------------------
 
-_DIRECT_LIMIT = 1    # Top 1 for overall semantic similarity
-_QUERY_LIMIT = 1     # Top 1 per extracted query
+_DIRECT_LIMIT = 2    # Top 2 for overall semantic similarity
+_QUERY_LIMIT = 2     # Top 2 per extracted query
 _MIN_SCORE = 0.1     # Minimum similarity threshold
 
 # Query extraction prompt
