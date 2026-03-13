@@ -26,6 +26,36 @@ from alpha_app.routes.streaming import stream_chat_events
 from alpha_app.tools import create_cortex_server, create_handoff_server
 
 
+def _tag_content_roles(blocks: list[dict]) -> list[dict]:
+    """Add a 'role' field to each text content block for frontend classification.
+
+    Classification order (first match wins):
+      "intro"      — starts with "## Intro speaks"
+      "memory"     — starts with "## Memory #"
+      "timestamp"  — starts with "[Sent "
+      "system"     — starts with "<system-reminder>"
+      "user-input" — everything else
+    """
+    tagged = []
+    for block in blocks:
+        if block.get("type") != "text":
+            tagged.append(block)
+            continue
+        text = block.get("text", "")
+        if text.startswith("## Intro speaks"):
+            role = "intro"
+        elif text.startswith("## Memory #"):
+            role = "memory"
+        elif text.startswith("[Sent "):
+            role = "timestamp"
+        elif text.startswith("<system-reminder>"):
+            role = "system"
+        else:
+            role = "user-input"
+        tagged.append({**block, "role": role})
+    return tagged
+
+
 async def handle_new_turn(
     ws: WebSocket,
     connections: set,
@@ -33,12 +63,17 @@ async def handle_new_turn(
     content: list[dict],
     turn_input_messages: dict[str, list],
     streaming_tasks: dict[str, asyncio.Task],
+    *,
+    broadcast_user_message: bool = True,
 ) -> None:
     """Handle a new turn: resurrect if needed, enrobe, send, stream events.
 
     Runs as a background task so the WebSocket read loop stays hot.
     State changes, enrichment events, and streaming events broadcast
     to ALL connections.
+
+    broadcast_user_message: set False for buzz turns where the narration
+    must stay invisible to the human (no user-message event emitted).
     """
     chat_id = chat.id
     prompt_preview = build_prompt_preview(content)
@@ -131,6 +166,17 @@ async def handle_new_turn(
             # -- Enrobe: wrap user message in enrichment -------------------
             result = await enrobe(content, chat=chat)
 
+            # Broadcast user-message with enriched+tagged content so the event
+            # store captures a complete view (intro/memory/timestamp blocks
+            # included). Exclude the sender — they added their message optimistically.
+            # Skipped for buzz turns where the narration must stay invisible.
+            if broadcast_user_message:
+                await broadcast(connections, {
+                    "type": "user-message",
+                    "chatId": chat_id,
+                    "data": {"content": _tag_content_roles(result.content)},
+                }, exclude=ws)
+
             # Update Logfire with what Claude actually sees (enriched, not raw)
             enriched_messages = format_input_messages(result.content)
             turn_input_messages[chat_id] = enriched_messages
@@ -195,11 +241,12 @@ async def handle_interjection(
     """Handle an interjection: feed to RESPONDING subprocess, echo to other clients."""
     await chat.send(content)
 
-    # Echo user message to other connections (sender has it optimistically)
+    # Echo user message to other connections (sender has it optimistically).
+    # Interjection content is raw user input — all blocks tag as "user-input".
     await broadcast(connections, {
         "type": "user-message",
         "chatId": chat.id,
-        "data": {"content": content},
+        "data": {"content": _tag_content_roles(content)},
     }, exclude=ws)
 
     # Append to the turn's input messages for the Logfire span

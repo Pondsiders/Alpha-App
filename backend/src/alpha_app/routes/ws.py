@@ -34,14 +34,11 @@ Server -> Client messages (broadcast — all connections):
 """
 
 import asyncio
-import json
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from alpha_app import AssistantEvent, UserEvent, replay_session
-
 from alpha_app.chat import Chat, ConversationState
-from alpha_app.db import get_pool, load_chat
+from alpha_app.db import load_chat, replay_events
 from alpha_app.routes.broadcast import broadcast
 from alpha_app.routes.handlers import handle_create_chat, handle_interrupt, handle_list_chats
 from alpha_app.routes.turn import handle_interjection, handle_new_turn
@@ -127,14 +124,8 @@ async def websocket_chat(ws: WebSocket) -> None:
                     # Interjection — feed to subprocess, echo to others
                     await handle_interjection(ws, connections, chat, content, turn_input_messages)
                 else:
-                    # Echo user message to other connections
-                    await broadcast(connections, {
-                        "type": "user-message",
-                        "chatId": chat_id,
-                        "data": {"content": content},
-                    }, exclude=ws)
-
-                    # New turn — start streaming in background
+                    # New turn — user-message broadcast happens in handle_new_turn
+                    # after enrobe, so the stored event carries enriched+tagged content
                     task = asyncio.create_task(
                         handle_new_turn(ws, connections, chat, content, turn_input_messages, streaming_tasks)
                     )
@@ -164,9 +155,10 @@ async def websocket_chat(ws: WebSocket) -> None:
                 narration = [{"type": "text", "text": BUZZ_NARRATION}]
 
                 # No user-message echo — the narration is invisible to the human.
-                # Go straight to turn, same as send but without the broadcast.
+                # Go straight to turn, suppressing the user-message broadcast.
                 task = asyncio.create_task(
-                    handle_new_turn(ws, connections, chat, narration, turn_input_messages, streaming_tasks)
+                    handle_new_turn(ws, connections, chat, narration, turn_input_messages, streaming_tasks,
+                                    broadcast_user_message=False)
                 )
                 streaming_tasks[chat_id] = task
 
@@ -180,95 +172,9 @@ async def websocket_chat(ws: WebSocket) -> None:
                     await ws.send_json({"type": "error", "data": "Missing chatId"})
                     continue
 
-                # Look up session UUID from Postgres
-                try:
-                    pool = get_pool()
-                    row = await pool.fetchrow(
-                        "SELECT data FROM app.chats WHERE id = $1",
-                        chat_id,
-                    )
-                except Exception:
-                    await ws.send_json({"type": "error", "chatId": chat_id, "data": "Database error"})
-                    continue
-
-                session_uuid = None
-                if row:
-                    session_uuid = row["data"].get("session_uuid")
-
-                if not session_uuid:
-                    # No history — just signal done
-                    await ws.send_json({"type": "replay-done", "chatId": chat_id})
-                    continue
-
-                # Find the sessions directory (same as sessions.py uses)
-                from alpha_app.routes.sessions import SESSIONS_DIR
-
-                try:
-                    async for event in replay_session(session_uuid, sessions_dir=SESSIONS_DIR):
-                        if isinstance(event, UserEvent):
-                            # Transform user content for frontend
-                            user_content = []
-                            raw_content = event.content
-                            for block in raw_content:
-                                if isinstance(block, str):
-                                    user_content.append({"type": "text", "text": block})
-                                elif isinstance(block, dict):
-                                    block_type = block.get("type")
-                                    if block_type == "text":
-                                        user_content.append({"type": "text", "text": block.get("text", "")})
-                                    elif block_type == "image":
-                                        source = block.get("source", {})
-                                        if source.get("type") == "base64" and source.get("data"):
-                                            media_type = source.get("media_type", "image/png")
-                                            data_uri = f"data:{media_type};base64,{source['data']}"
-                                            user_content.append({"type": "image", "image": data_uri})
-                            if user_content:
-                                await ws.send_json({
-                                    "type": "user-message",
-                                    "chatId": chat_id,
-                                    "data": {"content": user_content},
-                                })
-
-                        elif isinstance(event, AssistantEvent):
-                            for block in event.content:
-                                if not isinstance(block, dict):
-                                    continue
-                                block_type = block.get("type")
-                                if block_type == "text":
-                                    text = block.get("text", "")
-                                    if text:
-                                        await ws.send_json({
-                                            "type": "text-delta",
-                                            "chatId": chat_id,
-                                            "data": text,
-                                        })
-                                elif block_type == "thinking":
-                                    thinking = block.get("thinking", "")
-                                    if thinking:
-                                        await ws.send_json({
-                                            "type": "thinking-delta",
-                                            "chatId": chat_id,
-                                            "data": thinking,
-                                        })
-                                elif block_type == "tool_use":
-                                    tool_input = block.get("input", {})
-                                    await ws.send_json({
-                                        "type": "tool-call",
-                                        "chatId": chat_id,
-                                        "data": {
-                                            "toolCallId": block.get("id", ""),
-                                            "toolName": block.get("name", ""),
-                                            "args": tool_input,
-                                            "argsText": json.dumps(tool_input),
-                                        },
-                                    })
-                            # End of this assistant turn
-                            await ws.send_json({"type": "done", "chatId": chat_id})
-
-                except FileNotFoundError:
-                    # JSONL file missing — not an error, just no history
-                    pass
-
+                events = await replay_events(chat_id)
+                for event in events:
+                    await ws.send_json(event)
                 await ws.send_json({"type": "replay-done", "chatId": chat_id})
 
             else:
