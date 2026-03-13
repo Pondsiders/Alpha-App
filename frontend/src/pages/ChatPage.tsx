@@ -9,7 +9,7 @@
  * to assistant-ui primitives.
  */
 
-import { useState, useEffect, useCallback, useRef, useMemo, type RefCallback } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { ArrowUp, Square, Copy, Check } from "lucide-react";
 import { ToolFallback } from "../components/ToolFallback";
 import { MemoryNote } from "../components/tools/MemoryNote";
@@ -356,31 +356,12 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
     adapters,
   });
 
-  // Smooth scrolling — assistant-ui hardcodes scrollTo({ behavior: "instant" })
-  // in its auto-scroll hook, bypassing CSS scroll-behavior. We intercept
-  // scrollTo on the viewport element: small scrolls (new content arriving)
-  // get "smooth", big jumps (thread switch, history load) stay "instant".
-  const smoothScrollRef: RefCallback<HTMLDivElement> = useCallback((el) => {
-    if (!el) return;
-    const orig = el.scrollTo.bind(el) as typeof el.scrollTo;
-    el.scrollTo = function (this: HTMLDivElement, ...args: Parameters<typeof el.scrollTo>) {
-      const opts = args[0];
-      if (typeof opts === "object" && opts.behavior === "instant") {
-        const distance = Math.abs(this.scrollHeight - this.scrollTop - this.clientHeight);
-        orig({ ...opts, behavior: distance < 400 ? "smooth" : "instant" });
-      } else {
-        // @ts-expect-error — overload union; runtime is fine
-        orig(...args);
-      }
-    };
-  }, []);
-
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <div className="h-full flex flex-col bg-background">
         <StatusBar />
         <ThreadPrimitive.Root className="flex-1 flex flex-col overflow-hidden chat-font">
-          <ThreadPrimitive.Viewport ref={smoothScrollRef} className="flex-1 flex flex-col overflow-y-scroll p-6">
+          <ThreadPrimitive.Viewport className="flex-1 flex flex-col overflow-y-scroll p-6">
             <div className="max-w-3xl mx-auto w-full flex-1">
               {messages.length === 0 && !isRunning && (
                 <div className="flex-1 flex items-center justify-center h-full">
