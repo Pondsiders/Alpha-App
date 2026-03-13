@@ -354,6 +354,7 @@ class Chat:
         self,
         system_prompt: str = "",
         mcp_servers: dict[str, Any] | None = None,
+        compact_config: Any | None = None,
     ) -> None:
         """Start a fresh Claude subprocess. COLD -> STARTING -> READY."""
         if self.state != ConversationState.COLD:
@@ -368,6 +369,7 @@ class Chat:
                 system_prompt=prompt or None,
                 permission_mode="bypassPermissions",
                 mcp_servers=mcp_servers,
+                compact_config=compact_config,
             )
             await self._claude.start(None)  # Fresh start, no resume
 
@@ -384,6 +386,7 @@ class Chat:
         system_prompt: str = "",
         session_uuid: str | None = None,
         mcp_servers: dict[str, Any] | None = None,
+        compact_config: Any | None = None,
     ) -> None:
         """Bring a COLD chat back to life via --resume. COLD -> STARTING -> READY."""
         if self.state != ConversationState.COLD:
@@ -403,6 +406,7 @@ class Chat:
                 system_prompt=prompt or None,
                 permission_mode="bypassPermissions",
                 mcp_servers=mcp_servers,
+                compact_config=compact_config,
             )
             await self._claude.start(uuid)
 

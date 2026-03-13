@@ -157,12 +157,14 @@ async def handle_new_turn(
                     await chat.wake(
                         system_prompt=ws.app.state.system_prompt,
                         mcp_servers=mcp_servers,
+                        compact_config=ws.app.state.compact_config,
                     )
                 else:
                     # Resumed chat — has a session to continue
                     await chat.resurrect(
                         system_prompt=ws.app.state.system_prompt,
                         mcp_servers=mcp_servers,
+                        compact_config=ws.app.state.compact_config,
                     )
                     resurrected = True
 
