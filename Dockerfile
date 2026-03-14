@@ -15,8 +15,10 @@ RUN npm run build
 FROM python:3.12
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        # Version control — git for repos, gh for GitHub CLI
+        # Version control — git for repos
         git \
+        # sudo — for passwordless root (and /etc/sudoers.d/)
+        sudo \
         # Network tools — curl for APIs, wget for downloads, jq for JSON
         curl wget jq \
         # Shell comfort — less for paging, tree for dirs, file for types
@@ -61,4 +63,5 @@ USER alpha
 EXPOSE 18010
 
 # --with-scheduler enables APScheduler (Solitude, capsules, today-so-far, etc.)
-CMD ["uv", "run", "--project", "/app/backend", "alpha", "--with-scheduler", "--port", "18010"]
+# alpha is installed system-wide via `uv pip install --system` — no venv needed.
+CMD ["alpha", "--with-scheduler", "--port", "18010"]
