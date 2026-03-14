@@ -17,6 +17,7 @@ Can be run manually:
     uv run job today-so-far --dry-run
 """
 
+import json
 import logging
 
 import logfire
@@ -206,6 +207,19 @@ async def run(app, **kwargs) -> str | None:
             # Run Claude one-shot
             system_prompt = getattr(app.state, "system_prompt", None) if app else None
 
+            # System instructions — what the LLM was told to be
+            if system_prompt:
+                span.set_attribute("gen_ai.system_instructions", json.dumps([
+                    {"type": "text", "content": system_prompt},
+                ]))
+
+            # Input messages — what we sent
+            span.set_attribute("gen_ai.input.messages", json.dumps([
+                {"role": "user", "parts": [
+                    {"type": "text", "content": prompt},
+                ]},
+            ]))
+
             claude = Claude(
                 model=CLAUDE_MODEL,
                 system_prompt=system_prompt,
@@ -231,6 +245,13 @@ async def run(app, **kwargs) -> str | None:
 
                 summary = "".join(output_parts).strip()
                 logger.info(f"today: got summary ({len(summary)} chars)")
+
+                # Output messages — what we got back
+                span.set_attribute("gen_ai.output.messages", json.dumps([
+                    {"role": "assistant", "parts": [
+                        {"type": "text", "content": summary},
+                    ]},
+                ]))
             finally:
                 await claude.stop()
 
