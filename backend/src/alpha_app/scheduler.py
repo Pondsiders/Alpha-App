@@ -69,5 +69,14 @@ def create_scheduler(app) -> AsyncIOScheduler:
     # scheduler.add_job(solitude.run_breath, CronTrigger(hour="23,0-4"), args=[app], id="solitude_breath")
     # scheduler.add_job(solitude.run_last, CronTrigger(hour=5), args=[app], id="solitude_last")
 
-    logfire.info("Scheduler created with {job_count} job(s)", job_count=len(scheduler.get_jobs()))
+    jobs = scheduler.get_jobs()
+    job_list = [
+        {"id": j.id, "name": j.name, "trigger": str(j.trigger)}
+        for j in jobs
+    ]
+    logfire.info(
+        "Scheduler created with {job_count} job(s)",
+        job_count=len(jobs),
+        jobs=job_list,
+    )
     return scheduler
