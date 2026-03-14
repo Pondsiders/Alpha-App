@@ -421,10 +421,12 @@ class Claude:
 
             # Trace every event from the subprocess — the valve controls
             # whether this reaches Logfire (min_log_level in configure()).
+            # The full raw dict goes as an attribute so you can inspect it.
             logfire.trace(
                 "claude.event: {event_type}",
                 event_type=type(event).__name__,
                 raw_type=raw.get("type", ""),
+                event=raw,
             )
 
             if isinstance(event, _ControlRequestEvent):
