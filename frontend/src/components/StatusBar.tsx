@@ -10,7 +10,7 @@
  */
 
 import { useState, useCallback } from "react";
-import { PanelLeft, Copy, Check } from "lucide-react";
+import { PanelLeft, Copy, Check, Search, Bot, Feather } from "lucide-react";
 import { ContextMeter } from "@/components/ContextMeter";
 import {
   Popover,
@@ -103,6 +103,15 @@ export function StatusBar() {
           </Popover>
         )}
       </div>
+
+      {/* Center: status lights — enriching / busy / suggesting */}
+      {activeChatId && (
+        <div className="flex items-center gap-2">
+          <Search size={13} className="text-muted/30" aria-label="Enriching" />
+          <Bot size={13} className="text-muted/30" aria-label="Busy" />
+          <Feather size={13} className="text-muted/30" aria-label="Suggesting" />
+        </div>
+      )}
 
       {/* Right: context meter (hover for token details) */}
       <ContextMeter

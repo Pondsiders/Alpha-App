@@ -132,17 +132,6 @@ const AssistantMessage = () => {
   const message = useMessage();
   const [copied, setCopied] = useState(false);
 
-  // Is THIS message the one currently streaming? Check our store, not assistant-ui's
-  // status (which is always "complete" because we set isRunning: false for duplex).
-  const isStreaming = useWorkshopStore((s) => {
-    const activeChat = s.activeChatId ? s.chats[s.activeChatId] : null;
-    const isBusy = activeChat?.state === "busy" || activeChat?.state === "starting";
-    if (!isBusy) return false;
-    // Only show dots on the LAST assistant message
-    const lastMsg = s.messages[s.messages.length - 1];
-    return lastMsg?.id === message.id;
-  });
-
   const handleCopy = async () => {
     const rawText = (message.content as Array<{ type: string; text?: string }>)
       .filter((p) => p.type === "text" && p.text)
@@ -168,14 +157,6 @@ const AssistantMessage = () => {
             },
           }}
         />
-        {/* Streaming indicator — inside the message, below content, above copy */}
-        {isStreaming && (
-          <div className="flex gap-1.5 items-center h-4" data-testid="streaming-indicator">
-            <span className="w-1.5 h-1.5 rounded-full bg-primary/50 animate-[pulse_1.4s_ease-in-out_infinite]" />
-            <span className="w-1.5 h-1.5 rounded-full bg-primary/50 animate-[pulse_1.4s_ease-in-out_0.2s_infinite]" />
-            <span className="w-1.5 h-1.5 rounded-full bg-primary/50 animate-[pulse_1.4s_ease-in-out_0.4s_infinite]" />
-          </div>
-        )}
       </div>
       <div className="mt-1 opacity-0 group-hover/assistant:opacity-100 transition-opacity">
         <button
@@ -433,20 +414,6 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
                 <ApproachLight key={`${light.level}-${i}`} {...light} />
               ))}
 
-              {/* Pre-content thinking indicator — shows before AssistantMessage mounts.
-                  Once the first text-delta arrives and content.length > 0, the message-level
-                  indicator inside AssistantMessage takes over. */}
-              {isRunning && messages.length > 0
-                && messages[messages.length - 1]?.role === "assistant"
-                && messages[messages.length - 1]?.content.length === 0 && (
-                <div className="pl-2 mb-6" data-testid="thinking-indicator">
-                  <div className="flex gap-1.5 items-center h-6">
-                    <span className="w-1.5 h-1.5 rounded-full bg-primary/50 animate-[pulse_1.4s_ease-in-out_infinite]" />
-                    <span className="w-1.5 h-1.5 rounded-full bg-primary/50 animate-[pulse_1.4s_ease-in-out_0.2s_infinite]" />
-                    <span className="w-1.5 h-1.5 rounded-full bg-primary/50 animate-[pulse_1.4s_ease-in-out_0.4s_infinite]" />
-                  </div>
-                </div>
-              )}
 
             </div>
 
