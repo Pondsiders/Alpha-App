@@ -18,15 +18,12 @@ Can be run manually:
 """
 
 import json
-import logging
 
 import logfire
 import pendulum
 
 from alpha_app.claude import AssistantEvent, Claude, ResultEvent
 from alpha_app.constants import CLAUDE_MODEL, REDIS_URL
-
-logger = logging.getLogger(__name__)
 
 PACIFIC = "America/Los_Angeles"
 
@@ -151,7 +148,7 @@ async def _store_redis(summary: str, now: pendulum.DateTime) -> None:
         finally:
             await r.aclose()
     except Exception as e:
-        logger.warning(f"today: Redis write failed (non-fatal): {e}")
+        logfire.warn(f"today: Redis write failed (non-fatal): {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +171,7 @@ async def run(app, **kwargs) -> str | None:
     trigger = kwargs.get("trigger", "manual")
 
     if now.hour < 6:
-        logger.info("today: before 6 AM, skipping")
+        logfire.info("today: before 6 AM, skipping")
         return None
 
     with logfire.span(
@@ -195,7 +192,7 @@ async def run(app, **kwargs) -> str | None:
         memories = await _fetch_memories_since(cortex_pool, start_of_day)
 
         span.set_attribute("job.memory_count", len(memories))
-        logger.info(f"today: found {len(memories)} memories since 6 AM")
+        logfire.info(f"today: found {len(memories)} memories since 6 AM")
 
         # Build prompt
         prompt = build_prompt(memories, now)
@@ -244,7 +241,7 @@ async def run(app, **kwargs) -> str | None:
                         break
 
                 summary = "".join(output_parts).strip()
-                logger.info(f"today: got summary ({len(summary)} chars)")
+                logfire.info(f"today: got summary ({len(summary)} chars)")
 
                 # Output messages — what we got back
                 span.set_attribute("gen_ai.output.messages", json.dumps([
@@ -262,11 +259,11 @@ async def run(app, **kwargs) -> str | None:
         app_pool = get_app_pool()
         await _ensure_table(app_pool)
         await _store_summary(app_pool, summary, now)
-        logger.info("today: stored in Postgres (app.today_summary)")
+        logfire.info("today: stored in Postgres (app.today_summary)")
 
         # Also store in Redis (backward compat — sources.py reads from there)
         await _store_redis(summary, now)
-        logger.info("today: stored in Redis (backward compat)")
+        logfire.info("today: stored in Redis (backward compat)")
 
         return summary
 

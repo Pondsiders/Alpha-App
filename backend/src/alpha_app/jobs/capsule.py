@@ -19,15 +19,12 @@ Can be run manually:
 """
 
 import json
-import logging
 
 import logfire
 import pendulum
 
 from alpha_app.claude import AssistantEvent, Claude, ResultEvent
 from alpha_app.constants import CLAUDE_MODEL
-
-logger = logging.getLogger(__name__)
 
 PACIFIC = "America/Los_Angeles"
 
@@ -284,14 +281,14 @@ async def run(app, **kwargs) -> str | None:
 
         memories = await _fetch_memories(pool, start, end)
         span.set_attribute("job.memory_count", len(memories))
-        logger.info(f"capsule ({period}): found {len(memories)} memories")
+        logfire.info(f"capsule ({period}): found {len(memories)} memories")
 
         if not memories:
             summary = f"No memories from {period_label}."
             await _store_summary(pool, start, end, summary, 0)
             span.set_attribute("job.skipped_claude", True)
             span.set_attribute("job.summary_length", len(summary))
-            logger.info("capsule: no memories, stored placeholder")
+            logfire.info("capsule: no memories, stored placeholder")
             return summary
 
         # Fetch previous summaries for continuity
@@ -300,7 +297,7 @@ async def run(app, **kwargs) -> str | None:
             prev_summary = await _fetch_previous_summary(pool, prev_start, prev_end)
             if prev_summary:
                 previous_context.append((label, prev_summary))
-                logger.info(f"capsule: found previous context: {label}")
+                logfire.info(f"capsule: found previous context: {label}")
 
         # Build prompt
         prompt = build_prompt(memories, period_label, previous_context or None)
@@ -342,7 +339,7 @@ async def run(app, **kwargs) -> str | None:
                     break
 
             summary = "".join(output_parts).strip()
-            logger.info(f"capsule ({period}): got summary ({len(summary)} chars)")
+            logfire.info(f"capsule ({period}): got summary ({len(summary)} chars)")
 
             span.set_attribute("gen_ai.output.messages", json.dumps([
                 {"role": "assistant", "parts": [
@@ -356,7 +353,7 @@ async def run(app, **kwargs) -> str | None:
 
         # Store in cortex.summaries
         await _store_summary(pool, start, end, summary, len(memories))
-        logger.info(f"capsule ({period}): stored in cortex.summaries")
+        logfire.info(f"capsule ({period}): stored in cortex.summaries")
 
         return summary
 

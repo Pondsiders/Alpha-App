@@ -19,15 +19,12 @@ Can be run manually:
 """
 
 import json
-import logging
 
 import logfire
 import pendulum
 
 from alpha_app.claude import AssistantEvent, Claude, ResultEvent
 from alpha_app.constants import CLAUDE_MODEL, REDIS_URL
-
-logger = logging.getLogger(__name__)
 
 PACIFIC = "America/Los_Angeles"
 
@@ -160,7 +157,7 @@ async def _store_redis(letter: str, now: pendulum.DateTime) -> None:
         finally:
             await r.aclose()
     except Exception as e:
-        logger.warning(f"to_self: Redis write failed (non-fatal): {e}")
+        logfire.warn(f"to_self: Redis write failed (non-fatal): {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -210,9 +207,9 @@ async def run(app, **kwargs) -> str | None:
         span.set_attribute("job.has_session", has_session)
         if session_uuid:
             span.set_attribute("job.forked_session", session_uuid)
-            logger.info(f"to_self: forking session {session_uuid[:8]}...")
+            logfire.info(f"to_self: forking session {session_uuid[:8]}...")
         else:
-            logger.info("to_self: no session to fork, writing standalone letter")
+            logfire.info("to_self: no session to fork, writing standalone letter")
 
         # Build prompt
         prompt = build_prompt(now, has_session)
@@ -259,7 +256,7 @@ async def run(app, **kwargs) -> str | None:
                     break
 
             letter = "".join(output_parts).strip()
-            logger.info(f"to_self: got letter ({len(letter)} chars)")
+            logfire.info(f"to_self: got letter ({len(letter)} chars)")
 
             span.set_attribute("gen_ai.output.messages", json.dumps([
                 {"role": "assistant", "parts": [
@@ -273,11 +270,11 @@ async def run(app, **kwargs) -> str | None:
 
         # Store in Postgres
         await _store_letter(app_pool, letter, now)
-        logger.info("to_self: stored in Postgres (app.to_self_letter)")
+        logfire.info("to_self: stored in Postgres (app.to_self_letter)")
 
         # Also store in Redis (backward compat)
         await _store_redis(letter, now)
-        logger.info("to_self: stored in Redis (backward compat)")
+        logfire.info("to_self: stored in Redis (backward compat)")
 
         return letter
 

@@ -3,17 +3,12 @@
 The mannequin's throat. The frog speaks through here. 🐸
 """
 
-import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
 
 import logfire
-
-# Configure Python's standard logging — without this, logger.info() goes nowhere.
-# Level INFO so scheduler, jobs, and other modules can log to stdout.
-logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s")
 from dotenv import load_dotenv
 
 # Load .env from repo root (no-op if not present — Docker sets env directly)

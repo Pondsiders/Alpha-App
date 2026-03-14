@@ -7,14 +7,11 @@ Job logic lives in alpha_app/jobs/. This module just wires them up
 with their schedules.
 """
 
-import logging
-
+import logfire
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from alpha_app.jobs import capsule, to_self, today
-
-logger = logging.getLogger(__name__)
 
 PACIFIC = "America/Los_Angeles"
 
@@ -72,5 +69,5 @@ def create_scheduler(app) -> AsyncIOScheduler:
     # scheduler.add_job(solitude.run_breath, CronTrigger(hour="23,0-4"), args=[app], id="solitude_breath")
     # scheduler.add_job(solitude.run_last, CronTrigger(hour=5), args=[app], id="solitude_last")
 
-    logger.info("Scheduler created with %d job(s)", len(scheduler.get_jobs()))
+    logfire.info("Scheduler created with {job_count} job(s)", job_count=len(scheduler.get_jobs()))
     return scheduler
