@@ -12,7 +12,7 @@ import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from alpha_app.jobs import capsule, today
+from alpha_app.jobs import capsule, to_self, today
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +55,16 @@ def create_scheduler(app) -> AsyncIOScheduler:
         kwargs={"period": "nighttime", "trigger": "scheduled"},
         id="capsule_nighttime",
         name="Capsule (nighttime)",
+    )
+
+    # To Self: nightly letter — 9:45 PM
+    scheduler.add_job(
+        to_self.run,
+        CronTrigger(hour=21, minute=45),
+        args=[app],
+        kwargs={"trigger": "scheduled"},
+        id="to_self",
+        name="Letter to Self",
     )
 
     # Future jobs:
