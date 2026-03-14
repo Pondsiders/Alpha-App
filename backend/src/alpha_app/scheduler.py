@@ -12,7 +12,7 @@ import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from alpha_app.jobs import today
+from alpha_app.jobs import capsule, today
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +37,27 @@ def create_scheduler(app) -> AsyncIOScheduler:
         name="Today So Far",
     )
 
+    # Capsule: Daytime summary — 10 PM
+    scheduler.add_job(
+        capsule.run,
+        CronTrigger(hour=22, minute=0),
+        args=[app],
+        kwargs={"period": "daytime", "trigger": "scheduled"},
+        id="capsule_daytime",
+        name="Capsule (daytime)",
+    )
+
+    # Capsule: Nighttime summary — 6 AM
+    scheduler.add_job(
+        capsule.run,
+        CronTrigger(hour=6, minute=0),
+        args=[app],
+        kwargs={"period": "nighttime", "trigger": "scheduled"},
+        id="capsule_nighttime",
+        name="Capsule (nighttime)",
+    )
+
     # Future jobs:
-    # scheduler.add_job(capsule.run, CronTrigger(hour=22), args=[app], id="capsule_day")
-    # scheduler.add_job(capsule.run, CronTrigger(hour=6), args=[app], id="capsule_night")
     # scheduler.add_job(solitude.run_first, CronTrigger(hour=22), args=[app], id="solitude_first")
     # scheduler.add_job(solitude.run_breath, CronTrigger(hour="23,0-4"), args=[app], id="solitude_breath")
     # scheduler.add_job(solitude.run_last, CronTrigger(hour=5), args=[app], id="solitude_last")
