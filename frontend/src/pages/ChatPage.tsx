@@ -131,6 +131,7 @@ const ThinkingBlock = ({ text, status }: { text: string; status: unknown }) => {
 const AssistantMessage = () => {
   const message = useMessage();
   const [copied, setCopied] = useState(false);
+  const isStreaming = (message.status as { type?: string })?.type === "running";
 
   const handleCopy = async () => {
     const rawText = (message.content as Array<{ type: string; text?: string }>)
@@ -157,6 +158,14 @@ const AssistantMessage = () => {
             },
           }}
         />
+        {/* Streaming indicator — inside the message, below content, above copy */}
+        {isStreaming && (
+          <div className="flex gap-1.5 items-center h-4" data-testid="streaming-indicator">
+            <span className="w-1.5 h-1.5 rounded-full bg-primary/50 animate-[pulse_1.4s_ease-in-out_infinite]" />
+            <span className="w-1.5 h-1.5 rounded-full bg-primary/50 animate-[pulse_1.4s_ease-in-out_0.2s_infinite]" />
+            <span className="w-1.5 h-1.5 rounded-full bg-primary/50 animate-[pulse_1.4s_ease-in-out_0.4s_infinite]" />
+          </div>
+        )}
       </div>
       <div className="mt-1 opacity-0 group-hover/assistant:opacity-100 transition-opacity">
         <button
@@ -414,16 +423,7 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
                 <ApproachLight key={`${light.level}-${i}`} {...light} />
               ))}
 
-              {/* Streaming indicator — pulsing dots while Alpha is working */}
-              {isRunning && (
-                <div className="pl-2 mt-1 mb-4" data-testid="streaming-indicator">
-                  <div className="flex gap-1.5 items-center h-6">
-                    <span className="w-1.5 h-1.5 rounded-full bg-primary/50 animate-[pulse_1.4s_ease-in-out_infinite]" />
-                    <span className="w-1.5 h-1.5 rounded-full bg-primary/50 animate-[pulse_1.4s_ease-in-out_0.2s_infinite]" />
-                    <span className="w-1.5 h-1.5 rounded-full bg-primary/50 animate-[pulse_1.4s_ease-in-out_0.4s_infinite]" />
-                  </div>
-                </div>
-              )}
+
 
             </div>
 
