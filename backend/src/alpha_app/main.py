@@ -64,6 +64,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from alpha_app.scheduler import create_scheduler
         scheduler = create_scheduler(app)
         scheduler.start()
+        print(f"Scheduler started ({len(scheduler.get_jobs())} jobs)", flush=True)
 
     yield
 
