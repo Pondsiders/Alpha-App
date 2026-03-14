@@ -13,10 +13,10 @@ import { useState, useCallback } from "react";
 import { PanelLeft, Copy, Check, Feather } from "lucide-react";
 import { ContextMeter } from "@/components/ContextMeter";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+  HoverCard,
+  HoverCardTrigger,
+  HoverCardContent,
+} from "@/components/ui/hover-card";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useWorkshopStore } from "@/store";
@@ -97,15 +97,15 @@ export function StatusBar() {
         )}
 
         {activeChatId && (
-          <Popover>
-            <PopoverTrigger asChild>
+          <HoverCard openDelay={300} closeDelay={200}>
+            <HoverCardTrigger asChild>
               <span
-                className="font-mono text-[11px] text-muted cursor-pointer select-none hover:text-text transition-colors"
+                className="font-mono text-[11px] text-muted cursor-default select-none hover:text-text transition-colors"
               >
                 {activeChatId}
               </span>
-            </PopoverTrigger>
-            <PopoverContent side="bottom" align="start" className="w-auto min-w-[200px]">
+            </HoverCardTrigger>
+            <HoverCardContent side="bottom" align="start" className="w-auto min-w-[200px]">
               <div className="space-y-3">
                 {/* Chat ID */}
                 <div>
@@ -127,8 +127,8 @@ export function StatusBar() {
                   </div>
                 </div>
               </div>
-            </PopoverContent>
-          </Popover>
+            </HoverCardContent>
+          </HoverCard>
         )}
       </div>
 
