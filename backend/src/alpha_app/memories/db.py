@@ -22,9 +22,6 @@ def _escape_pg_regex(text: str) -> str:
     return re.sub(r'([.*+?^${}()|[\]\\])', r'\\\1', text)
 
 
-# Configuration from environment
-DATABASE_URL = os.environ.get("DATABASE_URL")
-
 # Module-level connection pool (lazy initialized)
 _pool: asyncpg.Pool | None = None
 
@@ -33,10 +30,11 @@ async def get_pool() -> asyncpg.Pool:
     """Get or create the connection pool."""
     global _pool
     if _pool is None:
-        if not DATABASE_URL:
+        dsn = os.environ.get("DATABASE_URL")
+        if not dsn:
             raise RuntimeError("DATABASE_URL environment variable not set")
         _pool = await asyncpg.create_pool(
-            DATABASE_URL,
+            dsn,
             min_size=2,
             max_size=10,
         )

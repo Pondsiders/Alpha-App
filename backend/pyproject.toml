@@ -16,10 +16,12 @@ dependencies = [
     "python-frontmatter>=1.1.0",
     "python-dotenv>=1.0.0",
     "Pillow>=11.0.0",
+    "APScheduler>=3.10.0,<4",
 ]
 
 [project.scripts]
 alpha = "alpha_app.main:run"
+job = "alpha_app.jobs:cli"
 
 [build-system]
 requires = ["hatchling"]

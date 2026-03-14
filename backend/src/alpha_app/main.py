@@ -58,9 +58,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.system_prompt = soul  # Stored for resurrection
     app.state.compact_config = compact_config  # Stored for Claude creation
 
+    # Scheduler — only when --with-scheduler is set (alpha-pi Docker, not Primer bare metal)
+    scheduler = None
+    if getattr(app.state, "_enable_scheduler", False):
+        from alpha_app.scheduler import create_scheduler
+        scheduler = create_scheduler(app)
+        scheduler.start()
+
     yield
 
     # Shutdown
+    if scheduler:
+        scheduler.shutdown(wait=False)
     for chat in list(app.state.chats.values()):
         if chat.state != ConversationState.COLD:
             await chat.reap()
@@ -161,7 +170,13 @@ def run() -> None:
 
     parser = argparse.ArgumentParser(description="Alpha backend server")
     parser.add_argument("--port", type=int, default=PORT, help=f"Port to serve on (default: {PORT})")
+    parser.add_argument("--with-scheduler", action="store_true",
+                        help="Enable APScheduler for Solitude, capsules, and other background jobs")
     args = parser.parse_args()
+
+    # Signal the lifespan to start the scheduler
+    if args.with_scheduler:
+        app.state._enable_scheduler = True
 
     # Rebuild frontend if source is newer than the bundle (bare-metal only).
     if not _DOCKER_DIST.is_dir():
