@@ -114,6 +114,14 @@ async def _extract_queries(message: str) -> list[str]:
                 "gen_ai.operation.name": "chat",
                 "gen_ai.request.model": OLLAMA_CHAT_MODEL,
                 "gen_ai.output.type": "json",
+                "gen_ai.system_instructions": json.dumps([
+                    {"type": "text", "content": "(no system prompt — single user message)"},
+                ]),
+                "gen_ai.input.messages": json.dumps([
+                    {"role": "user", "parts": [
+                        {"type": "text", "content": prompt},
+                    ]},
+                ]),
             },
         ) as span:
             async with httpx.AsyncClient(timeout=15.0) as client:
@@ -139,6 +147,13 @@ async def _extract_queries(message: str) -> list[str]:
                 span.set_attribute("gen_ai.usage.input_tokens", result["prompt_eval_count"])
             if result.get("eval_count"):
                 span.set_attribute("gen_ai.usage.output_tokens", result["eval_count"])
+
+            # Output for Model Run card
+            span.set_attribute("gen_ai.output.messages", json.dumps([
+                {"role": "assistant", "parts": [
+                    {"type": "json", "content": output},
+                ]},
+            ]))
 
             parsed = json.loads(output)
             queries = parsed.get("queries", [])
