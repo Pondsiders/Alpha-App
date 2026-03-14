@@ -414,15 +414,13 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
                 <ApproachLight key={`${light.level}-${i}`} {...light} />
               ))}
 
-              {/* Thinking indicator — pulsing dots while waiting for first delta */}
-              {isRunning && messages.length > 0
-                && messages[messages.length - 1]?.role === "assistant"
-                && messages[messages.length - 1]?.content.length === 0 && (
-                <div className="pl-2 mb-6" data-testid="thinking-indicator">
+              {/* Streaming indicator — pulsing dots while Alpha is working */}
+              {isRunning && (
+                <div className="pl-2 mt-1 mb-4" data-testid="streaming-indicator">
                   <div className="flex gap-1.5 items-center h-6">
-                    <span className="w-2 h-2 rounded-full bg-primary/40 animate-[pulse_1.4s_ease-in-out_infinite]" />
-                    <span className="w-2 h-2 rounded-full bg-primary/40 animate-[pulse_1.4s_ease-in-out_0.2s_infinite]" />
-                    <span className="w-2 h-2 rounded-full bg-primary/40 animate-[pulse_1.4s_ease-in-out_0.4s_infinite]" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-primary/50 animate-[pulse_1.4s_ease-in-out_infinite]" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-primary/50 animate-[pulse_1.4s_ease-in-out_0.2s_infinite]" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-primary/50 animate-[pulse_1.4s_ease-in-out_0.4s_infinite]" />
                   </div>
                 </div>
               )}
