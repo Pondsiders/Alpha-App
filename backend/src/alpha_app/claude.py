@@ -729,6 +729,7 @@ class Claude:
             "--model", self.model,
             "--permission-mode", self.permission_mode,
             "--include-partial-messages",
+            "--effort", "medium",
         ]
 
         if self.system_prompt is not None:
