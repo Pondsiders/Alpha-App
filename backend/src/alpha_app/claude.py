@@ -258,6 +258,7 @@ class Claude:
         extra_args: list[str] | None = None,
         mcp_servers: dict[str, Any] | None = None,
         permission_handler: Callable[[dict], Awaitable[bool]] | None = None,
+        disallowed_tools: list[str] | None = None,
     ):
         self.model = model
         self.system_prompt = system_prompt
@@ -267,6 +268,7 @@ class Claude:
         self.extra_args: list[str] = extra_args or []
         self._mcp_servers: dict[str, Any] = mcp_servers or {}
         self._permission_handler = permission_handler
+        self._disallowed_tools: list[str] = disallowed_tools or []
 
         self._state = ClaudeState.IDLE
         self._proc: asyncio.subprocess.Process | None = None
@@ -727,6 +729,9 @@ class Claude:
 
         if self._session_id:
             cmd.extend(["--resume", self._session_id])
+
+        if self._disallowed_tools:
+            cmd.extend(["--disallowedTools", ",".join(self._disallowed_tools)])
 
         if self.extra_args:
             cmd.extend(self.extra_args)

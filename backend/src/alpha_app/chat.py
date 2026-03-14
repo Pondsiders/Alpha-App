@@ -38,8 +38,11 @@ def _make_claude(**kwargs) -> "Claude":
     return Claude(**kwargs)
 
 # Idle chat timeout in seconds. After this, subprocess gets reaped.
-# Exposed as env var so e2e tests can shorten it. Defaults to 10 minutes.
-REAP_TIMEOUT = int(os.environ.get("_ALPHA_REAP_TIMEOUT", "600"))
+# 60 minutes: long enough for Solitude's hourly breaths to keep the
+# subprocess warm all night. During the day, most conversations don't
+# have 60 minutes of dead silence. If they do, resurrect is seamless.
+# Exposed as env var so e2e tests can shorten it.
+REAP_TIMEOUT = int(os.environ.get("_ALPHA_REAP_TIMEOUT", "3600"))
 
 
 def generate_chat_id() -> str:
@@ -355,6 +358,7 @@ class Chat:
         system_prompt: str = "",
         mcp_servers: dict[str, Any] | None = None,
         compact_config: Any | None = None,
+        disallowed_tools: list[str] | None = None,
     ) -> None:
         """Start a fresh Claude subprocess. COLD -> STARTING -> READY."""
         if self.state != ConversationState.COLD:
@@ -370,6 +374,7 @@ class Chat:
                 permission_mode="bypassPermissions",
                 mcp_servers=mcp_servers,
                 compact_config=compact_config,
+                disallowed_tools=disallowed_tools,
             )
             await self._claude.start(None)  # Fresh start, no resume
 
@@ -387,6 +392,7 @@ class Chat:
         session_uuid: str | None = None,
         mcp_servers: dict[str, Any] | None = None,
         compact_config: Any | None = None,
+        disallowed_tools: list[str] | None = None,
     ) -> None:
         """Bring a COLD chat back to life via --resume. COLD -> STARTING -> READY."""
         if self.state != ConversationState.COLD:
@@ -407,6 +413,7 @@ class Chat:
                 permission_mode="bypassPermissions",
                 mcp_servers=mcp_servers,
                 compact_config=compact_config,
+                disallowed_tools=disallowed_tools,
             )
             await self._claude.start(uuid)
 

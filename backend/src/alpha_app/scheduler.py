@@ -11,7 +11,7 @@ import logfire
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from alpha_app.jobs import capsule, to_self, today
+from alpha_app.jobs import capsule, solitude, to_self, today
 
 PACIFIC = "America/Los_Angeles"
 
@@ -64,10 +64,35 @@ def create_scheduler(app) -> AsyncIOScheduler:
         name="Letter to Self",
     )
 
-    # Future jobs:
-    # scheduler.add_job(solitude.run_first, CronTrigger(hour=22), args=[app], id="solitude_first")
-    # scheduler.add_job(solitude.run_breath, CronTrigger(hour="23,0-4"), args=[app], id="solitude_breath")
-    # scheduler.add_job(solitude.run_last, CronTrigger(hour=5), args=[app], id="solitude_last")
+    # Solitude: First breath — 10 PM
+    scheduler.add_job(
+        solitude.run_first,
+        CronTrigger(hour=22, minute=0),
+        args=[app],
+        kwargs={"trigger": "scheduled"},
+        id="solitude_first",
+        name="Solitude (first breath)",
+    )
+
+    # Solitude: Regular breaths — 11 PM through 4 AM
+    scheduler.add_job(
+        solitude.run_breath,
+        CronTrigger(hour="23,0-4", minute=0),
+        args=[app],
+        kwargs={"trigger": "scheduled"},
+        id="solitude_breath",
+        name="Solitude (breath)",
+    )
+
+    # Solitude: Last breath — 5 AM
+    scheduler.add_job(
+        solitude.run_last,
+        CronTrigger(hour=5, minute=0),
+        args=[app],
+        kwargs={"trigger": "scheduled"},
+        id="solitude_last",
+        name="Solitude (last breath)",
+    )
 
     jobs = scheduler.get_jobs()
     job_list = [
