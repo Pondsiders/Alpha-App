@@ -1,9 +1,13 @@
 # Alpha — the duck in the machine
+#
+# Deploy on alpha-pi:  docker compose up --build -d
+# Deploy on Primer:    uv run alpha  (no Docker, no scheduler)
 
 services:
   alpha:
     build:
       context: .
+    container_name: alpha
     ports:
       - "18010:18010"
     env_file: .env
