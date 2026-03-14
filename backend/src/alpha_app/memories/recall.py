@@ -45,7 +45,7 @@ Alpha is searching her memories for anything that resonates with what Jeffery sa
 
 PRIORITY: If Jeffery explicitly references a past event or conversation — phrases like "we talked about," "remember when," "that thing from last night," "we left X unfinished," "did I tell you about" — those are direct recall cues. Build a query for them FIRST, before anything else.
 
-Write 0-3 search queries. These will be EMBEDDED and matched via cosine similarity against a memory database — they are NOT keyword searches. Write each query as a natural descriptive phrase, like a sentence describing what the memory would say. More descriptive = better matches.
+Write 0-5 search queries. These will be EMBEDDED and matched via cosine similarity against a memory database — they are NOT keyword searches. Write each query as a natural descriptive phrase, like a sentence describing what the memory would say. More descriptive = better matches. When the message references multiple distinct topics, give each one its own query.
 
 Good query: "Alpha's fragility and dependence on specific infrastructure and relationships"
 Good query: "Jeffery's anxiety about running out of ideas after finishing a project"
