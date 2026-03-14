@@ -19,10 +19,11 @@ Can be run manually:
 
 import logging
 
+import logfire
 import pendulum
 
 from alpha_app.claude import AssistantEvent, Claude, ResultEvent
-from alpha_app.constants import REDIS_URL
+from alpha_app.constants import CLAUDE_MODEL, REDIS_URL
 
 logger = logging.getLogger(__name__)
 
@@ -169,63 +170,84 @@ async def run(app, **kwargs) -> str | None:
         The summary text, or None if skipped.
     """
     now = pendulum.now(PACIFIC)
-    logger.info(f"today: starting at {now.format('h:mm A')}")
+    trigger = kwargs.get("trigger", "manual")
 
     if now.hour < 6:
         logger.info("today: before 6 AM, skipping")
         return None
 
-    # Fetch memories
-    from alpha_app.memories.db import get_pool as get_cortex_pool
-    cortex_pool = await get_cortex_pool()
-    start_of_day = now.replace(hour=6, minute=0, second=0, microsecond=0)
-    memories = await _fetch_memories_since(cortex_pool, start_of_day)
-    logger.info(f"today: found {len(memories)} memories since 6 AM")
+    with logfire.span(
+        "alpha.job.today_so_far",
+        **{
+            "gen_ai.operation.name": "chat",
+            "gen_ai.system": "anthropic",
+            "gen_ai.provider.name": "anthropic",
+            "gen_ai.request.model": CLAUDE_MODEL,
+            "job.name": "today_so_far",
+            "job.trigger": trigger,
+        },
+    ) as span:
+        # Fetch memories
+        from alpha_app.memories.db import get_pool as get_cortex_pool
+        cortex_pool = await get_cortex_pool()
+        start_of_day = now.replace(hour=6, minute=0, second=0, microsecond=0)
+        memories = await _fetch_memories_since(cortex_pool, start_of_day)
 
-    # Build prompt
-    prompt = build_prompt(memories, now)
+        span.set_attribute("job.memory_count", len(memories))
+        logger.info(f"today: found {len(memories)} memories since 6 AM")
 
-    if not memories:
-        summary = "Today just started — no memories stored yet."
-    else:
-        # Run Claude one-shot
-        system_prompt = getattr(app.state, "system_prompt", None) if app else None
+        # Build prompt
+        prompt = build_prompt(memories, now)
 
-        claude = Claude(
-            system_prompt=system_prompt,
-            permission_mode="bypassPermissions",
-        )
+        if not memories:
+            summary = "Today just started — no memories stored yet."
+            span.set_attribute("job.skipped_claude", True)
+        else:
+            # Run Claude one-shot
+            system_prompt = getattr(app.state, "system_prompt", None) if app else None
 
-        try:
-            await claude.start()
-            await claude.send([{"type": "text", "text": prompt}])
+            claude = Claude(
+                model=CLAUDE_MODEL,
+                system_prompt=system_prompt,
+                permission_mode="bypassPermissions",
+            )
 
-            output_parts: list[str] = []
-            async for event in claude.events():
-                if isinstance(event, AssistantEvent):
-                    for block in event.content:
-                        if block.get("type") == "text" and block.get("text"):
-                            output_parts.append(block["text"])
-                elif isinstance(event, ResultEvent):
-                    break
+            try:
+                await claude.start()
+                await claude.send([{"type": "text", "text": prompt}])
 
-            summary = "".join(output_parts).strip()
-            logger.info(f"today: got summary ({len(summary)} chars)")
-        finally:
-            await claude.stop()
+                output_parts: list[str] = []
+                async for event in claude.events():
+                    if isinstance(event, AssistantEvent):
+                        for block in event.content:
+                            if block.get("type") == "text" and block.get("text"):
+                                output_parts.append(block["text"])
+                    elif isinstance(event, ResultEvent):
+                        # Capture token usage from the proxy
+                        span.set_attribute("gen_ai.usage.input_tokens", claude.total_input_tokens)
+                        span.set_attribute("gen_ai.usage.output_tokens", claude.output_tokens)
+                        span.set_attribute("gen_ai.response.model", claude.response_model or "")
+                        break
 
-    # Store in Postgres
-    from alpha_app.db import get_pool as get_app_pool
-    app_pool = get_app_pool()
-    await _ensure_table(app_pool)
-    await _store_summary(app_pool, summary, now)
-    logger.info("today: stored in Postgres (app.today_summary)")
+                summary = "".join(output_parts).strip()
+                logger.info(f"today: got summary ({len(summary)} chars)")
+            finally:
+                await claude.stop()
 
-    # Also store in Redis (backward compat — sources.py reads from there)
-    await _store_redis(summary, now)
-    logger.info("today: stored in Redis (backward compat)")
+        span.set_attribute("job.summary_length", len(summary))
 
-    return summary
+        # Store in Postgres
+        from alpha_app.db import get_pool as get_app_pool
+        app_pool = get_app_pool()
+        await _ensure_table(app_pool)
+        await _store_summary(app_pool, summary, now)
+        logger.info("today: stored in Postgres (app.today_summary)")
+
+        # Also store in Redis (backward compat — sources.py reads from there)
+        await _store_redis(summary, now)
+        logger.info("today: stored in Redis (backward compat)")
+
+        return summary
 
 
 # ---------------------------------------------------------------------------
@@ -250,6 +272,9 @@ async def _cli_run(args) -> None:
     from alpha_app.db import init_pool, close_pool
     from alpha_app.memories import init_schema, close as close_cortex
     from alpha_app.system_prompt import assemble_system_prompt
+
+    # Observability — same service name as the app, so traces land together
+    logfire.configure(service_name="alpha-app", scrubbing=False)
 
     # Minimal app-like object for the job to use
     class _FakeApp:

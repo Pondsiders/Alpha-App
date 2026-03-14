@@ -32,6 +32,7 @@ def create_scheduler(app) -> AsyncIOScheduler:
         today.run,
         CronTrigger(hour="7-21", minute=30),
         args=[app],
+        kwargs={"trigger": "scheduled"},
         id="today_so_far",
         name="Today So Far",
     )
