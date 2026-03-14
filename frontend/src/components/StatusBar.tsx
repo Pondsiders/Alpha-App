@@ -10,7 +10,7 @@
  */
 
 import { useState, useCallback } from "react";
-import { PanelLeft, Copy, Check, Search, Bot, Feather } from "lucide-react";
+import { PanelLeft, Copy, Check, Feather } from "lucide-react";
 import { ContextMeter } from "@/components/ContextMeter";
 import {
   Popover,
@@ -55,6 +55,7 @@ export function StatusBar() {
   const tokenLimit = useWorkshopStore((s) => s.tokenLimit);
 
   const sessionUuid = activeChat?.sessionUuid;
+  const isWorking = activeChat?.state === "busy" || activeChat?.state === "starting";
 
   return (
     <div className="flex items-center justify-between px-4 h-12 bg-surface/50 border-b border-border shrink-0">
@@ -68,13 +69,17 @@ export function StatusBar() {
           <PanelLeft size={14} />
         </button>
 
-        {/* Status lights — enriching / busy / suggesting */}
+        {/* Status feather — animated when working, still when idle */}
         {activeChatId && (
-          <div className="flex items-center gap-1.5">
-            <Search size={14} className="text-muted/30" aria-label="Enriching" />
-            <Bot size={14} className="text-muted/30" aria-label="Busy" />
-            <Feather size={14} className="text-muted/30" aria-label="Suggesting" />
-          </div>
+          <Feather
+            size={14}
+            className={
+              isWorking
+                ? "text-[#7A8C42] animate-[quill-write_2s_ease-in-out_infinite]"
+                : "text-muted/30 transition-colors duration-500"
+            }
+            aria-label={isWorking ? "Alpha is working" : "Idle"}
+          />
         )}
 
         {activeChatId && (

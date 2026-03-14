@@ -24,3 +24,15 @@
   --sidebar-border: rgba(212, 165, 116, 0.12);
   --sidebar-ring: #d4a574;
 }
+
+/* Quill-write animation — gentle bob and tilt, like a quill dipping into an inkwell */
+@keyframes quill-write {
+  0%, 100% {
+    transform: translateY(0) rotate(0deg);
+    opacity: 1;
+  }
+  50% {
+    transform: translateY(-1.5px) rotate(4deg);
+    opacity: 0.7;
+  }
+}
