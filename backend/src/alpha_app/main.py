@@ -31,8 +31,8 @@ from alpha_app.routes.ws import router as ws_router
 #   "info"  = normal operation (scheduler, jobs, errors)
 #   "debug" = state transitions, lifecycle events
 #   "trace" = every Claude subprocess event (the firehose)
-_log_level = os.environ.get("LOGFIRE_MIN_LEVEL", "trace")
-logfire.configure(service_name="alpha-app", scrubbing=False, min_log_level=_log_level)
+_log_level = os.environ.get("LOGFIRE_MIN_LEVEL", "info")
+logfire.configure(service_name="alpha-app", scrubbing=False, min_level=_log_level)
 
 
 @asynccontextmanager
