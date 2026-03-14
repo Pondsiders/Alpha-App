@@ -123,7 +123,9 @@ async def _extract_queries(message: str) -> list[str]:
                         "model": OLLAMA_CHAT_MODEL,
                         "messages": [{"role": "user", "content": prompt}],
                         "stream": False,
+                        "think": False,
                         "format": "json",
+                        "keep_alive": -1,
                         "options": {"num_ctx": 4096},
                     },
                 )

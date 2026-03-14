@@ -179,7 +179,9 @@ async def _call_llm(user_content: str, assistant_content: str) -> list[str]:
                             {"role": "user", "content": user_prompt},
                         ],
                         "stream": False,
+                        "think": False,
                         "format": "json",
+                        "keep_alive": -1,
                         "options": {"num_ctx": 8192},
                     },
                 )
