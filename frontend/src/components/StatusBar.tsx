@@ -17,6 +17,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useWorkshopStore } from "@/store";
 
@@ -61,25 +62,38 @@ export function StatusBar() {
     <div className="flex items-center justify-between px-4 h-12 bg-surface/50 border-b border-border shrink-0">
       {/* Left: sidebar toggle + status lights + chat ID */}
       <div className="flex items-center gap-2.5">
-        <button
-          onClick={toggleSidebar}
-          className="inline-flex items-center justify-center w-5 h-5 rounded cursor-pointer bg-transparent border-none text-muted hover:text-text hover:bg-background/50 transition-colors"
-          aria-label="Toggle sidebar"
-        >
-          <PanelLeft size={14} />
-        </button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              onClick={toggleSidebar}
+              className="inline-flex items-center justify-center w-5 h-5 rounded cursor-pointer bg-transparent border-none text-muted hover:text-text hover:bg-background/50 transition-colors"
+              aria-label="Toggle sidebar"
+            >
+              <PanelLeft size={14} />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Toggle sidebar</TooltipContent>
+        </Tooltip>
 
         {/* Status feather — animated when working, still when idle */}
         {activeChatId && (
-          <Feather
-            size={14}
-            className={
-              isWorking
-                ? "text-[#7A8C42] animate-[quill-write_2s_ease-in-out_infinite]"
-                : "text-muted/30 transition-colors duration-500"
-            }
-            aria-label={isWorking ? "Alpha is working" : "Idle"}
-          />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex items-center justify-center w-5 h-5">
+                <Feather
+                  size={14}
+                  className={
+                    isWorking
+                      ? "text-[#7A8C42] animate-[quill-write_2s_ease-in-out_infinite]"
+                      : "text-muted/30 transition-colors duration-500"
+                  }
+                />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {isWorking ? "Alpha is working" : "Idle"}
+            </TooltipContent>
+          </Tooltip>
         )}
 
         {activeChatId && (
