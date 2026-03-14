@@ -131,7 +131,17 @@ const ThinkingBlock = ({ text, status }: { text: string; status: unknown }) => {
 const AssistantMessage = () => {
   const message = useMessage();
   const [copied, setCopied] = useState(false);
-  const isStreaming = (message.status as { type?: string })?.type === "running";
+
+  // Is THIS message the one currently streaming? Check our store, not assistant-ui's
+  // status (which is always "complete" because we set isRunning: false for duplex).
+  const isStreaming = useWorkshopStore((s) => {
+    const activeChat = s.activeChatId ? s.chats[s.activeChatId] : null;
+    const isBusy = activeChat?.state === "busy" || activeChat?.state === "starting";
+    if (!isBusy) return false;
+    // Only show dots on the LAST assistant message
+    const lastMsg = s.messages[s.messages.length - 1];
+    return lastMsg?.id === message.id;
+  });
 
   const handleCopy = async () => {
     const rawText = (message.content as Array<{ type: string; text?: string }>)
