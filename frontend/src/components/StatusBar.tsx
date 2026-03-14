@@ -58,7 +58,7 @@ export function StatusBar() {
 
   return (
     <div className="flex items-center justify-between px-4 h-12 bg-surface/50 border-b border-border shrink-0">
-      {/* Left: sidebar toggle + chat ID (click for popover) */}
+      {/* Left: sidebar toggle + status lights + chat ID */}
       <div className="flex items-center gap-2.5">
         <button
           onClick={toggleSidebar}
@@ -67,6 +67,15 @@ export function StatusBar() {
         >
           <PanelLeft size={14} />
         </button>
+
+        {/* Status lights — enriching / busy / suggesting */}
+        {activeChatId && (
+          <div className="flex items-center gap-1.5">
+            <Search size={14} className="text-muted/30" aria-label="Enriching" />
+            <Bot size={14} className="text-muted/30" aria-label="Busy" />
+            <Feather size={14} className="text-muted/30" aria-label="Suggesting" />
+          </div>
+        )}
 
         {activeChatId && (
           <Popover>
@@ -103,15 +112,6 @@ export function StatusBar() {
           </Popover>
         )}
       </div>
-
-      {/* Center: status lights — enriching / busy / suggesting */}
-      {activeChatId && (
-        <div className="flex items-center gap-2">
-          <Search size={13} className="text-muted/30" aria-label="Enriching" />
-          <Bot size={13} className="text-muted/30" aria-label="Busy" />
-          <Feather size={13} className="text-muted/30" aria-label="Suggesting" />
-        </div>
-      )}
 
       {/* Right: context meter (hover for token details) */}
       <ContextMeter
