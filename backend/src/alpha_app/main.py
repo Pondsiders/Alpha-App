@@ -27,7 +27,12 @@ from alpha_app.db import init_pool, close_pool
 from alpha_app.routes.ws import router as ws_router
 
 # Observability — one place to look for everything.
-logfire.configure(service_name="alpha-app", scrubbing=False)
+# The valve: LOGFIRE_MIN_LEVEL controls what reaches the dashboard.
+#   "info"  = normal operation (scheduler, jobs, errors)
+#   "debug" = state transitions, lifecycle events
+#   "trace" = every Claude subprocess event (the firehose)
+_log_level = os.environ.get("LOGFIRE_MIN_LEVEL", "trace")
+logfire.configure(service_name="alpha-app", scrubbing=False, min_log_level=_log_level)
 
 
 @asynccontextmanager

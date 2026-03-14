@@ -27,6 +27,7 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable
 
+import logfire
 from mcp.types import CallToolRequest, CallToolRequestParams, ListToolsRequest
 
 from .proxy import CompactConfig, _Proxy
@@ -417,6 +418,14 @@ class Claude:
                 return
 
             event = self._parse_event(raw)
+
+            # Trace every event from the subprocess — the valve controls
+            # whether this reaches Logfire (min_log_level in configure()).
+            logfire.trace(
+                "claude.event: {event_type}",
+                event_type=type(event).__name__,
+                raw_type=raw.get("type", ""),
+            )
 
             if isinstance(event, _ControlRequestEvent):
                 await self._handle_control_request(event)
