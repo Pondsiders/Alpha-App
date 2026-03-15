@@ -90,7 +90,11 @@ class InitEvent(Event):
 
 @dataclass
 class UserEvent(Event):
-    """User message — content blocks. Only emitted during replay."""
+    """User message — content blocks.
+
+    Emitted during replay (session history) and when --replay-user-messages
+    is enabled (interjection echo — the turn boundary signal).
+    """
 
     content: list = field(default_factory=list)
 
@@ -503,6 +507,12 @@ class Claude:
                 is_error=raw.get("is_error", False),
             )
 
+        elif msg_type == "user":
+            content = raw.get("message", {}).get("content", [])
+            if isinstance(content, str):
+                content = [{"type": "text", "text": content}]
+            return UserEvent(raw=raw, content=content)
+
         elif msg_type == "system":
             return SystemEvent(raw=raw, subtype=raw.get("subtype", ""))
 
@@ -729,6 +739,7 @@ class Claude:
             "--model", self.model,
             "--permission-mode", self.permission_mode,
             "--include-partial-messages",
+            "--replay-user-messages",
             "--effort", "medium",
         ]
 

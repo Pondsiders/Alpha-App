@@ -257,21 +257,28 @@ function Layout() {
         break;
       }
 
-      // -- Remote user message echo (from another connection via the switch) --
+      // -- User message echo (turn boundary signal) --
+      // With --replay-user-messages, claude echoes every user message back on
+      // stdout. This serves as a turn boundary marker: everything before this
+      // echo was the previous assistant turn, everything after is a new turn.
+      //
+      // We DON'T add the user message to the store — the frontend already
+      // added it optimistically in onNew. We only use the echo to split
+      // assistant messages: create a new assistant placeholder so incoming
+      // text-deltas land in a fresh message.
+      //
+      // For the INITIAL user message (chat not busy), we already created a
+      // placeholder in onNew, so skip. For INTERJECTIONS (chat is busy),
+      // this is the signal to start a new assistant message.
       case "user-message": {
         if (!eChatId) break;
-        const umData = event.data as { content: ContentPart[] };
-        actions.addRemoteUserMessage(eChatId, umData.content || []);
-
-        // If the chat is NOT busy, a new turn is starting — create an
-        // assistant placeholder so incoming text-deltas have somewhere to land.
-        // If BUSY, this is an interjection — the existing assistant message
-        // continues streaming, no new placeholder needed.
         const chatMeta = useWorkshopStore.getState().chats[eChatId];
-        if (chatMeta?.state !== "busy") {
+        if (chatMeta?.state === "busy") {
+          // Interjection boundary — start a new assistant message
           const aid = actions.addRemoteAssistantPlaceholder(eChatId);
           assistantIdMapRef.current[eChatId] = aid;
         }
+        // Initial echo (not busy) — no-op, onNew already set up everything
         break;
       }
 

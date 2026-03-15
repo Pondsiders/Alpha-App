@@ -8,7 +8,7 @@ light interjections, and the final result to every connected WebSocket.
 import json
 
 import logfire
-from alpha_app import AssistantEvent, ErrorEvent, ResultEvent, StreamEvent, SystemEvent
+from alpha_app import AssistantEvent, ErrorEvent, ResultEvent, StreamEvent, SystemEvent, UserEvent
 
 from alpha_app.chat import Chat, ConversationState
 from alpha_app.db import persist_chat
@@ -116,6 +116,17 @@ async def stream_chat_events(connections: set, chat: Chat, span=None) -> str:
                     chat_id=chat_id,
                     subtype=event.subtype,
                 )
+
+            elif isinstance(event, UserEvent):
+                # Interjection echo — claude replays the user message on
+                # stdout at the point where it absorbs it. This is the turn
+                # boundary signal: everything before this was the previous
+                # assistant turn, everything after is the interjection response.
+                await broadcast(connections, {
+                    "type": "user-message",
+                    "chatId": chat_id,
+                    "data": {"content": event.content},
+                })
 
             elif isinstance(event, StreamEvent):
                 if event.delta_type == "text_delta":
