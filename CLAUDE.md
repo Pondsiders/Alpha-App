@@ -25,9 +25,23 @@ uv run uvicorn alpha_app.main:app --port 18010  # Run backend locally
 ```
 
 ### Backend Protocol Tests (from `backend-tests/`)
+Requires a built frontend (`cd frontend && npm run build` first) — the backend serves the built SPA.
 ```bash
 uv sync
 uv run pytest -v
+```
+
+### Frontend Isolation Tests (from `frontend-tests/`)
+Requires a built frontend (`cd frontend && npm run build` first).
+```bash
+uv sync
+uv run pytest -v              # headless
+uv run pytest -v --headed     # visible browser
+```
+
+### CI (what GitHub Actions runs)
+```bash
+cd backend && uv run pytest tests/ -v --ignore=tests/test_e2e.py -k "not integration"
 ```
 
 ### Docker
@@ -70,6 +84,12 @@ Pure assembly functions that build the orientation block injected at the start o
 ### Proxy (`backend/src/alpha_app/proxy.py`)
 HTTP proxy for Claude's API channel. Sniffs SSE streams for token usage data and quota headers (5h, 7d) without extra API calls. Handles compact request rewriting. Debug mode via `ALPHA_SDK_CAPTURE_REQUESTS`.
 
+### Suggest Pipeline (`backend/src/alpha_app/suggest.py`)
+"Intro" — Alpha's inner voice for introspection. After each turn completes, fires an async task that asks the local LLM (Gemma 3 12B via Ollama) what moments are worth remembering. Results are held on `chat._pending_intro` and injected on the next turn by enrobe. Fire-and-forget: launched as an asyncio task after `ResultEvent`.
+
+### Image Processing (`backend/src/alpha_app/images.py`)
+Middleware that resizes and JPEG-compresses base64 image blocks before they reach Claude. Images over 1 megapixel are scaled down; PNGs are re-encoded as JPEG at quality 85. URL-based images pass through untouched.
+
 ### Cortex MCP Tools (`backend/src/alpha_app/tools/cortex.py`)
 In-process FastMCP server for memory operations (store/search/recent/get). Uses Ollama for 768-dim embeddings, Postgres with pgvector for hybrid search (exact match + full-text + semantic). Soft-delete via `forgotten` flag. Schema in `alpha_app/memories/db.py`.
 
@@ -89,7 +109,7 @@ Zustand store with Immer middleware, multi-chat aware. `chats` map + `activeChat
 - Python async throughout the backend — `asyncio_mode = "auto"` in pytest
 - `@pytest.mark.integration` for tests requiring a live Claude process or database
 - Path alias `@/*` maps to `frontend/src/*` in TypeScript
-- Frontend port 18011 (Vite dev), backend port 18010 (uvicorn), production serves both on 18010
+- Frontend port 18011 (Vite dev), backend port 18010 (uvicorn dev), production port 18020 (from `constants.py`)
 - Vite proxies `/api` and `/ws` to the backend in dev mode
 - Session transcripts stored as JSONL in `data/claude/`
 - Chat metadata TTL: 29 days (before Claude's ~30 day JSONL auto-prune)
@@ -108,3 +128,11 @@ Zustand store with Immer middleware, multi-chat aware. `chats` map + `activeChat
 - `_ALPHA_REAP_TIMEOUT` — idle reap timeout in seconds (default: 600)
 - `ALPHA_SDK_CAPTURE_REQUESTS` — enable proxy request capture for debugging
 - `LOGFIRE_TOKEN` — structured observability token
+
+## Hardcoded Constants (`backend/src/alpha_app/constants.py`)
+
+- Claude model: `claude-opus-4-6[1m]` (1M context window)
+- Ollama embed model: `nomic-embed-text` (768-dim)
+- Ollama chat model: `gemma3:12b-it-qat` (used by Intro suggest pipeline)
+- Claude subprocess CWD: `/Pondside`
+- Identity docs: `/Pondside/Alpha-Home/Alpha`
