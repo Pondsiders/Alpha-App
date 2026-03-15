@@ -236,10 +236,12 @@ class Chat:
         Returns 'yellow' or 'red' if a NEW threshold was crossed, None otherwise.
         Each threshold fires exactly once per session. Resets on resurrect.
 
-        Thresholds:
-          65% → yellow (start wrapping up)
-          75% → red (compaction imminent, ~80-85%)
+        DISABLED: Thresholds were calibrated for 200K (65%/75% with compact
+        at ~80%). At 1M we don't know where auto-compact triggers. Disabled
+        until we can recalibrate. Remove this early return when ready.
         """
+        return None  # Disabled — recalibrate for 1M context window
+
         if self.context_window <= 0:
             return None
         ratio = self.token_count / self.context_window
