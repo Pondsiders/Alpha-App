@@ -763,6 +763,7 @@ class Claude:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            limit=1024 * 1024,  # 1MB — default 64KB chokes on large tool results
             env=env,
             cwd=str(CLAUDE_CWD),
         )
