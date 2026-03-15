@@ -203,30 +203,24 @@ async def handle_new_turn(
             # -- Enrobe: wrap user message in enrichment -------------------
             result = await enrobe(content, chat=chat)
 
-            # Broadcast user-message with enriched+tagged content so the event
-            # store captures a complete view (intro/memory/timestamp blocks
-            # included). Exclude the sender — they added their message optimistically.
-            # Skipped for buzz turns where the narration must stay invisible.
-            if broadcast_user_message:
-                await broadcast(connections, {
-                    "type": "user-message",
-                    "chatId": chat_id,
-                    "data": {"content": _tag_content_roles(result.content)},
-                }, exclude=ws)
-
             # Update Logfire with what Claude actually sees (enriched, not raw)
             enriched_messages = format_input_messages(result.content)
             turn_input_messages[chat_id] = enriched_messages
             input_messages = enriched_messages
             span.set_attribute("gen_ai.input.messages", enriched_messages)
 
-            # Broadcast enrichment events to all clients
-            for event in result.events:
-                await broadcast(connections, {
-                    "type": event["type"],
-                    "chatId": chat_id,
-                    "data": event["data"],
-                })
+            # Progressive user-message broadcasts — each one is the complete
+            # current state of the user message as enrichment accumulates.
+            # Sent to ALL clients including the sender (sender reconciles
+            # the optimistic message with the enriched content).
+            # Skipped for buzz turns where the narration must stay invisible.
+            if broadcast_user_message:
+                for event in result.events:
+                    await broadcast(connections, {
+                        "type": event["type"],
+                        "chatId": chat_id,
+                        "data": event["data"],
+                    })
 
             # -- Send enriched content: ENRICHING -> RESPONDING ------------
             await chat.send(result.content)

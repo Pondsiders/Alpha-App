@@ -57,53 +57,76 @@ async def enrobe(content: list[dict], *, chat: "Chat") -> EnrobeResult:
 
     Wraps the user's raw content blocks in enrichment: orientation,
     recalled memories, intro suggestions, and timestamps. Returns both
-    the enriched content for Claude and a list of events for the WebSocket.
+    the enriched content for Claude and progressive user-message events
+    for the WebSocket.
+
+    Each enrichment step emits a user-message event containing the
+    COMPLETE current state of the user message (enrichment + original
+    content). The frontend replaces its optimistic message each time.
+    The bubble grows: text → text+timestamp → text+timestamp+memories.
 
     Block order:
-        [orientation] → [intro] → [memories] → timestamp → user message
+        [orientation] → [intro] → timestamp → user message → [memories]
 
     Args:
         content: The raw user message content blocks.
         chat: The Chat instance (for token state, chat ID, etc.).
 
     Returns:
-        EnrobeResult with enriched content and broadcast events.
+        EnrobeResult with enriched content and user-message events.
     """
     # Process images: resize to ≤1MP, compress to JPEG
     content = process_image_blocks(content)
 
     events: list[dict] = []
-    blocks: list[dict] = []
+    preamble: list[dict] = []   # before user message: orientation, intro, timestamp
+    postamble: list[dict] = []  # after user message: memories
+
+    def _snapshot() -> dict:
+        """Build a user-message event with the current enrichment state.
+
+        Order for both human and Claude:
+            [orientation?] [intro?] [timestamp] [user message] [memories]
+
+        Timestamp before user text, memories after. The user's words stay
+        central; enrichment frames them from both sides.
+        """
+        return {
+            "type": "user-message",
+            "data": {"content": preamble + content + postamble},
+        }
 
     # 1. Orientation — injected on first message of a new/resumed context window
     if chat._needs_orientation:
         orientation_data = await fetch_all_orientation()
         orientation_blocks = assemble_orientation(**orientation_data)
-        blocks.extend(orientation_blocks)
+        preamble.extend(orientation_blocks)
         chat._needs_orientation = False
 
     # 2. Intro memorables from previous turn
     if chat._pending_intro:
-        blocks.append({"type": "text", "text": chat._pending_intro})
-        events.append({"type": "enrichment-suggest", "data": chat._pending_intro})
+        preamble.append({"type": "text", "text": chat._pending_intro})
         chat._pending_intro = None
 
-    # 3. Memory recall — dual-strategy search, session-scoped dedup
+    # 3. Timestamp — computed instantly, broadcast immediately
+    #    User story: timestamp appears basically instantly after send.
+    timestamp = _format_timestamp()
+    preamble.append({"type": "text", "text": f"[Sent {timestamp}]"})
+    events.append(_snapshot())
+
+    # 4. Memory recall — takes time, broadcast snapshot when complete
+    #    User story: memories appear AFTER user message as "something to munch on."
     user_text = " ".join(
         b.get("text", "") for b in content if b.get("type") == "text"
     )
     if user_text.strip():
         memory_texts = await recall_memories(user_text, session_id=chat.id)
-        for mem_text in memory_texts:
-            blocks.append({"type": "text", "text": mem_text})
-            events.append({"type": "enrichment-memory", "data": mem_text})
+        if memory_texts:
+            for mem_text in memory_texts:
+                postamble.append({"type": "text", "text": mem_text})
+            events.append(_snapshot())
 
-    # 4. Timestamp — always present, just before the user message
-    timestamp = _format_timestamp()
-    blocks.append({"type": "text", "text": f"[Sent {timestamp}]"})
-    events.append({"type": "enrichment-timestamp", "data": timestamp})
+    # Final content for Claude — same order as snapshots
+    final_content = preamble + content + postamble
 
-    # User message is ALWAYS the last block
-    blocks.extend(content)
-
-    return EnrobeResult(content=blocks, events=events)
+    return EnrobeResult(content=final_content, events=events)

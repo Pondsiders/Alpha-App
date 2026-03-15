@@ -147,6 +147,7 @@ function Layout() {
     addRemoteAssistantPlaceholder: useWorkshopStore.getState().addRemoteAssistantPlaceholder,
     addApproachLight: useWorkshopStore.getState().addApproachLight,
     loadMessages: useWorkshopStore.getState().loadMessages,
+    reconcileUserMessage: useWorkshopStore.getState().reconcileUserMessage,
   });
   // Keep the ref fresh (store actions are stable with immer, but belt & suspenders)
   actionsRef.current = {
@@ -164,6 +165,7 @@ function Layout() {
     addRemoteAssistantPlaceholder: useWorkshopStore.getState().addRemoteAssistantPlaceholder,
     addApproachLight: useWorkshopStore.getState().addApproachLight,
     loadMessages: useWorkshopStore.getState().loadMessages,
+    reconcileUserMessage: useWorkshopStore.getState().reconcileUserMessage,
   };
 
   // Shared assistant ID map — Layout reads, ChatPage writes
@@ -263,7 +265,7 @@ function Layout() {
       // Backend broadcasts everything. Frontend discriminates.
       case "user-message": {
         if (!eChatId) break;
-        const umContent = (event.data as { content: unknown[] }).content || [];
+        const umContent = (event.data as { content: ContentPart[] }).content || [];
 
         // Tool results = internal plumbing. Ignore for now.
         // (Future: update tool call UI with results.)
@@ -272,14 +274,22 @@ function Layout() {
         );
         if (isToolResult) break;
 
-        // Human text echo. Two cases:
-        // 1. Chat is busy → interjection. Split the assistant message.
-        // 2. Chat is not busy → initial echo. Already rendered optimistically.
-        const chatMeta = useWorkshopStore.getState().chats[eChatId];
-        if (chatMeta?.state === "busy") {
+        // Try to reconcile with an existing optimistic user message.
+        // If the echo's last text block matches what we already stored,
+        // merge the full enrobed content (memories, timestamp, etc.) into it.
+        const reconciled = actions.reconcileUserMessage(eChatId, umContent);
+
+        if (!reconciled) {
+          // No match — this is either:
+          // (a) An interjection (new user message mid-stream) → add it + new placeholder
+          // (b) A replay/remote message → add it + new placeholder
+          actions.addRemoteUserMessage(eChatId, umContent);
           const aid = actions.addRemoteAssistantPlaceholder(eChatId);
           assistantIdMapRef.current[eChatId] = aid;
         }
+        // If reconciled: the existing message now has the full enrobed content.
+        // No new placeholder needed — the assistant placeholder was already
+        // created in onNew when the user hit send.
         break;
       }
 

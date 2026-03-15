@@ -195,8 +195,8 @@ class TestEnrobeOrientation:
         assert isinstance(result, EnrobeResult)
         assert isinstance(result.content, list)
         assert isinstance(result.events, list)
-        # Should still have the timestamp event
-        assert any(e["type"] == "enrichment-timestamp" for e in result.events)
+        # Should have at least one progressive user-message event (timestamp snapshot)
+        assert any(e["type"] == "user-message" for e in result.events)
 
     async def test_full_orientation_with_all_sources(self, user_content):
         """When all sources are present, all orientation blocks appear in order."""

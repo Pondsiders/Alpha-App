@@ -5,8 +5,8 @@ matters — block order, header patterns, count — not the content. All text
 is synthetic so tests are fast and readable.
 
 Two shapes:
-    FIRST_TURN_BLOCKS  — orientation + memories + timestamp + user message
-    NORMAL_TURN_BLOCKS — intro + memories + timestamp + user message
+    FIRST_TURN_BLOCKS  — orientation + timestamp + user message + memories
+    NORMAL_TURN_BLOCKS — intro + timestamp + user message + memories
 """
 
 # -- Synthetic source data (inputs to orientation / enrobe) ----------------
@@ -109,9 +109,9 @@ USER_MESSAGE_NORMAL = "I still wanna think it through."
 def first_turn_blocks() -> list[dict]:
     """The expected content blocks for the first turn of a context window.
 
-    Block order matches the Duckpond capture:
+    Block order (human-optimized, Mar 15 2026):
         capsules → letter → today → here → context files → context index →
-        events → todos → memories → timestamp → user message
+        events → todos → timestamp → user message → memories
     """
     blocks = []
 
@@ -144,15 +144,15 @@ def first_turn_blocks() -> list[dict]:
     # Todos (## Todos header added by orientation)
     _add(f"## Todos\n\n{TODOS}")
 
-    # Memories (passed through as-is, already have ## headers)
-    for mem in MEMORIES_FIRST_TURN:
-        _add(mem)
-
-    # Timestamp
+    # Timestamp (before user message)
     _add(TIMESTAMP_FIRST)
 
     # User message (raw, no header)
     _add(USER_MESSAGE_FIRST)
+
+    # Memories (after user message — "something to munch on while you wait")
+    for mem in MEMORIES_FIRST_TURN:
+        _add(mem)
 
     return blocks
 
@@ -160,8 +160,8 @@ def first_turn_blocks() -> list[dict]:
 def normal_turn_blocks() -> list[dict]:
     """The expected content blocks for a normal (non-first) turn.
 
-    Block order matches the Duckpond capture:
-        intro → memories → timestamp → user message
+    Block order (human-optimized, Mar 15 2026):
+        intro → timestamp → user message → memories
     """
     blocks = []
 
@@ -171,14 +171,14 @@ def normal_turn_blocks() -> list[dict]:
     # Intro speaks
     _add(INTRO_SPEAKS)
 
-    # Memories
-    for mem in MEMORIES_NORMAL_TURN:
-        _add(mem)
-
-    # Timestamp
+    # Timestamp (before user message)
     _add(TIMESTAMP_NORMAL)
 
     # User message
     _add(USER_MESSAGE_NORMAL)
+
+    # Memories (after user message)
+    for mem in MEMORIES_NORMAL_TURN:
+        _add(mem)
 
     return blocks

@@ -87,6 +87,10 @@ interface WorkshopState {
 
   // Approach lights (per-chat)
   approachLights: Record<string, ApproachLight[]>;
+
+  // Stash for reconciliation — the raw text the user just submitted.
+  // Set by addUserMessage, consumed by reconcileUserMessage.
+  _pendingSendText: string | null;
 }
 
 interface WorkshopActions {
@@ -114,6 +118,9 @@ interface WorkshopActions {
   // Remote messages (echoed from other connections via the switch)
   addRemoteUserMessage: (chatId: string, content: ContentPart[]) => string;
   addRemoteAssistantPlaceholder: (chatId: string) => string;
+
+  // Reconciliation — merge enrobed echo into optimistic user message
+  reconcileUserMessage: (chatId: string, echoContent: ContentPart[]) => boolean;
 
   // Cache
   cacheActiveMessages: () => void;
@@ -160,6 +167,7 @@ const initialState: WorkshopState = {
   tokenCount: 0,
   tokenLimit: 0,
   approachLights: {},
+  _pendingSendText: null,
 };
 
 export const useWorkshopStore = create<WorkshopStore>()(
@@ -285,6 +293,8 @@ export const useWorkshopStore = create<WorkshopStore>()(
           createdAt: new Date(),
           source,
         });
+        // Stash the raw text for reconciliation with the echo
+        state._pendingSendText = content.trim() || null;
       });
       return id;
     },
@@ -418,6 +428,56 @@ export const useWorkshopStore = create<WorkshopStore>()(
         }
       });
       return id;
+    },
+
+    // -- Reconciliation -------------------------------------------------------
+
+    reconcileUserMessage: (chatId, echoContent) => {
+      // Stash-based reconciliation. When the user sends a message, addUserMessage
+      // stashes the raw text. When a user-message echo arrives, we check if ANY
+      // text block in the echo matches the stash. If so, update the message.
+      // Simple. No "last block" logic. Reed that bends.
+
+      const stash = get()._pendingSendText;
+      if (!stash) return false;
+
+      // Does ANY text block in the echo contain the stashed string?
+      const hasMatch = Array.isArray(echoContent) && echoContent.some(
+        (p: unknown) => {
+          if (typeof p !== "object" || p === null) return false;
+          const block = p as Record<string, unknown>;
+          return block.type === "text" && typeof block.text === "string"
+            && block.text.trim() === stash.trim();
+        }
+      );
+      if (!hasMatch) return false;
+
+      // Find the most recent user message (scan from end)
+      const messages = chatId === get().activeChatId
+        ? get().messages
+        : get().messageCache[chatId] || [];
+
+      let targetIdx = -1;
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === "user") {
+          targetIdx = i;
+          break;
+        }
+      }
+      if (targetIdx === -1) return false;
+
+      // Replace content with the full enrobed echo.
+      set((state) => {
+        const arr = chatId === state.activeChatId
+          ? state.messages
+          : (state.messageCache[chatId] || []);
+        const msg = arr[targetIdx];
+        if (msg && msg.role === "user") {
+          msg.content = echoContent as ContentPart[];
+        }
+      });
+
+      return true;
     },
 
     // -- Cache ----------------------------------------------------------------

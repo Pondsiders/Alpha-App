@@ -77,11 +77,11 @@ class TestFirstTurnShape:
 
     Expected block order (18 blocks):
         capsules(2) -> letter -> today -> here -> context files(4) ->
-        context index -> events -> todos -> memories(4) -> timestamp ->
-        user message
+        context index -> events -> todos -> timestamp ->
+        user message -> memories(4)
 
-    The user message is ALWAYS the last block. Everything before it is
-    enrichment that enrobe adds.
+    User message comes before memories. Memories are postamble —
+    "something to munch on while you wait."
     """
 
     @pytest.fixture
@@ -150,10 +150,13 @@ class TestFirstTurnShape:
         # Also catch length mismatch (zip stops at shorter)
         assert len(result.content) == len(expected)
 
-    async def test_user_message_is_last(self, enrobe_first_turn):
-        """Jeffery's message is ALWAYS the last block."""
+    async def test_user_message_before_memories(self, enrobe_first_turn):
+        """User message comes before memories (memories are postamble)."""
         result, _ = await enrobe_first_turn()
-        assert result.content[-1] == {"type": "text", "text": USER_MESSAGE_FIRST}
+        texts = [b["text"] for b in result.content]
+        user_idx = texts.index(USER_MESSAGE_FIRST)
+        mem_indices = [i for i, t in enumerate(texts) if t.startswith("## Memory #")]
+        assert all(mi > user_idx for mi in mem_indices), "Memories should come after user message"
 
     async def test_orientation_flag_cleared(self, enrobe_first_turn):
         """_needs_orientation should be False after the first turn."""
@@ -168,9 +171,9 @@ class TestNormalTurnShape:
     """Normal (non-first) turn — intro, memories, timestamp, user message.
 
     Expected block order (6 blocks):
-        intro -> memories(3) -> timestamp -> user message
+        intro -> timestamp -> user message -> memories(3)
 
-    No orientation blocks. The user message is ALWAYS the last block.
+    No orientation blocks. Memories come after user message.
     """
 
     @pytest.fixture
@@ -220,10 +223,13 @@ class TestNormalTurnShape:
 
         assert len(result.content) == len(expected)
 
-    async def test_user_message_is_last(self, enrobe_normal_turn):
-        """Jeffery's message is ALWAYS the last block."""
+    async def test_user_message_before_memories(self, enrobe_normal_turn):
+        """User message comes before memories (memories are postamble)."""
         result, _ = await enrobe_normal_turn()
-        assert result.content[-1] == {"type": "text", "text": USER_MESSAGE_NORMAL}
+        texts = [b["text"] for b in result.content]
+        user_idx = texts.index(USER_MESSAGE_NORMAL)
+        mem_indices = [i for i, t in enumerate(texts) if t.startswith("## Memory #")]
+        assert all(mi > user_idx for mi in mem_indices), "Memories should come after user message"
 
     async def test_no_orientation_blocks(self, enrobe_normal_turn):
         """Normal turns should have no orientation blocks."""
