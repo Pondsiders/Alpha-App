@@ -257,28 +257,29 @@ function Layout() {
         break;
       }
 
-      // -- User message echo (turn boundary signal) --
-      // With --replay-user-messages, claude echoes every user message back on
-      // stdout. This serves as a turn boundary marker: everything before this
-      // echo was the previous assistant turn, everything after is a new turn.
-      //
-      // We DON'T add the user message to the store — the frontend already
-      // added it optimistically in onNew. We only use the echo to split
-      // assistant messages: create a new assistant placeholder so incoming
-      // text-deltas land in a fresh message.
-      //
-      // For the INITIAL user message (chat not busy), we already created a
-      // placeholder in onNew, so skip. For INTERJECTIONS (chat is busy),
-      // this is the signal to start a new assistant message.
+      // -- User message echo --
+      // With --replay-user-messages, claude echoes ALL user messages back
+      // on stdout: initial prompt, tool results, and interjections.
+      // Backend broadcasts everything. Frontend discriminates.
       case "user-message": {
         if (!eChatId) break;
+        const umContent = (event.data as { content: unknown[] }).content || [];
+
+        // Tool results = internal plumbing. Ignore for now.
+        // (Future: update tool call UI with results.)
+        const isToolResult = Array.isArray(umContent) && umContent.some(
+          (b: unknown) => typeof b === "object" && b !== null && (b as Record<string, unknown>).type === "tool_result"
+        );
+        if (isToolResult) break;
+
+        // Human text echo. Two cases:
+        // 1. Chat is busy → interjection. Split the assistant message.
+        // 2. Chat is not busy → initial echo. Already rendered optimistically.
         const chatMeta = useWorkshopStore.getState().chats[eChatId];
         if (chatMeta?.state === "busy") {
-          // Interjection boundary — start a new assistant message
           const aid = actions.addRemoteAssistantPlaceholder(eChatId);
           assistantIdMapRef.current[eChatId] = aid;
         }
-        // Initial echo (not busy) — no-op, onNew already set up everything
         break;
       }
 

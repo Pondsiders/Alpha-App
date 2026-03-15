@@ -175,13 +175,29 @@ const AssistantMessage = () => {
 // Convert Message to ThreadMessageLike
 // -----------------------------------------------------------------------------
 
+// Part types that assistant-ui knows how to render per role.
+// Anything else gets filtered with a console warning — scream but don't die.
+const KNOWN_USER_PARTS = new Set(["text", "image", "file", "audio"]);
+const KNOWN_ASSISTANT_PARTS = new Set(["text", "reasoning", "tool-call", "file", "audio"]);
+
 const convertMessage = (message: Message): ThreadMessageLike => {
-  const content = message.content.map((part) => {
-    if (part.type === "thinking") {
-      return { type: "reasoning" as const, text: part.thinking };
-    }
-    return part;
-  });
+  const knownParts = message.role === "user" ? KNOWN_USER_PARTS : KNOWN_ASSISTANT_PARTS;
+
+  const content = message.content
+    .map((part) => {
+      if (part.type === "thinking") {
+        return { type: "reasoning" as const, text: part.thinking };
+      }
+      return part;
+    })
+    .filter((part) => {
+      if (knownParts.has(part.type)) return true;
+      console.warn(
+        `[convertMessage] Filtering unsupported ${message.role} part type: ${part.type}`,
+        part,
+      );
+      return false;
+    });
 
   return {
     id: message.id,

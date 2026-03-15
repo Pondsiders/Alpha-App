@@ -118,10 +118,9 @@ async def stream_chat_events(connections: set, chat: Chat, span=None) -> str:
                 )
 
             elif isinstance(event, UserEvent):
-                # Interjection echo — claude replays the user message on
-                # stdout at the point where it absorbs it. This is the turn
-                # boundary signal: everything before this was the previous
-                # assistant turn, everything after is the interjection response.
+                # Broadcast ALL user echoes from --replay-user-messages.
+                # No filtering, no counting, no special cases.
+                # The frontend decides what to do with each one.
                 await broadcast(connections, {
                     "type": "user-message",
                     "chatId": chat_id,
