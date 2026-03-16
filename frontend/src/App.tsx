@@ -267,7 +267,14 @@ function Layout() {
       // Backend broadcasts everything. Frontend discriminates.
       case "user-message": {
         if (!eChatId) break;
-        const umData = event.data as { id?: string; content?: ContentPart[]; source?: string };
+        const umData = event.data as {
+          id?: string;
+          content?: ContentPart[];
+          source?: string;
+          timestamp?: string;
+          memories?: Array<{ id: number; content: string; score: number; created_at: string }>;
+          orientation?: { capsules?: Array<{ key: string; title: string; content: string }> };
+        };
         const umContent = umData.content || [];
 
         // Tool results = internal plumbing. Ignore for now.
@@ -277,10 +284,14 @@ function Layout() {
         if (isToolResult) break;
 
         // ID-based reconciliation: if the event carries a message ID that
-        // matches an existing message, update it in place. This handles
-        // progressive enrichment (timestamp → memories → capsules).
+        // matches an existing message, update it in place with all enrichment.
         if (umData.id) {
-          const updated = actions.updateUserMessageById(eChatId, umData.id, umContent);
+          const updated = actions.updateUserMessageById(eChatId, umData.id, {
+            content: umData.content,
+            timestamp: umData.timestamp,
+            memories: umData.memories,
+            orientation: umData.orientation,
+          });
           if (updated) break;
         }
 

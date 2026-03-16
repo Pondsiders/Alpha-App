@@ -12,6 +12,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { ArrowUp, Square, Copy, Check } from "lucide-react";
 import { ToolFallback } from "../components/ToolFallback";
+import { MemoryCard } from "../components/MemoryCard";
 import { MemoryNote } from "../components/tools/MemoryNote";
 import {
   ComposerAttachments,
@@ -61,10 +62,12 @@ interface ChatPageProps {
 const UserMessage = () => {
   const message = useMessage();
 
-  // Look up our source tag from the store (assistant-ui doesn't carry custom fields)
-  const source = useWorkshopStore((s) =>
-    s.messages.find((m) => m.id === message.id)?.source
+  // Look up enrichment fields from the store (assistant-ui doesn't carry custom fields)
+  const storeMsg = useWorkshopStore((s) =>
+    s.messages.find((m) => m.id === message.id)
   );
+  const source = storeMsg?.source;
+  const memories = storeMsg?.memories;
 
   // Separate image and text parts for individual bubbles
   const imageParts = (message.content as Array<{ type: string; image?: string }>)
@@ -89,7 +92,13 @@ const UserMessage = () => {
 
   return (
     <MessagePrimitive.Root data-testid="user-message" className="flex flex-col items-end mb-4 gap-2">
-      {/* Image bubble(s) — separate from text */}
+      {/* Text bubble — the hero */}
+      {textContent && (
+        <div className="px-4 py-3 bg-user-bubble rounded-2xl max-w-[75%] text-text break-words whitespace-pre-wrap">
+          {textContent}
+        </div>
+      )}
+      {/* Image bubble(s) — below text */}
       {imageParts.map((img, i) => (
         <div
           key={i}
@@ -102,10 +111,14 @@ const UserMessage = () => {
           />
         </div>
       ))}
-      {/* Text bubble */}
-      {textContent && (
-        <div className="px-4 py-3 bg-user-bubble rounded-2xl max-w-[75%] text-text break-words whitespace-pre-wrap">
-          {textContent}
+      {/* Memory cards — horizontal scroll, right-aligned */}
+      {memories && memories.length > 0 && (
+        <div className="w-full flex justify-end">
+          <div className="flex gap-2 overflow-x-auto max-w-full py-1 scrollbar-thin">
+            {memories.map((mem) => (
+              <MemoryCard key={mem.id} memory={mem} />
+            ))}
+          </div>
         </div>
       )}
     </MessagePrimitive.Root>

@@ -38,12 +38,31 @@ export type ContentPart = TextPart | ThinkingPart | ImagePart | ToolCallPart;
 /** Who initiated this message. Undefined = human (the default). */
 export type MessageSource = "human" | "intro" | "infrastructure";
 
+/** A recalled memory surfaced by the enrichment pipeline. */
+export interface RecalledMemory {
+  id: number;
+  content: string;
+  score: number;
+  created_at: string;
+}
+
+/** A temporal capsule (yesterday, last night, today, letter). */
+export interface CapsuleData {
+  key: string;
+  title: string;
+  content: string;
+}
+
 export interface Message {
   id: string;
   role: "user" | "assistant";
   content: ContentPart[];
   createdAt: Date;
   source?: MessageSource;
+  // Enrichment fields — populated by progressive user-message events
+  timestamp?: string;
+  memories?: RecalledMemory[];
+  capsules?: CapsuleData[];
 }
 
 export type ChatState = "starting" | "idle" | "busy" | "dead";
@@ -122,8 +141,13 @@ interface WorkshopActions {
   // Reconciliation — merge enrobed echo into optimistic user message
   reconcileUserMessage: (chatId: string, echoContent: ContentPart[]) => boolean;
 
-  // ID-based reconciliation — update a user message by its ID
-  updateUserMessageById: (chatId: string, messageId: string, content: ContentPart[]) => boolean;
+  // ID-based reconciliation — update a user message by its ID and enrichment
+  updateUserMessageById: (chatId: string, messageId: string, wireData: {
+    content?: ContentPart[];
+    timestamp?: string;
+    memories?: RecalledMemory[];
+    orientation?: { capsules?: CapsuleData[] };
+  }) => boolean;
 
   // Cache
   cacheActiveMessages: () => void;
@@ -483,10 +507,10 @@ export const useWorkshopStore = create<WorkshopStore>()(
       return true;
     },
 
-    // ID-based reconciliation — find a user message by ID and update its content.
-    // Returns true if the message was found and updated, false otherwise.
+    // ID-based reconciliation — find a user message by ID and update its
+    // content + enrichment fields (timestamp, memories, capsules).
     // Also clears _pendingSendText so the claude echo can't clobber the update.
-    updateUserMessageById: (chatId, messageId, content) => {
+    updateUserMessageById: (chatId, messageId, wireData) => {
       const messages = chatId === get().activeChatId
         ? get().messages
         : get().messageCache[chatId] || [];
@@ -500,11 +524,11 @@ export const useWorkshopStore = create<WorkshopStore>()(
           : (state.messageCache[chatId] || []);
         const msg = arr.find((m) => m.id === messageId && m.role === "user");
         if (msg) {
-          msg.content = content as ContentPart[];
+          if (wireData.content) msg.content = wireData.content as ContentPart[];
+          if (wireData.timestamp !== undefined) msg.timestamp = wireData.timestamp;
+          if (wireData.memories) msg.memories = wireData.memories;
+          if (wireData.orientation?.capsules) msg.capsules = wireData.orientation.capsules;
         }
-        // Clear the stash so the text-based fallback can't clobber this message
-        // when the claude echo arrives later (it has no ID, falls through to
-        // reconcileUserMessage which would overwrite with API-format content).
         state._pendingSendText = null;
       });
 
