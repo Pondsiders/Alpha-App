@@ -36,3 +36,25 @@
     opacity: 0.7;
   }
 }
+
+/* Breathing animation — Apple sleep light style.
+   Same brightening/dimming as busy pulse, but slower and dimmer.
+   3.5 second cycle. White/gray instead of amber. */
+@keyframes breathe {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.7; }
+}
+
+/* Busy pulse — faster, more visible */
+@keyframes busy-pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+.streaming-bar-sleeping {
+  animation: breathe 3.5s ease-in-out infinite;
+}
+
+.streaming-bar-busy {
+  animation: busy-pulse 1.5s ease-in-out infinite;
+}

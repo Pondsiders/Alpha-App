@@ -203,7 +203,8 @@ async def handle_new_turn(
             if source == "suggest":
                 final_content = content
                 # Broadcast the suggest message so frontends see it as
-                # a stage-direction user message
+                # a stage-direction user message. Ephemeral — not stored
+                # for replay (the suggest prompt served its purpose).
                 if broadcast_user_message:
                     await broadcast(connections, {
                         "type": "user-message",
@@ -212,7 +213,7 @@ async def handle_new_turn(
                             "content": content,
                             "source": "suggest",
                         },
-                    })
+                    }, persist=False)
             else:
                 result = await enrobe(content, chat=chat, source=source, msg_id=msg_id)
                 final_content = result.content
