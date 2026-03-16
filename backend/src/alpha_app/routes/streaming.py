@@ -101,6 +101,11 @@ async def stream_chat_events(connections: set, chat: Chat, span=None) -> str:
     output_parts: list[dict] = []
     interjection_count = 0
 
+    # Accumulate assistant message parts for the coalesced event.
+    # Each part is {"type": "thinking"|"text"|"tool-call", ...}.
+    # Built from stream deltas and assistant events as they arrive.
+    wire_parts: list[dict] = []
+
     try:
         async for event in chat.events():
             # Real-time context updates + async approach lights
@@ -118,45 +123,71 @@ async def stream_chat_events(connections: set, chat: Chat, span=None) -> str:
                 )
 
             elif isinstance(event, UserEvent):
-                # Broadcast ALL user echoes from --replay-user-messages.
-                # No filtering, no counting, no special cases.
-                # The frontend decides what to do with each one.
+                # Broadcast user echoes from --replay-user-messages.
+                # Ephemeral — not stored in Postgres (the enriched version
+                # from enrobe is already stored).
                 await broadcast(connections, {
                     "type": "user-message",
                     "chatId": chat_id,
                     "data": {"content": event.content},
-                })
+                }, persist=False)
 
             elif isinstance(event, StreamEvent):
                 if event.delta_type == "text_delta":
                     text = event.delta_text
                     if text:
-                        await broadcast(connections, {"type": "text-delta", "chatId": chat_id, "data": text})
+                        # Broadcast live delta (ephemeral — not stored)
+                        await broadcast(connections, {
+                            "type": "text-delta", "chatId": chat_id, "data": text,
+                        }, persist=False)
+                        # Accumulate into wire_parts
+                        if wire_parts and wire_parts[-1]["type"] == "text":
+                            wire_parts[-1]["text"] += text
+                        else:
+                            wire_parts.append({"type": "text", "text": text})
                 elif event.delta_type == "thinking_delta":
                     text = event.delta_text
                     if text:
-                        await broadcast(connections, {"type": "thinking-delta", "chatId": chat_id, "data": text})
+                        await broadcast(connections, {
+                            "type": "thinking-delta", "chatId": chat_id, "data": text,
+                        }, persist=False)
+                        if wire_parts and wire_parts[-1]["type"] == "thinking":
+                            wire_parts[-1]["thinking"] += text
+                        else:
+                            wire_parts.append({"type": "thinking", "thinking": text})
 
             elif isinstance(event, AssistantEvent):
                 output_parts.extend(event.content)
                 for block in event.content:
                     if block.get("type") == "tool_use":
+                        tool_data = {
+                            "toolCallId": block.get("id", ""),
+                            "toolName": block.get("name", ""),
+                            "args": block.get("input", {}),
+                            "argsText": json.dumps(block.get("input", {})),
+                        }
+                        # Broadcast live tool call (ephemeral)
                         await broadcast(connections, {
                             "type": "tool-call",
                             "chatId": chat_id,
-                            "data": {
-                                "toolCallId": block.get("id", ""),
-                                "toolName": block.get("name", ""),
-                                "args": block.get("input", {}),
-                                "argsText": json.dumps(block.get("input", {})),
-                            },
-                        })
+                            "data": tool_data,
+                        }, persist=False)
+                        # Accumulate into wire_parts
+                        wire_parts.append({"type": "tool-call", **tool_data})
 
             elif isinstance(event, ResultEvent):
                 await persist_chat(chat)
 
                 if span:
                     set_turn_span_response(span, chat, event, output_parts)
+
+                # Emit the coalesced assistant-message (persisted for replay)
+                if wire_parts:
+                    await broadcast(connections, {
+                        "type": "assistant-message",
+                        "chatId": chat_id,
+                        "data": {"parts": wire_parts},
+                    })
 
                 await broadcast(connections, {
                     "type": "chat-state",

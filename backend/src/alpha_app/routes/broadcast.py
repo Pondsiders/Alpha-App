@@ -20,6 +20,7 @@ async def broadcast(
     event: dict,
     *,
     exclude: WebSocket | None = None,
+    persist: bool = True,
 ) -> None:
     """Send event to all connected WebSockets, optionally excluding one.
 
@@ -30,9 +31,12 @@ async def broadcast(
     (fire-and-forget via asyncio.create_task — never blocks the hot path).
     Each stored event carries a monotonically increasing seq number so
     replay_events() can ORDER BY seq for correct ordering.
+
+    Set persist=False for ephemeral events (deltas) that should be
+    broadcast live but not stored for replay.
     """
     # Persist to event store — fire-and-forget, never blocks streaming
-    if "chatId" in event:
+    if persist and "chatId" in event:
         from alpha_app.db import get_pool, store_event
         chat_id = event["chatId"]
         if chat_id not in _seq_counters:

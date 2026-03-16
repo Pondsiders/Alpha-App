@@ -16,14 +16,17 @@ import {
   type JSONValue,
   type Message,
   type ToolCallPart,
+  type RecalledMemory,
+  type CapsuleData,
 } from "./store";
 
 // ---------------------------------------------------------------------------
-// Replay buffering — build full Message[] from buffered events in one pass
+// Replay buggering — build full Message[] from buffered events in one pass.
+// Pure JavaScript, no Zustand, no immer. Fast.
 // ---------------------------------------------------------------------------
 
 const REPLAY_BUFFERED_EVENTS = new Set([
-  "user-message", "text-delta", "thinking-delta", "tool-call", "tool-result", "done",
+  "user-message", "assistant-message", "text-delta", "thinking-delta", "tool-call", "tool-result", "done",
 ]);
 
 function processReplayBuffer(events: ServerEvent[]): Message[] {
@@ -33,14 +36,45 @@ function processReplayBuffer(events: ServerEvent[]): Message[] {
   for (const event of events) {
     switch (event.type) {
       case "user-message": {
-        const data = event.data as { content: ContentPart[] };
-        messages.push({
-          id: generateId(),
-          role: "user",
-          content: data.content || [],
-          createdAt: new Date(),
-        });
-        currentAssistant = null;
+        const data = event.data as {
+          id?: string;
+          content?: ContentPart[];
+          timestamp?: string;
+          memories?: RecalledMemory[];
+          orientation?: { capsules?: CapsuleData[] };
+        };
+
+        // Progressive enrichment: multiple user-message events may arrive
+        // for the same message (timestamp first, then memories). Deduplicate
+        // by matching on data.id — last snapshot wins.
+        const existingIdx = data.id
+          ? messages.findIndex((m) => m.id === data.id)
+          : -1;
+
+        if (existingIdx >= 0) {
+          // Update in place — don't create a new message, don't reset assistant
+          const existing = messages[existingIdx];
+          if (data.content) existing.content = data.content as ContentPart[];
+          if (data.timestamp !== undefined) existing.timestamp = data.timestamp;
+          if (data.memories) existing.memories = data.memories;
+          if (data.orientation?.capsules) existing.capsules = data.orientation.capsules;
+        } else if (!data.id && messages.length > 0 && messages[messages.length - 1]?.role === "user") {
+          // ID-less user-message after an existing user message = claude echo.
+          // Skip it — the labeled version already captured this turn.
+          // (Don't reset currentAssistant either.)
+        } else {
+          // New user message
+          messages.push({
+            id: data.id || generateId(),
+            role: "user",
+            content: data.content || [],
+            createdAt: new Date(),
+            timestamp: data.timestamp,
+            memories: data.memories,
+            capsules: data.orientation?.capsules,
+          });
+          currentAssistant = null;
+        }
         break;
       }
       case "text-delta": {
@@ -107,6 +141,46 @@ function processReplayBuffer(events: ServerEvent[]): Message[] {
         }
         break;
       }
+      case "assistant-message": {
+        // Coalesced assistant message — complete, all parts in order.
+        // This is the primary replay path. Deltas are ephemeral (not stored).
+        const amData = event.data as {
+          parts?: Array<{
+            type: string;
+            text?: string;
+            thinking?: string;
+            toolCallId?: string;
+            toolName?: string;
+            args?: JSONObject;
+            argsText?: string;
+          }>;
+        };
+        const amParts = amData.parts || [];
+        const amContent: ContentPart[] = [];
+        for (const part of amParts) {
+          if (part.type === "text" && part.text) {
+            amContent.push({ type: "text", text: part.text });
+          } else if (part.type === "thinking" && part.thinking) {
+            amContent.push({ type: "thinking", thinking: part.thinking });
+          } else if (part.type === "tool-call" && part.toolCallId) {
+            amContent.push({
+              type: "tool-call",
+              toolCallId: part.toolCallId,
+              toolName: part.toolName || "",
+              args: (part.args || {}) as JSONObject,
+              argsText: part.argsText || "",
+            });
+          }
+        }
+        messages.push({
+          id: generateId(),
+          role: "assistant",
+          content: amContent,
+          createdAt: new Date(),
+        });
+        currentAssistant = null;
+        break;
+      }
       case "done": {
         currentAssistant = null;
         break;
@@ -149,6 +223,7 @@ function Layout() {
     loadMessages: useWorkshopStore.getState().loadMessages,
     reconcileUserMessage: useWorkshopStore.getState().reconcileUserMessage,
     updateUserMessageById: useWorkshopStore.getState().updateUserMessageById,
+    setReplaying: useWorkshopStore.getState().setReplaying,
   });
   // Keep the ref fresh (store actions are stable with immer, but belt & suspenders)
   actionsRef.current = {
@@ -168,6 +243,7 @@ function Layout() {
     loadMessages: useWorkshopStore.getState().loadMessages,
     reconcileUserMessage: useWorkshopStore.getState().reconcileUserMessage,
     updateUserMessageById: useWorkshopStore.getState().updateUserMessageById,
+    setReplaying: useWorkshopStore.getState().setReplaying,
   };
 
   // Shared assistant ID map — Layout reads, ChatPage writes
@@ -412,14 +488,17 @@ function Layout() {
       }
 
       case "replay-done": {
-        // Flush the replay buffer: build the full message list and render once.
-        if (!eChatId) break;
-        const buffer = replayBuffersRef.current[eChatId];
-        if (buffer !== undefined) {
-          delete replayBuffersRef.current[eChatId];
-          const msgs = processReplayBuffer(buffer);
-          actions.loadMessages(eChatId, msgs);
+        // Flush the replay buffer: build the full message list in pure JS
+        // (no Zustand, no immer) and render once. Fast buggering.
+        if (eChatId) {
+          const buffer = replayBuffersRef.current[eChatId];
+          if (buffer !== undefined) {
+            delete replayBuffersRef.current[eChatId];
+            const msgs = processReplayBuffer(buffer);
+            actions.loadMessages(eChatId, msgs);
+          }
         }
+        actions.setReplaying(false);
         break;
       }
     }
@@ -433,10 +512,11 @@ function Layout() {
   );
   const { send, connected } = useWebSocket({ onEvent, onConnectionChange });
 
-  // Intercept replay sends to initialize the buffer for that chatId
+  // Intercept replay sends to initialize buffer + show loading state
   const wrappedSend = useCallback((msg: ClientMessage) => {
     if (msg.type === "replay" && msg.chatId) {
       replayBuffersRef.current[msg.chatId] = [];
+      useWorkshopStore.getState().setReplaying(true);
     }
     return send(msg);
   }, [send]);

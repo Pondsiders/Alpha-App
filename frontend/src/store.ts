@@ -110,6 +110,9 @@ interface WorkshopState {
   // Stash for reconciliation — the raw text the user just submitted.
   // Set by addUserMessage, consumed by reconcileUserMessage.
   _pendingSendText: string | null;
+
+  // Replay — when true, message list doesn't render (store mutates silently)
+  isReplaying: boolean;
 }
 
 interface WorkshopActions {
@@ -157,6 +160,9 @@ interface WorkshopActions {
   // Connection
   setConnected: (connected: boolean) => void;
 
+  // Replay
+  setReplaying: (replaying: boolean) => void;
+
   // Context meter
   setContextPercent: (percent: number) => void;
   setModel: (model: string | null) => void;
@@ -195,6 +201,7 @@ const initialState: WorkshopState = {
   tokenLimit: 0,
   approachLights: {},
   _pendingSendText: null,
+  isReplaying: false,
 };
 
 export const useWorkshopStore = create<WorkshopStore>()(
@@ -569,6 +576,14 @@ export const useWorkshopStore = create<WorkshopStore>()(
     setConnected: (connected) => {
       set((state) => {
         state.connected = connected;
+      });
+    },
+
+    // -- Replay ---------------------------------------------------------------
+
+    setReplaying: (replaying) => {
+      set((state) => {
+        state.isReplaying = replaying;
       });
     },
 

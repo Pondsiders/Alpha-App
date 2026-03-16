@@ -26,6 +26,7 @@ export interface ServerEvent {
     | "approach-light"
     | "enrichment-timestamp"
     | "user-message"
+    | "assistant-message"
     | "error"
     | "done"
     | "interrupted"

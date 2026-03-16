@@ -256,6 +256,7 @@ function EmptyState() {
 
 function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
   const messages = useWorkshopStore((s) => s.messages);
+  const isReplaying = useWorkshopStore((s) => s.isReplaying);
   const activeChatId = useWorkshopStore((s) => s.activeChatId);
   const activeChat = useWorkshopStore((s) =>
     s.activeChatId ? s.chats[s.activeChatId] : null
@@ -421,35 +422,45 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
     <AssistantRuntimeProvider runtime={runtime}>
       <div className="h-full flex flex-col bg-background">
         <StatusBar />
-        <ThreadPrimitive.Root className="flex-1 flex flex-col overflow-hidden chat-font">
-          <ThreadPrimitive.Viewport className="flex-1 flex flex-col overflow-y-scroll p-6">
-            <div className="max-w-3xl mx-auto w-full flex-1">
-              {messages.length === 0 && !isRunning && (
-                <div className="flex-1 flex items-center justify-center h-full">
-                  <p className="text-primary/40 text-2xl font-light tracking-wide select-none">
-                    {connected ? "Alpha" : "Connecting..."}
-                  </p>
-                </div>
-              )}
+        {isReplaying ? (
+          /* During replay, don't render messages — the store mutates silently.
+             One render happens when isReplaying flips to false. */
+          <div className="flex-1 flex items-center justify-center chat-font">
+            <p className="text-primary/20 text-2xl font-light tracking-wide select-none animate-pulse">
+              Alpha
+            </p>
+          </div>
+        ) : (
+          <ThreadPrimitive.Root className="flex-1 flex flex-col overflow-hidden chat-font">
+            <ThreadPrimitive.Viewport className="flex-1 flex flex-col overflow-y-scroll p-6">
+              <div className="max-w-3xl mx-auto w-full flex-1">
+                {messages.length === 0 && !isRunning && (
+                  <div className="flex-1 flex items-center justify-center h-full">
+                    <p className="text-primary/40 text-2xl font-light tracking-wide select-none">
+                      {connected ? "Alpha" : "Connecting..."}
+                    </p>
+                  </div>
+                )}
 
-              <ThreadPrimitive.Messages
-                components={{
-                  UserMessage,
-                  AssistantMessage,
-                }}
-              />
+                <ThreadPrimitive.Messages
+                  components={{
+                    UserMessage,
+                    AssistantMessage,
+                  }}
+                />
 
-              {/* Approach lights — stage directions, not bubbles */}
-              {approachLights.map((light, i) => (
-                <ApproachLight key={`${light.level}-${i}`} {...light} />
-              ))}
+                {/* Approach lights — stage directions, not bubbles */}
+                {approachLights.map((light, i) => (
+                  <ApproachLight key={`${light.level}-${i}`} {...light} />
+                ))}
 
 
-            </div>
+              </div>
 
-            <div aria-hidden="true" className="h-4" />
-          </ThreadPrimitive.Viewport>
-        </ThreadPrimitive.Root>
+              <div aria-hidden="true" className="h-4" />
+            </ThreadPrimitive.Viewport>
+          </ThreadPrimitive.Root>
+        )}
 
         <footer className="px-6 py-4 bg-background chat-font">
           <div className="max-w-3xl mx-auto">
