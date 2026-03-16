@@ -27,35 +27,6 @@ from alpha_app.suggest import suggest, format_intro_block
 from alpha_app.tools import create_cortex_server, create_handoff_server
 
 
-def _tag_content_roles(blocks: list[dict]) -> list[dict]:
-    """Add a 'role' field to each text content block for frontend classification.
-
-    Classification order (first match wins):
-      "intro"      — starts with "## Intro speaks"
-      "memory"     — starts with "## Memory #"
-      "timestamp"  — starts with "[Sent "
-      "system"     — starts with "<system-reminder>"
-      "user-input" — everything else
-    """
-    tagged = []
-    for block in blocks:
-        if block.get("type") != "text":
-            tagged.append(block)
-            continue
-        text = block.get("text", "")
-        if text.startswith("## Intro speaks"):
-            role = "intro"
-        elif text.startswith("## Memory #"):
-            role = "memory"
-        elif text.startswith("[Sent "):
-            role = "timestamp"
-        elif text.startswith("<system-reminder>"):
-            role = "system"
-        else:
-            role = "user-input"
-        tagged.append({**block, "role": role})
-    return tagged
-
 
 async def _run_suggest(chat: Chat, user_text: str, assistant_text: str) -> None:
     """Fire-and-forget suggest pipeline. Populates chat._pending_intro.
@@ -91,6 +62,7 @@ async def handle_new_turn(
     streaming_tasks: dict[str, asyncio.Task],
     *,
     broadcast_user_message: bool = True,
+    source: str = "human",
 ) -> None:
     """Handle a new turn: resurrect if needed, enrobe, send, stream events.
 
@@ -100,6 +72,7 @@ async def handle_new_turn(
 
     broadcast_user_message: set False for buzz turns where the narration
     must stay invisible to the human (no user-message event emitted).
+    source: who initiated this message — "human", "buzzer", etc.
     """
     chat_id = chat.id
     prompt_preview = build_prompt_preview(content)
@@ -201,7 +174,7 @@ async def handle_new_turn(
             })
 
             # -- Enrobe: wrap user message in enrichment -------------------
-            result = await enrobe(content, chat=chat)
+            result = await enrobe(content, chat=chat, source=source)
 
             # Update Logfire with what Claude actually sees (enriched, not raw)
             enriched_messages = format_input_messages(result.content)
@@ -284,11 +257,11 @@ async def handle_interjection(
     await chat.send(content)
 
     # Echo user message to other connections (sender has it optimistically).
-    # Interjection content is raw user input — all blocks tag as "user-input".
+    # Interjections are raw user input — no enrichment, just the content.
     await broadcast(connections, {
         "type": "user-message",
         "chatId": chat.id,
-        "data": {"content": _tag_content_roles(content)},
+        "data": {"content": content, "source": "human"},
     }, exclude=ws)
 
     # Append to the turn's input messages for the Logfire span

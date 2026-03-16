@@ -158,7 +158,7 @@ async def websocket_chat(ws: WebSocket) -> None:
                 # Go straight to turn, suppressing the user-message broadcast.
                 task = asyncio.create_task(
                     handle_new_turn(ws, connections, chat, narration, turn_input_messages, streaming_tasks,
-                                    broadcast_user_message=False)
+                                    broadcast_user_message=False, source="buzzer")
                 )
                 streaming_tasks[chat_id] = task
 

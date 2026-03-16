@@ -66,7 +66,7 @@ class TestEnrobeOrientation:
     def mock_recall(self):
         """Mock recall_memories to return [] — these tests are about orientation."""
         with patch(
-            "alpha_app.routes.enrobe.recall_memories",
+            "alpha_app.routes.enrobe.recall_memories_rich",
             AsyncMock(return_value=[]),
         ):
             yield

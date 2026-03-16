@@ -114,7 +114,7 @@ class TestFirstTurnShape:
                     mock_orientation,
                 ),
                 patch(
-                    "alpha_app.routes.enrobe.recall_memories",
+                    "alpha_app.routes.enrobe.recall_memories_rich",
                     AsyncMock(return_value=MEMORIES_FIRST_TURN),
                 ),
             ):
@@ -189,7 +189,7 @@ class TestNormalTurnShape:
                     return_value="Wed Mar 11 2026, 12:32 PM",
                 ),
                 patch(
-                    "alpha_app.routes.enrobe.recall_memories",
+                    "alpha_app.routes.enrobe.recall_memories_rich",
                     AsyncMock(return_value=MEMORIES_NORMAL_TURN),
                 ),
             ):

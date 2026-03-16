@@ -307,3 +307,46 @@ async def recall_memories(
 
     # Format and return
     return [format_memory(m) for m in all_memories]
+
+
+async def recall_memories_rich(
+    text: str,
+    *,
+    session_id: str,
+) -> list[tuple[dict[str, Any], str]]:
+    """Like recall_memories, but returns (raw_dict, formatted_string) pairs.
+
+    Used by enrobe to populate both the wire format (needs raw data)
+    and the content blocks for Claude (needs formatted strings).
+    """
+    seen = get_seen_ids(session_id)
+    seen_list = list(seen)
+
+    with logfire.span("recall", session_id=session_id):
+        direct_task = cortex_search(
+            query=text,
+            limit=_DIRECT_LIMIT,
+            exclude=seen_list if seen_list else None,
+            min_score=_MIN_SCORE,
+        )
+        extract_task = _extract_queries(text)
+
+        direct_memories, extracted_queries = await asyncio.gather(
+            direct_task, extract_task,
+        )
+
+        exclude_for_extracted = set(seen_list)
+        for mem in direct_memories:
+            exclude_for_extracted.add(mem["id"])
+
+        extracted_memories = await _search_extracted_queries(
+            extracted_queries,
+            list(exclude_for_extracted),
+        )
+
+        all_memories = extracted_memories + direct_memories
+
+    if all_memories:
+        mark_seen(session_id, [m["id"] for m in all_memories])
+
+    return [(m, format_memory(m)) for m in all_memories]
