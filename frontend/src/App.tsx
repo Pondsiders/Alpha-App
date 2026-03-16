@@ -5,7 +5,7 @@ import DevContextMeter from "./pages/DevContextMeter";
 import DevStatusBar from "./pages/DevStatusBar";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
-import { useWebSocket, type ServerEvent } from "@/lib/useWebSocket";
+import { useWebSocket, type ServerEvent, type ClientMessage } from "@/lib/useWebSocket";
 import {
   useWorkshopStore,
   generateId,
@@ -148,6 +148,7 @@ function Layout() {
     addApproachLight: useWorkshopStore.getState().addApproachLight,
     loadMessages: useWorkshopStore.getState().loadMessages,
     reconcileUserMessage: useWorkshopStore.getState().reconcileUserMessage,
+    updateUserMessageById: useWorkshopStore.getState().updateUserMessageById,
   });
   // Keep the ref fresh (store actions are stable with immer, but belt & suspenders)
   actionsRef.current = {
@@ -166,6 +167,7 @@ function Layout() {
     addApproachLight: useWorkshopStore.getState().addApproachLight,
     loadMessages: useWorkshopStore.getState().loadMessages,
     reconcileUserMessage: useWorkshopStore.getState().reconcileUserMessage,
+    updateUserMessageById: useWorkshopStore.getState().updateUserMessageById,
   };
 
   // Shared assistant ID map — Layout reads, ChatPage writes
@@ -265,31 +267,43 @@ function Layout() {
       // Backend broadcasts everything. Frontend discriminates.
       case "user-message": {
         if (!eChatId) break;
-        const umContent = (event.data as { content: ContentPart[] }).content || [];
+        const umData = event.data as { id?: string; content?: ContentPart[]; source?: string };
+        const umContent = umData.content || [];
 
         // Tool results = internal plumbing. Ignore for now.
-        // (Future: update tool call UI with results.)
         const isToolResult = Array.isArray(umContent) && umContent.some(
           (b: unknown) => typeof b === "object" && b !== null && (b as Record<string, unknown>).type === "tool_result"
         );
         if (isToolResult) break;
 
-        // Try to reconcile with an existing optimistic user message.
-        // If the echo's last text block matches what we already stored,
-        // merge the full enrobed content (memories, timestamp, etc.) into it.
+        // ID-based reconciliation: if the event carries a message ID that
+        // matches an existing message, update it in place. This handles
+        // progressive enrichment (timestamp → memories → capsules).
+        if (umData.id) {
+          const updated = actions.updateUserMessageById(eChatId, umData.id, umContent);
+          if (updated) break;
+        }
+
+        // Fallback: text-stash reconciliation for events without an ID
+        // (e.g., claude echoes from --replay-user-messages).
         const reconciled = actions.reconcileUserMessage(eChatId, umContent);
 
         if (!reconciled) {
-          // No match — this is either:
-          // (a) An interjection (new user message mid-stream) → add it + new placeholder
-          // (b) A replay/remote message → add it + new placeholder
+          // Check if this is a stale echo — if the stash is already null
+          // (cleared by ID-based reconciliation), this echo is redundant.
+          // Only create a new message for genuine remote/replay messages.
+          const stash = useWorkshopStore.getState()._pendingSendText;
+          if (stash === null && !umData.id) {
+            // Stash already consumed — this is a claude echo arriving late.
+            // Drop it silently to avoid duplicating the message.
+            break;
+          }
+
+          // Genuine new message: interjection, replay, or remote
           actions.addRemoteUserMessage(eChatId, umContent);
           const aid = actions.addRemoteAssistantPlaceholder(eChatId);
           assistantIdMapRef.current[eChatId] = aid;
         }
-        // If reconciled: the existing message now has the full enrobed content.
-        // No new placeholder needed — the assistant placeholder was already
-        // created in onNew when the user hit send.
         break;
       }
 

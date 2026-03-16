@@ -326,7 +326,7 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
       console.log("[Alpha] Sending to chat %s, blocks: %d", chatId, backendContent.length);
 
       // Add user message to store (optimistic) — always, even for interjections
-      addUserMessage(text, storeImages.length > 0 ? storeImages : undefined);
+      const userMsgId = addUserMessage(text, storeImages.length > 0 ? storeImages : undefined);
 
       // Check if this is an interjection (chat is busy — assistant still streaming)
       const activeChat = useWorkshopStore.getState().chats[chatId];
@@ -339,10 +339,11 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
       }
       // Interjection: no new placeholder — the existing assistant message keeps accumulating
 
-      // Send via WebSocket with chatId
+      // Send via WebSocket with chatId + messageId for reconciliation
       const sent = sendRef.current({
         type: "send",
         chatId,
+        messageId: userMsgId,
         content:
           backendContent.length === 1 && backendContent[0].type === "text"
             ? (backendContent[0] as { text: string }).text // Simple string for text-only

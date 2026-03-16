@@ -63,6 +63,7 @@ async def handle_new_turn(
     *,
     broadcast_user_message: bool = True,
     source: str = "human",
+    msg_id: str | None = None,
 ) -> None:
     """Handle a new turn: resurrect if needed, enrobe, send, stream events.
 
@@ -73,6 +74,7 @@ async def handle_new_turn(
     broadcast_user_message: set False for buzz turns where the narration
     must stay invisible to the human (no user-message event emitted).
     source: who initiated this message — "human", "buzzer", etc.
+    msg_id: frontend-generated message ID for reconciliation.
     """
     chat_id = chat.id
     prompt_preview = build_prompt_preview(content)
@@ -174,7 +176,7 @@ async def handle_new_turn(
             })
 
             # -- Enrobe: wrap user message in enrichment -------------------
-            result = await enrobe(content, chat=chat, source=source)
+            result = await enrobe(content, chat=chat, source=source, msg_id=msg_id)
 
             # Update Logfire with what Claude actually sees (enriched, not raw)
             enriched_messages = format_input_messages(result.content)

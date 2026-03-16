@@ -13,7 +13,7 @@ from __future__ import annotations
 import base64
 import io
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 _MAX_PIXELS = 1_000_000  # 1 megapixel threshold
 _JPEG_QUALITY = 85
@@ -52,6 +52,10 @@ def process_image_block(block: dict) -> dict:
     try:
         img = Image.open(io.BytesIO(image_bytes))
         img.load()  # Ensure the image data is fully read
+        # Apply EXIF orientation — phone cameras store rotation as metadata,
+        # not as actual pixel orientation. Without this, portrait photos
+        # from phones render sideways.
+        img = ImageOps.exif_transpose(img)
     except Exception:
         return block  # Unreadable image — pass through unchanged
 

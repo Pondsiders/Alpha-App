@@ -39,6 +39,7 @@ export interface ClientMessage {
   type: "send" | "interrupt" | "create-chat" | "list-chats" | "buzz" | "replay";
   chatId?: string;
   content?: string | Array<Record<string, unknown>>;
+  messageId?: string;
 }
 
 interface UseWebSocketOptions {

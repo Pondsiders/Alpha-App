@@ -122,6 +122,9 @@ interface WorkshopActions {
   // Reconciliation — merge enrobed echo into optimistic user message
   reconcileUserMessage: (chatId: string, echoContent: ContentPart[]) => boolean;
 
+  // ID-based reconciliation — update a user message by its ID
+  updateUserMessageById: (chatId: string, messageId: string, content: ContentPart[]) => boolean;
+
   // Cache
   cacheActiveMessages: () => void;
   loadFromCache: (chatId: string) => boolean;
@@ -475,6 +478,34 @@ export const useWorkshopStore = create<WorkshopStore>()(
         if (msg && msg.role === "user") {
           msg.content = echoContent as ContentPart[];
         }
+      });
+
+      return true;
+    },
+
+    // ID-based reconciliation — find a user message by ID and update its content.
+    // Returns true if the message was found and updated, false otherwise.
+    // Also clears _pendingSendText so the claude echo can't clobber the update.
+    updateUserMessageById: (chatId, messageId, content) => {
+      const messages = chatId === get().activeChatId
+        ? get().messages
+        : get().messageCache[chatId] || [];
+
+      const target = messages.find((m) => m.id === messageId && m.role === "user");
+      if (!target) return false;
+
+      set((state) => {
+        const arr = chatId === state.activeChatId
+          ? state.messages
+          : (state.messageCache[chatId] || []);
+        const msg = arr.find((m) => m.id === messageId && m.role === "user");
+        if (msg) {
+          msg.content = content as ContentPart[];
+        }
+        // Clear the stash so the text-based fallback can't clobber this message
+        // when the claude echo arrives later (it has no ID, falls through to
+        // reconcileUserMessage which would overwrite with API-format content).
+        state._pendingSendText = null;
       });
 
       return true;
