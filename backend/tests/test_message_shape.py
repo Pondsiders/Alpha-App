@@ -180,7 +180,7 @@ class TestNormalTurnShape:
     def enrobe_normal_turn(self):
         """Run enrobe for a normal-turn message with deterministic mocks."""
         async def _run():
-            chat = ChatStub(needs_orientation=False, pending_intro=INTRO_SPEAKS)
+            chat = ChatStub(needs_orientation=False)
             content = [{"type": "text", "text": USER_MESSAGE_NORMAL}]
 
             with (

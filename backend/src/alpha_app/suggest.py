@@ -107,6 +107,13 @@ def _parse_memorables(text: str) -> list[str]:
 
     text = text.strip()
 
+    # Strip markdown code fences — some models wrap JSON in ```json ... ```
+    if text.startswith("```"):
+        lines = text.split("\n")
+        # Remove first line (```json or ```) and last line (```)
+        lines = [l for l in lines if not l.strip().startswith("```")]
+        text = "\n".join(lines).strip()
+
     try:
         parsed = json.loads(text)
 
@@ -125,18 +132,23 @@ def _parse_memorables(text: str) -> list[str]:
         return []
 
 
-def format_intro_block(memorables: list[str]) -> str | None:
-    """Format a list of memorables as an Intro speaks block.
+def format_suggest_prompt(memorables: list[str]) -> str | None:
+    """Format a list of memorables as a suggest prompt for the Chat.
 
-    Returns None if the list is empty (nothing to say).
+    The prompt instructs Alpha to call cortex.store for each memorable
+    and then stop. No commentary, no text output — just tool calls.
+
+    Returns None if the list is empty (nothing to suggest).
     """
     if not memorables:
         return None
 
     lines = "\n".join(f"- {m}" for m in memorables)
     return (
-        "## Intro speaks\n\n"
-        "Alpha, consider storing these from the previous turn:\n"
+        "[Narrator] The following moments from the previous turn may be worth remembering. "
+        "For each one you agree is worth storing, call cortex.store. "
+        "Do not write any text. Do not respond to the human. "
+        "Just store what matters and stop.\n\n"
         f"{lines}"
     )
 
