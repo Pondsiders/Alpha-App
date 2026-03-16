@@ -192,9 +192,21 @@ async def _call_llm(user_content: str, assistant_content: str) -> list[str]:
                         ],
                         "stream": False,
                         "think": False,
-                        "format": "json",
+                        # Schema-based structured output. The string "json"
+                        # is ignored when think=False (Ollama bug #14645).
+                        # A full JSON schema forces valid output.
+                        "format": {
+                            "type": "object",
+                            "properties": {
+                                "memorables": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                },
+                            },
+                            "required": ["memorables"],
+                        },
                         "keep_alive": -1,
-                        "options": {"num_ctx": 8192},
+                        "options": {"num_ctx": 8192, "temperature": 0},
                     },
                 )
                 response.raise_for_status()
