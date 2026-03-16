@@ -168,15 +168,16 @@ def first_turn_blocks() -> list[dict]:
 def normal_turn_blocks() -> list[dict]:
     """The expected content blocks for a normal (non-first) turn.
 
-    Block order (human-optimized, Mar 16 2026):
-        timestamp → user message → memories
-    Note: Intro suggestions are no longer injected here — they're sent
-    as async suggest turns directly to the Chat.
+    Block order (human-optimized, Mar 15 2026):
+        intro → timestamp → user message → memories
     """
     blocks = []
 
     def _add(text: str) -> None:
         blocks.append({"type": "text", "text": text})
+
+    # Intro speaks
+    _add(INTRO_SPEAKS)
 
     # Timestamp (before user message)
     _add(TIMESTAMP_NORMAL)

@@ -1,14 +1,17 @@
 """Tests for suggest.py — memory suggestion pipeline.
 
-Tests the JSON parsing (with and without markdown code fences),
-the suggest prompt formatting, and the Ollama call gating.
+Tests the parsing, formatting, and integration logic.
+Ollama calls are mocked — the LLM quality is a prompt-engineering
+concern, not a unit-test concern.
 """
 
-from unittest.mock import AsyncMock, patch
+from __future__ import annotations
+
+import json
 
 import pytest
 
-from alpha_app.suggest import _parse_memorables, format_suggest_prompt, suggest
+from alpha_app.suggest import _parse_memorables, format_intro_block, suggest
 
 
 # ---------------------------------------------------------------------------
@@ -18,40 +21,42 @@ from alpha_app.suggest import _parse_memorables, format_suggest_prompt, suggest
 
 class TestParseMemorables:
     def test_valid_json_with_memorables_key(self):
-        result = _parse_memorables('{"memorables": ["one", "two"]}')
-        assert result == ["one", "two"]
+        raw = json.dumps({"memorables": ["first moment", "second moment"]})
+        assert _parse_memorables(raw) == ["first moment", "second moment"]
 
     def test_empty_memorables_list(self):
-        result = _parse_memorables('{"memorables": []}')
-        assert result == []
+        raw = json.dumps({"memorables": []})
+        assert _parse_memorables(raw) == []
 
     def test_bare_array_fallback(self):
-        result = _parse_memorables('["one", "two"]')
-        assert result == ["one", "two"]
+        raw = json.dumps(["moment one", "moment two"])
+        assert _parse_memorables(raw) == ["moment one", "moment two"]
 
     def test_strips_whitespace(self):
-        result = _parse_memorables('{"memorables": ["  padded  "]}')
-        assert result == ["padded"]
+        raw = json.dumps({"memorables": ["  padded  ", "\n newlined \n"]})
+        assert _parse_memorables(raw) == ["padded", "newlined"]
 
     def test_filters_empty_strings(self):
-        result = _parse_memorables('{"memorables": ["real", "", "  "]}')
-        assert result == ["real"]
+        raw = json.dumps({"memorables": ["real", "", "  ", "also real"]})
+        assert _parse_memorables(raw) == ["real", "also real"]
 
     def test_filters_non_strings(self):
-        result = _parse_memorables('{"memorables": ["real", 42, null]}')
-        assert result == ["real"]
+        raw = json.dumps({"memorables": ["real", 42, None, "also real"]})
+        assert _parse_memorables(raw) == ["real", "also real"]
 
     def test_empty_string_input(self):
         assert _parse_memorables("") == []
 
     def test_none_like_empty(self):
-        assert _parse_memorables("null") == []
+        # _parse_memorables expects str, but handle edge case
+        assert _parse_memorables("") == []
 
     def test_invalid_json(self):
         assert _parse_memorables("not json at all") == []
 
     def test_json_with_wrong_structure(self):
-        assert _parse_memorables('{"other_key": "value"}') == []
+        raw = json.dumps({"something_else": "value"})
+        assert _parse_memorables(raw) == []
 
     def test_json_number(self):
         assert _parse_memorables("42") == []
@@ -60,74 +65,68 @@ class TestParseMemorables:
         assert _parse_memorables('"just a string"') == []
 
     def test_whitespace_around_json(self):
-        result = _parse_memorables('  {"memorables": ["trimmed"]}  ')
-        assert result == ["trimmed"]
-
-    def test_markdown_code_fences_stripped(self):
-        """Qwen 3.5 4B wraps JSON in ```json ... ``` despite format: json."""
-        result = _parse_memorables(
-            '```json\n{"memorables": ["fenced"]}\n```'
-        )
-        assert result == ["fenced"]
-
-    def test_markdown_code_fences_no_language(self):
-        result = _parse_memorables('```\n{"memorables": ["bare"]}\n```')
-        assert result == ["bare"]
+        raw = f'  {json.dumps({"memorables": ["moment"]})}  '
+        assert _parse_memorables(raw) == ["moment"]
 
 
 # ---------------------------------------------------------------------------
-# Tests: format_suggest_prompt
+# Tests: format_intro_block
 # ---------------------------------------------------------------------------
 
 
-class TestFormatSuggestPrompt:
+class TestFormatIntroBlock:
     def test_single_memorable(self):
-        result = format_suggest_prompt(["Jeffery said something funny"])
+        result = format_intro_block(["Jeffery said something funny"])
         assert result is not None
+        assert result.startswith("## Intro speaks")
         assert "- Jeffery said something funny" in result
 
     def test_multiple_memorables(self):
-        result = format_suggest_prompt(["first", "second", "third"])
+        result = format_intro_block(["first", "second", "third"])
         assert result is not None
         assert "- first\n- second\n- third" in result
 
     def test_empty_list_returns_none(self):
-        assert format_suggest_prompt([]) is None
+        assert format_intro_block([]) is None
 
-    def test_starts_with_narrator_tag(self):
-        result = format_suggest_prompt(["moment"])
+    def test_block_starts_with_intro_speaks_header(self):
+        result = format_intro_block(["moment"])
         assert result is not None
-        assert result.startswith("[Narrator]")
+        assert result.startswith("## Intro speaks\n\n")
 
-    def test_contains_store_instruction(self):
-        result = format_suggest_prompt(["moment"])
+    def test_block_contains_instruction_line(self):
+        result = format_intro_block(["moment"])
         assert result is not None
-        assert "cortex.store" in result
+        assert "consider storing these from the previous turn:" in result
 
-    def test_contains_stop_instruction(self):
-        result = format_suggest_prompt(["moment"])
+    def test_format_matches_golden_reference_shape(self):
+        """Verify the output matches what enrobe.py and turn.py expect."""
+        result = format_intro_block(
+            ["Jeffery offered Alpha a hit of California citrus"]
+        )
         assert result is not None
-        assert "stop" in result.lower()
-
-    def test_no_mention_of_intro(self):
-        result = format_suggest_prompt(["moment"])
-        assert result is not None
-        assert "intro" not in result.lower()
-        assert "Intro" not in result
+        # enrobe.py checks: chat._pending_intro (truthy string)
+        # turn.py checks: text.startswith("## Intro speaks") for role tagging
+        assert result.startswith("## Intro speaks")
+        assert len(result) > 0
 
 
 # ---------------------------------------------------------------------------
-# Tests: suggest (the Ollama call)
+# Tests: suggest (with mocked Ollama)
 # ---------------------------------------------------------------------------
 
 
 class TestSuggest:
-    async def test_suggest_returns_empty_when_ollama_url_missing(self):
-        with patch("alpha_app.suggest.OLLAMA_URL", ""):
-            result = await suggest("hello", "hi there")
-            assert result == []
+    @pytest.mark.asyncio
+    async def test_suggest_returns_empty_when_ollama_url_missing(self, monkeypatch):
+        """When OLLAMA_URL is empty, suggest returns empty without calling anything."""
+        monkeypatch.setattr("alpha_app.suggest.OLLAMA_URL", "")
+        result = await suggest("hello", "hi there")
+        assert result == []
 
-    async def test_suggest_returns_empty_when_model_missing(self):
-        with patch("alpha_app.suggest.OLLAMA_CHAT_MODEL", ""):
-            result = await suggest("hello", "hi there")
-            assert result == []
+    @pytest.mark.asyncio
+    async def test_suggest_returns_empty_when_model_missing(self, monkeypatch):
+        """When OLLAMA_CHAT_MODEL is empty, suggest returns empty."""
+        monkeypatch.setattr("alpha_app.suggest.OLLAMA_CHAT_MODEL", "")
+        result = await suggest("hello", "hi there")
+        assert result == []

@@ -13,7 +13,6 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { ArrowUp, Square, Copy, Check } from "lucide-react";
 import { ToolFallback } from "../components/ToolFallback";
 import { MemoryCard } from "../components/MemoryCard";
-import { StreamingBar } from "../components/StreamingBar";
 import { MemoryNote } from "../components/tools/MemoryNote";
 import {
   ComposerAttachments,
@@ -146,17 +145,6 @@ const AssistantMessage = () => {
   const message = useMessage();
   const [copied, setCopied] = useState(false);
 
-  // Only show the streaming bar on the last assistant message
-  const messages = useWorkshopStore((s) => s.messages);
-  const isLastAssistant = (() => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role === "assistant") {
-        return messages[i].id === message.id;
-      }
-    }
-    return false;
-  })();
-
   const handleCopy = async () => {
     const rawText = (message.content as Array<{ type: string; text?: string }>)
       .filter((p) => p.type === "text" && p.text)
@@ -183,8 +171,6 @@ const AssistantMessage = () => {
           }}
         />
       </div>
-      {/* Streaming bar — breathing feather, last assistant message only */}
-      {isLastAssistant && <StreamingBar />}
       <div className="mt-1 opacity-0 group-hover/assistant:opacity-100 transition-opacity">
         <button
           onClick={handleCopy}

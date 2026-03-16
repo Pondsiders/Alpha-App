@@ -107,13 +107,6 @@ def _parse_memorables(text: str) -> list[str]:
 
     text = text.strip()
 
-    # Strip markdown code fences — some models wrap JSON in ```json ... ```
-    if text.startswith("```"):
-        lines = text.split("\n")
-        # Remove first line (```json or ```) and last line (```)
-        lines = [l for l in lines if not l.strip().startswith("```")]
-        text = "\n".join(lines).strip()
-
     try:
         parsed = json.loads(text)
 
@@ -132,23 +125,18 @@ def _parse_memorables(text: str) -> list[str]:
         return []
 
 
-def format_suggest_prompt(memorables: list[str]) -> str | None:
-    """Format a list of memorables as a suggest prompt for the Chat.
+def format_intro_block(memorables: list[str]) -> str | None:
+    """Format a list of memorables as an Intro speaks block.
 
-    The prompt instructs Alpha to call cortex.store for each memorable
-    and then stop. No commentary, no text output — just tool calls.
-
-    Returns None if the list is empty (nothing to suggest).
+    Returns None if the list is empty (nothing to say).
     """
     if not memorables:
         return None
 
     lines = "\n".join(f"- {m}" for m in memorables)
     return (
-        "[Narrator] The following moments from the previous turn may be worth remembering. "
-        "For each one you agree is worth storing, call cortex.store. "
-        "Do not write any text. Do not respond to the human. "
-        "Just store what matters and stop.\n\n"
+        "## Intro speaks\n\n"
+        "Alpha, consider storing these from the previous turn:\n"
         f"{lines}"
     )
 
@@ -192,21 +180,9 @@ async def _call_llm(user_content: str, assistant_content: str) -> list[str]:
                         ],
                         "stream": False,
                         "think": False,
-                        # Schema-based structured output. The string "json"
-                        # is ignored when think=False (Ollama bug #14645).
-                        # A full JSON schema forces valid output.
-                        "format": {
-                            "type": "object",
-                            "properties": {
-                                "memorables": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                },
-                            },
-                            "required": ["memorables"],
-                        },
+                        "format": "json",
                         "keep_alive": -1,
-                        "options": {"num_ctx": 8192, "temperature": 0},
+                        "options": {"num_ctx": 8192},
                     },
                 )
                 response.raise_for_status()

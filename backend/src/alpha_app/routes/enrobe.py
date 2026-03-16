@@ -135,9 +135,10 @@ async def enrobe(
         )
         chat._needs_orientation = False
 
-    # 2. Intro memorables — now sent directly as async suggest turns.
-    #    The _pending_intro stash is no longer used. Suggest sends a
-    #    source="suggest" turn directly to the Chat instead.
+    # 2. Intro memorables from previous turn
+    if chat._pending_intro:
+        msg.intro = chat._pending_intro
+        chat._pending_intro = None
 
     # 3. Timestamp — computed instantly, broadcast immediately
     #    User story: timestamp appears basically instantly after send.
