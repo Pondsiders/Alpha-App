@@ -26,12 +26,22 @@ import {
 // ---------------------------------------------------------------------------
 
 const REPLAY_BUFFERED_EVENTS = new Set([
-  "user-message", "assistant-message", "text-delta", "thinking-delta", "tool-call", "tool-result", "done",
+  "user-message", "assistant-message", "text-delta", "thinking-delta",
+  "tool-call", "tool-result", "done",
+  "chat-state", "context-update",  // Ephemeral runtime state — stale on replay
 ]);
 
-function processReplayBuffer(events: ServerEvent[]): Message[] {
+interface ReplayResult {
+  messages: Message[];
+  tokenCount?: number;
+  contextWindow?: number;
+}
+
+function processReplayBuffer(events: ServerEvent[]): ReplayResult {
   const messages: Message[] = [];
   let currentAssistant: Message | null = null;
+  let lastTokenCount: number | undefined;
+  let lastContextWindow: number | undefined;
 
   for (const event of events) {
     switch (event.type) {
@@ -144,7 +154,10 @@ function processReplayBuffer(events: ServerEvent[]): Message[] {
       case "assistant-message": {
         // Coalesced assistant message — complete, all parts in order.
         // This is the primary replay path. Deltas are ephemeral (not stored).
+        // Also carries context window info for the meter.
         const amData = event.data as {
+          tokenCount?: number;
+          contextWindow?: number;
           parts?: Array<{
             type: string;
             text?: string;
@@ -178,6 +191,8 @@ function processReplayBuffer(events: ServerEvent[]): Message[] {
           content: amContent,
           createdAt: new Date(),
         });
+        if (amData.tokenCount !== undefined) lastTokenCount = amData.tokenCount;
+        if (amData.contextWindow !== undefined) lastContextWindow = amData.contextWindow;
         currentAssistant = null;
         break;
       }
@@ -188,7 +203,7 @@ function processReplayBuffer(events: ServerEvent[]): Message[] {
     }
   }
 
-  return messages;
+  return { messages, tokenCount: lastTokenCount, contextWindow: lastContextWindow };
 }
 
 // ---------------------------------------------------------------------------
@@ -317,6 +332,7 @@ function Layout() {
 
       case "chat-state": {
         if (!eChatId) break;
+        if (useWorkshopStore.getState().isReplaying) break;
         const data = event.data as {
           state: string;
           title?: string;
@@ -456,6 +472,7 @@ function Layout() {
 
       case "context-update": {
         if (!eChatId) break;
+        if (useWorkshopStore.getState().isReplaying) break;
         const ctx = event.data as { tokenCount: number; tokenLimit: number };
         actions.updateChatTokens(eChatId, ctx.tokenCount, ctx.tokenLimit);
         break;
@@ -494,8 +511,12 @@ function Layout() {
           const buffer = replayBuffersRef.current[eChatId];
           if (buffer !== undefined) {
             delete replayBuffersRef.current[eChatId];
-            const msgs = processReplayBuffer(buffer);
+            const { messages: msgs, tokenCount, contextWindow } = processReplayBuffer(buffer);
             actions.loadMessages(eChatId, msgs);
+            // Sync context meter from the last assistant-message's token info
+            if (tokenCount !== undefined && contextWindow !== undefined) {
+              actions.updateChatTokens(eChatId, tokenCount, contextWindow);
+            }
           }
         }
         actions.setReplaying(false);

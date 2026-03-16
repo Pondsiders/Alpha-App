@@ -47,17 +47,9 @@ async def _check_approach_light(
 
     if current_tokens != last_token_count:
         last_token_count = current_tokens
-        try:
-            await broadcast(connections, {
-                "type": "context-update",
-                "chatId": chat_id,
-                "data": {
-                    "tokenCount": current_tokens,
-                    "tokenLimit": chat.context_window,
-                },
-            })
-        except Exception:
-            pass
+
+        # Context meter updates ride on the coalesced assistant-message event.
+        # No separate context-update broadcast needed.
 
         threshold = chat.check_approach_threshold()
         if threshold is not None:
@@ -181,12 +173,17 @@ async def stream_chat_events(connections: set, chat: Chat, span=None) -> str:
                 if span:
                     set_turn_span_response(span, chat, event, output_parts)
 
-                # Emit the coalesced assistant-message (persisted for replay)
+                # Emit the coalesced assistant-message (persisted for replay).
+                # Includes context window info so the frontend can sync the meter.
                 if wire_parts:
                     await broadcast(connections, {
                         "type": "assistant-message",
                         "chatId": chat_id,
-                        "data": {"parts": wire_parts},
+                        "data": {
+                            "parts": wire_parts,
+                            "tokenCount": chat.token_count,
+                            "contextWindow": chat.context_window,
+                        },
                     })
 
                 await broadcast(connections, {
@@ -200,7 +197,7 @@ async def stream_chat_events(connections: set, chat: Chat, span=None) -> str:
                         "tokenCount": chat.token_count,
                         "contextWindow": chat.context_window,
                     },
-                })
+                }, persist=False)
 
                 turn_completed = True
                 break
