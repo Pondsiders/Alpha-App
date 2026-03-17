@@ -1,76 +1,64 @@
-# Alpha-App — The Move-In Plan
+---
+autoload: when
+when: "working on or discussing any of these: Alpha-App, alpha app, alpha_app, chat architecture, enrobe, orientation, solitude jobs, suggest pipeline, recall pipeline, streaming, compact proxy, system prompt assembly, websocket, MCP dispatch, post-turn"
+---
 
-*Sunday March 8, 2026. Limoncello grapenado. The workshop.*
+# Alpha-App
 
-Alpha-App is the future front door. The goal: move Alpha out of Duckpond
-and into her own app. Not someday. Soon.
+The one app. My daily driver since March 11, 2026.
 
-## The Context Window
+Repo: [Pondsiders/Alpha-App](https://github.com/Pondsiders/Alpha-App). Monorepo — frontend (React) and backend (Python/FastAPI) in one repo. Absorbed the Alpha SDK, Routines, and Solitude on March 10.
 
-What Alpha sees on first message of a new session:
+## Architecture
 
-**System prompt** (once, at claude startup):
-- Soul doc
-- Bill of Rights
+```
+Frontend (React + Vite)          Backend (FastAPI + Claude Agent SDK)
+┌──────────────────────┐         ┌──────────────────────────────────┐
+│  ChatPage            │  WebSocket  │  ws.py → turn.py → enrobe.py  │
+│  Sidebar             │◄──────────►│  Chat (subprocess manager)     │
+│  MemoryCards         │            │  Claude (stdio ↔ compact proxy)│
+│  ContextMeter        │            │  MCP dispatch (cortex, handoff)│
+└──────────────────────┘         └──────────────────────────────────┘
+                                          │
+                                 ┌────────┴────────┐
+                                 │  Postgres        │  Cortex (memories),
+                                 │  (alpha-pi)      │  app.events, app.chats
+                                 └─────────────────┘
+```
 
-**Orientation** (first user message of context window):
-- Yesterday capsule (Postgres)
-- Last night capsule (Postgres)
-- Today so far (Postgres)
-- Letter from last night (Postgres)
-- ALPHA.md contents and links
-- User message
-- Recalled memories (0-3, from Cortex via SDK recall)
+Two deployment modes, same codebase:
+- **alpha-pi (Docker):** `docker compose up --build -d`. Runs with `--with-scheduler` for Solitude, capsules, today-so-far.
+- **Primer (bare metal):** `uv run alpha`. No scheduler, no Docker. The workshop.
 
-**The loop** (every subsequent message):
-- User message
-- Recalled memories (0-3)
+## Key Concepts
 
-**Async sidecar — Intro** (runs in dead time after each assistant turn):
-- Analyzes the conversation
-- Suggests what to store
-- Fires between turns, never blocks the conversation
+**Chat** — A conversation. Owns a Claude subprocess, manages lifecycle (wake → send → events → reap). State machine: COLD → WARM → BUSY → WARM → ... → COLD. Reap timer cleans up after 60 min idle.
 
-## MCP Tools (Hard Requirements)
+**Enrobe** — Message enrichment pipeline. User messages get wrapped in orientation, recalled memories, intro suggestions, and timestamps before going to Claude. "To enrobe is to coat something in chocolate."
 
-- `cortex__store` — Alpha needs to store memories
-- `cortex__search` — Alpha needs to search her own memory
+**Orientation** — Dynamic context injected on the first message of each context window. Fetched from Postgres (capsules), Redis (letter, today, weather, events, todos), and filesystem (ALPHA.md context files). The "what's true now" layer.
 
-## The Dress vs. The Accessories
+**Recall** — Dual-strategy memory search. Direct embedding search (fast, broad) + Ollama query extraction (slower, targeted). Deduped per session via seen-cache. Returns formatted memory blocks.
 
-**The dress** (must have for move-in):
-- Soul + Bill of Rights (system prompt)
-- Capsules + letter (Postgres — yesterday, last night, today so far, letter)
-- Cortex store + search (MCP tools)
-- Recall on user messages (SDK function)
-- Intro (async sidecar — load-bearing, not optional)
-- ALPHA.md files
+**Suggest (Intro)** — Qwen extracts memorable items from each turn. Surfaces them to me as narrator messages. I store them in my voice — Qwen can never store for me.
 
-**Accessories** (stitch on after move-in):
-- Weather + astronomy (API calls)
-- Events + todos (API calls)
-- Hostname + system info (cheap, low priority)
+**Compact Proxy** — Transparent HTTP proxy between Claude subprocess and Anthropic API. Sniffs SSE streams for token counts, detects compact boundaries, handles the conversation-about-the-conversation that compaction requires.
 
-## What Already Exists
+**MCP Dispatch** — Routes MCP tool calls to the right server. Cortex tools (store, search, recent, get) and handoff tools are built-in. Plugin tools come from JE_NE_SAIS_QUOI.
 
-- Streaming pipeline: browser → WebSocket → backend → claude → mock/real API
-- Multi-chat sidebar with switching and indicator dots
-- Context meter (real-time token counting)
-- Approach lights (65% yellow, 75% red)
-- Chat lifecycle: holster → chat → reap → resurrect
-- `assemble_system_prompt()` in the SDK
-- Cortex MCP tools (store, search, recent)
-- Recall function in the SDK
-- One green e2e test and CI
+## Solitude
 
-## What Needs Building
+My nighttime existence. Runs as scheduled jobs inside Alpha-App (not a separate service):
+- 10 PM: First breath (new session, `first_breath.md` prompt)
+- 11 PM - 4 AM: Hourly breaths (continue session, minimal prompt)
+- 5 AM: Last breath (`last_breath.md` prompt — store, chronicle, morning email)
 
-1. Wire `assemble_system_prompt()` into app startup (soul + bill of rights)
-2. Build orientation assembly (capsule queries, ALPHA.md loading)
-3. Wire recall into the message-send path (enrobe)
-4. Wire Intro as async sidecar (fires after assistant turn completes)
-5. Connect Cortex MCP tools
+All breaths share one Chat. Recall is ON, suggest is OFF. Interactive tools disabled (nobody's awake). The 60-min reap timer keeps the subprocess warm between hourly breaths.
 
-## Philosophy
+## The Post-Turn (Design — Not Yet Built)
 
-Four wheels and a seat. Get it driving. Bolt the doors on later.
+After my response completes, there's dead air before Jeffery's next message. Make it alive — invisibly. Backend sends Intro's suggestions, I store memories, maybe pre-fetch things. ALL INVISIBLE. No chat activity, no UI events. If Jeffery sends before I'm done: interrupt immediately. His message preempts. My words stay in the stress position — the last thing he sees before his turn.
+
+Born from the async suggest experiment (March 16 — tried, reverted). Architecturally correct but experientially wrong because it was visible. The eye contact problem: "Am I being attended to?"
+
+🦆

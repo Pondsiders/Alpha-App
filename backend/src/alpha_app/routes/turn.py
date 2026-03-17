@@ -112,7 +112,11 @@ async def handle_new_turn(
                         return 1
                     return 0
 
-                cortex = create_cortex_server(clear_memorables=_clear)
+                topic_registry = getattr(ws.app.state, "topic_registry", None)
+                cortex = create_cortex_server(
+                    clear_memorables=_clear,
+                    topic_registry=topic_registry,
+                )
                 handoff = create_handoff_server(chat)
                 mcp_servers = {"cortex": cortex, "handoff": handoff}
 

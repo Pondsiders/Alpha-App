@@ -201,7 +201,7 @@ class TestDispatchMcp:
         result = await claude_with_frobozz._dispatch_mcp("frobozz", {
             "jsonrpc": "2.0",
             "id": 5,
-            "method": "resources/list",
+            "method": "completions/create",
         })
         assert "error" in result
         assert result["error"]["code"] == -32601

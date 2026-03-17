@@ -21,12 +21,15 @@ Prompts live in /Pondside/Alpha-Home/Alpha/prompts/solitude/ — editable
 living documents that Solitude-me can modify during the night.
 """
 
+import json
+
 import logfire
 import pendulum
 
 from alpha_app import AssistantEvent, ResultEvent, SystemEvent
 from alpha_app.chat import Chat, ConversationState
 from alpha_app.routes.enrobe import enrobe
+from alpha_app.routes.spans import format_input_messages, format_output_messages
 from alpha_app.tools import create_cortex_server, create_handoff_server
 
 PACIFIC = "America/Los_Angeles"
@@ -68,7 +71,7 @@ def _set_solitude_chat(app, chat: Chat | None) -> None:
     app.state.solitude_chat = chat
 
 
-def _create_mcp_servers(chat: Chat) -> dict:
+def _create_mcp_servers(chat: Chat, app=None) -> dict:
     """Create MCP tool servers for Solitude.
 
     Same tools as the browser UI — cortex for memories, handoff for
@@ -81,8 +84,12 @@ def _create_mcp_servers(chat: Chat) -> dict:
             return 1
         return 0
 
+    topic_registry = getattr(app.state, "topic_registry", None) if app else None
     return {
-        "cortex": create_cortex_server(clear_memorables=_clear),
+        "cortex": create_cortex_server(
+            clear_memorables=_clear,
+            topic_registry=topic_registry,
+        ),
         "handoff": create_handoff_server(chat),
     }
 
@@ -107,12 +114,24 @@ async def _send_breath(
     # Enrobe: orientation + recall (no suggest, no broadcast)
     result = await enrobe(content, chat=chat)
 
+    # Set input attributes on the span — what we're sending to Claude
+    system_prompt = chat._system_prompt or ""
+    if system_prompt:
+        span.set_attribute("gen_ai.system_instructions", json.dumps([
+            {"type": "text", "content": system_prompt},
+        ]))
+    span.set_attribute("gen_ai.input.messages", json.dumps(
+        format_input_messages(result.content)
+    ))
+
     # begin_turn + send
     chat.begin_turn(content)
     await chat.send(result.content)
 
-    # Collect response
-    output_parts: list[str] = []
+    # Collect response — full content blocks for observability,
+    # text parts for the return value
+    text_parts: list[str] = []
+    output_blocks: list[dict] = []
     async for event in chat.events():
         if isinstance(event, SystemEvent) and event.subtype == "compact_boundary":
             chat._needs_orientation = True
@@ -122,17 +141,21 @@ async def _send_breath(
             )
         elif isinstance(event, AssistantEvent):
             for block in event.content:
+                output_blocks.append(block)
                 if block.get("type") == "text" and block.get("text"):
-                    output_parts.append(block["text"])
+                    text_parts.append(block["text"])
         elif isinstance(event, ResultEvent):
             if event.session_id:
                 chat.session_uuid = event.session_id
             span.set_attribute("gen_ai.usage.input_tokens", chat.total_input_tokens)
             span.set_attribute("gen_ai.usage.output_tokens", chat.output_tokens)
             span.set_attribute("gen_ai.response.model", chat.response_model or "")
+            span.set_attribute("gen_ai.output.messages", json.dumps(
+                format_output_messages(output_blocks)
+            ))
             break
 
-    return "".join(output_parts).strip()
+    return "".join(text_parts).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +189,7 @@ async def run_first(app, **kwargs) -> str | None:
         chat = Chat(id="solitude")
         chat._system_prompt = app.state.system_prompt
 
-        mcp_servers = _create_mcp_servers(chat)
+        mcp_servers = _create_mcp_servers(chat, app=app)
 
         await chat.wake(
             system_prompt=app.state.system_prompt,
@@ -214,7 +237,7 @@ async def run_breath(app, **kwargs) -> str | None:
         # Resurrect if the subprocess was reaped between breaths
         if chat.state == ConversationState.COLD:
             logfire.info("solitude: resurrecting from COLD")
-            mcp_servers = _create_mcp_servers(chat)
+            mcp_servers = _create_mcp_servers(chat, app=app)
             await chat.resurrect(
                 system_prompt=app.state.system_prompt,
                 mcp_servers=mcp_servers,
@@ -255,7 +278,7 @@ async def run_last(app, **kwargs) -> str | None:
         # Resurrect if needed
         if chat.state == ConversationState.COLD:
             logfire.info("solitude: resurrecting for last breath")
-            mcp_servers = _create_mcp_servers(chat)
+            mcp_servers = _create_mcp_servers(chat, app=app)
             await chat.resurrect(
                 system_prompt=app.state.system_prompt,
                 mcp_servers=mcp_servers,

@@ -20,11 +20,13 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from alpha_app import assemble_system_prompt
+from alpha_app.constants import JE_NE_SAIS_QUOI
 from alpha_app.system_prompt import load_compact_config
 from alpha_app.memories import init_schema as init_cortex_schema, close as close_cortex
 from alpha_app.chat import Chat, ConversationState
 from alpha_app.db import init_pool, close_pool
 from alpha_app.routes.ws import router as ws_router
+from alpha_app.topics import TopicRegistry
 
 # Observability — one place to look for everything.
 # The valve: LOGFIRE_MIN_LEVEL controls what reaches the dashboard.
@@ -47,6 +49,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:
         pass  # Non-fatal — Cortex tools degrade gracefully without schema
 
+    # Discover topics
+    topics_dir = JE_NE_SAIS_QUOI / "topics"
+    topic_registry = TopicRegistry(topics_dir)
+    topic_registry.scan()
+
     try:
         soul = await assemble_system_prompt()
     except (RuntimeError, FileNotFoundError):
@@ -62,6 +69,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.connections = set()  # set[WebSocket] — all live WS connections (the switch)
     app.state.system_prompt = soul  # Stored for resurrection
     app.state.compact_config = compact_config  # Stored for Claude creation
+    app.state.topic_registry = topic_registry  # Stored for MCP tool + enrobe
 
     # Scheduler — only when --with-scheduler is set (alpha-pi Docker, not Primer bare metal)
     scheduler = None

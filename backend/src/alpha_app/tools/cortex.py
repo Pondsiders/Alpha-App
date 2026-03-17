@@ -11,7 +11,9 @@ Usage:
     # Pass to Claude(mcp_servers={"cortex": server})
 """
 
-from typing import Callable
+from __future__ import annotations
+
+from typing import Callable, TYPE_CHECKING
 
 from mcp.server.fastmcp import FastMCP
 
@@ -22,9 +24,13 @@ from ..memories.cortex import (
     get as cortex_get,
 )
 
+if TYPE_CHECKING:
+    from ..topics import TopicRegistry
+
 
 def create_cortex_server(
     clear_memorables: Callable[[], int] | None = None,
+    topic_registry: TopicRegistry | None = None,
 ) -> FastMCP:
     """Create the Cortex MCP server.
 
@@ -131,5 +137,34 @@ def create_cortex_server(
         result += image_flag
 
         return result
+
+    # -- Topic context tool --
+    if topic_registry is not None:
+        _registry = topic_registry  # close over for the tool
+
+        @server.tool(
+            description=(
+                "Get topic context. Load architecture docs, current state, "
+                "and relevant details for a topic. "
+                "Call list_topics first to see what's available."
+            ),
+        )
+        def topic_context(topic: str) -> str:
+            """Load context for a topic."""
+            context = _registry.get_context(topic)
+            if context is None:
+                available = ", ".join(_registry.list_topics())
+                return f"Unknown topic: '{topic}'. Available: {available}"
+            return context
+
+        @server.tool(
+            description="List available project topics for context loading.",
+        )
+        def list_topics() -> str:
+            """List all available topics."""
+            topics = _registry.list_topics()
+            if not topics:
+                return "No topics available."
+            return "Available topics: " + ", ".join(topics)
 
     return server

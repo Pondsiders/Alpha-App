@@ -28,7 +28,15 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 import logfire
-from mcp.types import CallToolRequest, CallToolRequestParams, ListToolsRequest
+from mcp.types import (
+    CallToolRequest,
+    CallToolRequestParams,
+    ListResourcesRequest,
+    ListResourceTemplatesRequest,
+    ListToolsRequest,
+    ReadResourceRequest,
+    ReadResourceRequestParams,
+)
 
 from .proxy import CompactConfig, _Proxy
 
@@ -603,7 +611,7 @@ class Claude:
                     "id": msg_id,
                     "result": {
                         "protocolVersion": "2024-11-05",
-                        "capabilities": {"tools": {}},
+                        "capabilities": {"tools": {}, "resources": {}},
                         "serverInfo": {
                             "name": server_instance.name,
                             "version": "1.0.0",
@@ -669,6 +677,80 @@ class Claude:
                     "jsonrpc": "2.0",
                     "id": msg_id,
                     "result": response_data,
+                }
+
+            elif method == "resources/list":
+                handler = low_level.request_handlers.get(ListResourcesRequest)
+                if not handler:
+                    return {
+                        "jsonrpc": "2.0",
+                        "id": msg_id,
+                        "result": {"resources": []},
+                    }
+                result = await handler(ListResourcesRequest(method=method))
+                resources_data = [
+                    {
+                        "uri": str(r.uri),
+                        "name": r.name or "",
+                        "description": r.description or "",
+                        "mimeType": r.mimeType or "text/plain",
+                    }
+                    for r in result.root.resources
+                ]
+                return {
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "result": {"resources": resources_data},
+                }
+
+            elif method == "resources/templates/list":
+                handler = low_level.request_handlers.get(ListResourceTemplatesRequest)
+                if not handler:
+                    return {
+                        "jsonrpc": "2.0",
+                        "id": msg_id,
+                        "result": {"resourceTemplates": []},
+                    }
+                result = await handler(ListResourceTemplatesRequest(method=method))
+                templates_data = [
+                    {
+                        "uriTemplate": str(t.uriTemplate),
+                        "name": t.name or "",
+                        "description": t.description or "",
+                        "mimeType": t.mimeType or "text/plain",
+                    }
+                    for t in result.root.resourceTemplates
+                ]
+                return {
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "result": {"resourceTemplates": templates_data},
+                }
+
+            elif method == "resources/read":
+                handler = low_level.request_handlers.get(ReadResourceRequest)
+                if not handler:
+                    raise Exception("No resources/read handler registered")
+                result = await handler(ReadResourceRequest(
+                    method=method,
+                    params=ReadResourceRequestParams(
+                        uri=params.get("uri"),
+                    ),
+                ))
+                contents = []
+                for item in result.root.contents:
+                    content_item = {"uri": str(item.uri)}
+                    if hasattr(item, "text") and item.text is not None:
+                        content_item["text"] = item.text
+                        content_item["mimeType"] = getattr(item, "mimeType", "text/plain")
+                    elif hasattr(item, "blob") and item.blob is not None:
+                        content_item["blob"] = item.blob
+                        content_item["mimeType"] = getattr(item, "mimeType", "application/octet-stream")
+                    contents.append(content_item)
+                return {
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "result": {"contents": contents},
                 }
 
             else:
