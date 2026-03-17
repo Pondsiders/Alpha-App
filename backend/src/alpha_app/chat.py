@@ -141,6 +141,10 @@ class Chat:
         self._crossed_yellow: bool = False
         self._crossed_red: bool = False
 
+        # Topic injection tracking — which topics have been injected this
+        # context window. Reset on compaction/resurrection (new window).
+        self._injected_topics: set[str] = set()
+
         # Broadcast callback — called after reap so all clients see the state change.
         # Set externally by the WS handler. Signature: async (chat_id: str) -> None.
         self.on_reap: Callable[[str], Awaitable[None]] | None = None
@@ -382,6 +386,7 @@ class Chat:
 
             self.state = ConversationState.READY
             self._needs_orientation = True
+            self._injected_topics = set()
             self._start_reap_timer()
         except Exception:
             self.state = ConversationState.COLD
@@ -423,6 +428,7 @@ class Chat:
             self._crossed_yellow = False
             self._crossed_red = False
             self._needs_orientation = False
+            self._injected_topics = set()
             self._start_reap_timer()
 
         except Exception:

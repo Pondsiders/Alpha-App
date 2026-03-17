@@ -102,6 +102,7 @@ async def websocket_chat(ws: WebSocket) -> None:
                 chat_id = raw.get("chatId", "")
                 raw_content = raw.get("content", "")
                 message_id = raw.get("messageId")  # Frontend-generated ID for reconciliation
+                topics = raw.get("topics", [])      # Topic names to inject
 
                 if not chat_id:
                     await ws.send_json({"type": "error", "data": "Missing chatId"})
@@ -129,7 +130,7 @@ async def websocket_chat(ws: WebSocket) -> None:
                     # after enrobe, so the stored event carries enriched+tagged content
                     task = asyncio.create_task(
                         handle_new_turn(ws, connections, chat, content, turn_input_messages, streaming_tasks,
-                                        msg_id=message_id)
+                                        msg_id=message_id, topics=topics)
                     )
                     streaming_tasks[chat_id] = task
 

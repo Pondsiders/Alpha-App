@@ -108,6 +108,7 @@ async def stream_chat_events(connections: set, chat: Chat, span=None) -> str:
 
             if isinstance(event, SystemEvent) and event.subtype == "compact_boundary":
                 chat._needs_orientation = True
+                chat._injected_topics = set()
                 logfire.info(
                     "compact_boundary detected",
                     chat_id=chat_id,

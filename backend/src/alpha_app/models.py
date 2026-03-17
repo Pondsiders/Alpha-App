@@ -97,6 +97,8 @@ class UserMessage:
     orientation: Orientation | None = None    # First turn only
     intro: str | None = None                  # Intro memorables from previous turn
     memories: list[RecalledMemory] = field(default_factory=list)
+    topic_context: str | None = None          # Injected topic context
+    topic_names: list[str] = field(default_factory=list)  # Which topics were injected
 
     @staticmethod
     def _to_display_block(block: dict) -> dict:
@@ -128,6 +130,7 @@ class UserMessage:
             "content": [self._to_display_block(b) for b in self.content],
             "timestamp": self.timestamp,
             "memories": [m.to_wire() for m in self.memories] if self.memories else None,
+            "topics": self.topic_names if self.topic_names else None,
         }
         if self.orientation:
             wire["orientation"] = self.orientation.to_wire()
@@ -158,5 +161,9 @@ class UserMessage:
         # Memories — after user content
         for mem in self.memories:
             blocks.append({"type": "text", "text": mem.to_context()})
+
+        # Topic context — after memories
+        if self.topic_context:
+            blocks.append({"type": "text", "text": self.topic_context})
 
         return blocks

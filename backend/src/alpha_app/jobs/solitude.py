@@ -135,6 +135,7 @@ async def _send_breath(
     async for event in chat.events():
         if isinstance(event, SystemEvent) and event.subtype == "compact_boundary":
             chat._needs_orientation = True
+            chat._injected_topics = set()
             logfire.info(
                 "solitude: compact_boundary detected",
                 breath_type=breath_type,

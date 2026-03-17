@@ -37,6 +37,7 @@ from alpha_app.sources import fetch_all_orientation
 
 if TYPE_CHECKING:
     from alpha_app.chat import Chat
+    from alpha_app.topics import TopicRegistry
 
 
 @dataclass
@@ -82,6 +83,8 @@ async def enrobe(
     chat: "Chat",
     source: str = "human",
     msg_id: str | None = None,
+    topics: list[str] | None = None,
+    topic_registry: "TopicRegistry | None" = None,
 ) -> EnrobeResult:
     """Enrich a user message with context.
 
@@ -162,6 +165,21 @@ async def enrobe(
                     formatted=formatted,
                 ))
             events.append(_snapshot())
+
+    # 5. Topic context — inject if requested and not already in this window
+    if topics and topic_registry:
+        new_topics = [t for t in topics if t not in chat._injected_topics]
+        if new_topics:
+            context_parts = []
+            for topic_name in new_topics:
+                ctx = topic_registry.get_context(topic_name)
+                if ctx:
+                    context_parts.append(ctx)
+                    chat._injected_topics.add(topic_name)
+            if context_parts:
+                msg.topic_context = "\n\n---\n\n".join(context_parts)
+                msg.topic_names = new_topics
+                events.append(_snapshot())
 
     # Build final content blocks for Claude
     final_content = msg.to_content_blocks()

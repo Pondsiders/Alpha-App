@@ -64,6 +64,7 @@ async def handle_new_turn(
     broadcast_user_message: bool = True,
     source: str = "human",
     msg_id: str | None = None,
+    topics: list[str] | None = None,
 ) -> None:
     """Handle a new turn: resurrect if needed, enrobe, send, stream events.
 
@@ -180,7 +181,11 @@ async def handle_new_turn(
             })
 
             # -- Enrobe: wrap user message in enrichment -------------------
-            result = await enrobe(content, chat=chat, source=source, msg_id=msg_id)
+            topic_registry = getattr(ws.app.state, "topic_registry", None)
+            result = await enrobe(
+                content, chat=chat, source=source, msg_id=msg_id,
+                topics=topics, topic_registry=topic_registry,
+            )
 
             # Update Logfire with what Claude actually sees (enriched, not raw)
             enriched_messages = format_input_messages(result.content)
