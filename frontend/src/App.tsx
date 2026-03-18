@@ -514,7 +514,6 @@ function Layout() {
       case "chat-data": {
         // The "gimme the fucking chat" response. One payload, all messages + metadata.
         if (!eChatId) break;
-        console.log("[chat-data] received for", eChatId, "topics:", (event.data as Record<string, unknown>).metadata);
         const chatData = event.data as {
           messages: Array<{ role: string; data: Record<string, unknown> }>;
           metadata: {

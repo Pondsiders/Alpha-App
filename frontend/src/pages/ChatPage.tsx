@@ -273,7 +273,6 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
   // Topic states come from chat-state events as { "alpha-app": "on", "intake": "off" }.
   // The backend's TopicRegistry scans the filesystem; Chat tracks injection.
   const backendTopics = activeChat?.topics ?? {};
-  console.log("[Topics] render:", JSON.stringify(backendTopics), "activeChat?.topics:", activeChat?.topics);
   const [armedTopics, setArmedTopics] = useState<Set<string>>(new Set());
 
   const topicPills = Object.entries(backendTopics).map(([name, backendState]) => ({

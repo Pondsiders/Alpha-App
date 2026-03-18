@@ -79,7 +79,7 @@ class Topic:
                 spec.loader.exec_module(module)
                 self._module = module
                 self._module_mtime = current_mtime
-                logfire.info(
+                logfire.debug(
                     f"topics: loaded dynamic module for '{self.name}'",
                     topic=self.name,
                 )
@@ -169,7 +169,7 @@ class TopicRegistry:
             if name not in discovered:
                 del self._topics[name]
 
-        logfire.info(
+        logfire.debug(
             f"topics: scanned {len(discovered)} topic(s): {', '.join(discovered)}",
         )
         return discovered
