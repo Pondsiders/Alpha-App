@@ -323,6 +323,24 @@ async def search_memories_by_embedding(
         ]
 
 
+async def count_memories_containing(name: str) -> int:
+    """Count how many memories contain a name (word-boundary, case-insensitive).
+
+    Used for IDF computation: IDF = log(total / count).
+    A high count means the name is common (low IDF, less informative).
+    A low count means the name is rare (high IDF, very informative).
+    """
+    pool = await get_pool()
+    import re
+    regex_safe = re.sub(r'([.*+?^${}()|[\]\\])', r'\\\1', name)
+
+    async with pool.acquire() as conn:
+        return await conn.fetchval(
+            "SELECT count(*) FROM cortex.memories WHERE NOT forgotten AND content ~* ('\\m' || $1 || '\\M')",
+            regex_safe,
+        )
+
+
 async def search_memories_by_name(
     name: str,
     limit: int = 1,

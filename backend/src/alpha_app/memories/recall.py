@@ -1,28 +1,32 @@
 """Associative recall — what sounds familiar from this prompt?
 
-Dual-strategy search: semantic queries + proper name lookup.
+Dual-strategy search with unified IDF/cosine scoring.
 
 Pipeline:
   1. User message → Qwen 3.5 4B → {"queries": [...], "names": [...]}
   2. IN PARALLEL:
-     a. Batch embed queries → cosine search per query (semantic neighborhood)
-     b. Word-boundary name search per name (like an index in a book)
-  3. Merge, dedupe against session seen-cache
-  4. Format as ## Memory blocks for Claude injection
+     a. Batch embed queries (one Ollama call)
+     b. Compute IDF for each name → filter out IDF < 1.0 (too common)
+  3. IN PARALLEL:
+     a. Cosine search per query (score = cosine similarity, 0-1 range)
+     b. Name search per surviving name (score = IDF, 1.0+ range)
+  4. Merge all results, dedupe, sort by score descending
 
-The dual strategy uses each search type where it's strong:
-  - Cosine similarity for concepts, feelings, events ("empty-nest puppy")
-  - Word-boundary regex for proper nouns, place names ("Port Austin", "FastMCP")
+The IDF IS the score for name hits. Names that appear rarely (high IDF)
+rank above cosine hits. Names that appear everywhere (low IDF) get
+filtered out entirely. Cosine hits fill in the vibes. One unified
+ranking by informativeness.
 
-Progressive disclosure: each turn surfaces the top-1 unseen memory per
-query/name. The more you talk about a topic, the more memories surface.
-The conversation builds recall.
+Uncapped: the natural filters (IDF cutoff, seen-cache, deduplication)
+keep the count reasonable. Progressive disclosure across turns — the
+more you talk about a topic, the more memories surface.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import math
 from typing import Any
 
 import httpx
@@ -31,14 +35,15 @@ import pendulum
 
 from alpha_app.constants import OLLAMA_CHAT_MODEL, OLLAMA_URL
 
-from .cortex import search_by_embedding, search_by_name
+from .cortex import search_by_embedding, search_by_name, count_memories_containing
 from .embeddings import embed_queries_batch, EmbeddingError
 
-# -- Recall search parameters -------------------------------------------------
+# -- Constants -----------------------------------------------------------------
 
-_QUERY_LIMIT = 2     # Top N per extracted query (cosine)
-_NAME_LIMIT = 1      # Top N per name (word-boundary)
-_MIN_SCORE = 0.1     # Minimum cosine similarity threshold
+_QUERY_LIMIT = 2     # Top N per cosine query
+_NAME_LIMIT = 1      # Top N per name search
+_MIN_COSINE = 0.1    # Minimum cosine similarity threshold
+_MIN_IDF = 1.0       # Names with IDF below this are too common to search
 
 # -- Query extraction prompt ---------------------------------------------------
 
@@ -106,10 +111,7 @@ def clear_seen(session_id: str | None = None) -> None:
 # -- Query extraction (Ollama) ------------------------------------------------
 
 async def _extract_queries_and_names(message: str) -> tuple[list[str], list[str]]:
-    """Extract search queries AND proper names from a user message.
-
-    Returns (queries, names) — both may be empty.
-    """
+    """Extract search queries AND proper names from a user message."""
     if not OLLAMA_URL or not OLLAMA_CHAT_MODEL:
         return [], []
 
@@ -195,15 +197,40 @@ async def _extract_queries_and_names(message: str) -> tuple[list[str], list[str]
         return [], []
 
 
+# -- IDF computation -----------------------------------------------------------
+
+async def _compute_idf(name: str, total_memories: int) -> tuple[str, float]:
+    """Compute IDF for a name. Returns (name, idf_score)."""
+    try:
+        count = await count_memories_containing(name)
+        if count == 0:
+            # Name not found in any memory — maximum informativeness
+            # but also means the search will return nothing. Skip.
+            return name, 0.0
+        idf = math.log(total_memories / count)
+        return name, idf
+    except Exception:
+        return name, 0.0
+
+
+async def _get_total_memory_count() -> int:
+    """Get total number of non-forgotten memories for IDF denominator."""
+    from .db import get_pool
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetchval(
+            "SELECT count(*) FROM cortex.memories WHERE NOT forgotten"
+        )
+
+
 # -- Search strategies ---------------------------------------------------------
 
 async def _search_by_queries(
-    queries: list[str],
     embeddings: list[list[float]],
     exclude: list[int],
 ) -> list[dict[str, Any]]:
     """Cosine similarity search per query. Top-1 per query, deduped."""
-    if not queries or not embeddings:
+    if not embeddings:
         return []
 
     async def search_one(embedding: list[float]) -> dict[str, Any] | None:
@@ -211,7 +238,7 @@ async def _search_by_queries(
             embedding=embedding,
             limit=_QUERY_LIMIT,
             exclude=exclude,
-            min_score=_MIN_SCORE,
+            min_score=_MIN_COSINE,
         )
         return results[0] if results else None
 
@@ -228,25 +255,53 @@ async def _search_by_queries(
     return memories
 
 
-async def _search_by_names(
+async def _search_by_names_with_idf(
     names: list[str],
     exclude: list[int],
 ) -> list[dict[str, Any]]:
-    """Word-boundary name search. Top-1 per name, deduped."""
+    """Name search with IDF scoring. Filters out common names, scores rare ones."""
     if not names:
         return []
 
-    async def search_one(name: str) -> dict[str, Any] | None:
+    # Get total memory count for IDF denominator
+    total = await _get_total_memory_count()
+
+    # Compute IDF for all names in parallel
+    idf_tasks = [_compute_idf(name, total) for name in names]
+    idf_results = await asyncio.gather(*idf_tasks)
+
+    # Filter: keep only names with IDF >= threshold
+    informative_names = [
+        (name, idf) for name, idf in idf_results if idf >= _MIN_IDF
+    ]
+
+    logfire.debug(
+        "recall.idf: {filtered}/{total_names} names passed IDF filter",
+        filtered=len(informative_names),
+        total_names=len(names),
+        idf_scores={name: round(idf, 2) for name, idf in idf_results},
+    )
+
+    if not informative_names:
+        return []
+
+    # Search for each surviving name
+    async def search_one(name: str, idf: float) -> dict[str, Any] | None:
         results = await search_by_name(
             name=name,
             limit=_NAME_LIMIT,
             exclude=exclude,
         )
-        return results[0] if results else None
+        if results:
+            mem = results[0]
+            mem["score"] = idf  # Replace the binary 1.0 with the IDF score
+            return mem
+        return None
 
-    tasks = [search_one(name) for name in names]
+    tasks = [search_one(name, idf) for name, idf in informative_names]
     results = await asyncio.gather(*tasks)
 
+    # Dedupe within batch
     memories = []
     seen_in_batch = set(exclude)
     for mem in results:
@@ -290,15 +345,11 @@ def format_memory(mem: dict[str, Any]) -> str:
 
 # -- Main entry points ---------------------------------------------------------
 
-async def recall_memories(
+async def _recall_core(
     text: str,
-    *,
     session_id: str,
-) -> list[str]:
-    """Associative recall: dual-strategy search, return formatted blocks.
-
-    Pipeline: Qwen → (batch embed + name search in parallel) → merge → format.
-    """
+) -> list[dict[str, Any]]:
+    """Core recall logic — returns raw memory dicts sorted by score."""
     seen = get_seen_ids(session_id)
     seen_list = list(seen)
 
@@ -309,31 +360,40 @@ async def recall_memories(
         if not queries and not names:
             return []
 
-        # Step 2: Parallel — embed queries + search names
-        # These are independent and can run concurrently
+        # Step 2: IN PARALLEL — batch embed queries + compute IDF for names
         try:
             embeddings, name_memories = await asyncio.gather(
                 embed_queries_batch(queries) if queries else _noop_embeddings(),
-                _search_by_names(names, seen_list),
+                _search_by_names_with_idf(names, seen_list),
             )
         except EmbeddingError:
             embeddings = []
-            name_memories = await _search_by_names(names, seen_list) if names else []
+            name_memories = await _search_by_names_with_idf(names, seen_list) if names else []
 
-        # Step 3: Cosine search with embeddings
-        # Exclude IDs already found by name search
+        # Step 3: Cosine search (exclude IDs already found by name search)
         name_ids = [m["id"] for m in name_memories]
         query_exclude = seen_list + name_ids
-        query_memories = await _search_by_queries(queries, embeddings, query_exclude) if embeddings else []
+        query_memories = await _search_by_queries(embeddings, query_exclude) if embeddings else []
 
-        # Step 4: Merge — name hits first (they're the "index" results),
-        # then query hits (the "semantic" results)
+        # Step 4: Merge and sort by score (IDF scores > 1.0 naturally rank above cosine)
         all_memories = name_memories + query_memories
+        all_memories.sort(key=lambda m: m.get("score", 0), reverse=True)
 
+    # Mark as seen for this session
     if all_memories:
         mark_seen(session_id, [m["id"] for m in all_memories])
 
-    return [format_memory(m) for m in all_memories]
+    return all_memories
+
+
+async def recall_memories(
+    text: str,
+    *,
+    session_id: str,
+) -> list[str]:
+    """Associative recall: return formatted memory blocks."""
+    memories = await _recall_core(text, session_id)
+    return [format_memory(m) for m in memories]
 
 
 async def recall_memories_rich(
@@ -342,34 +402,8 @@ async def recall_memories_rich(
     session_id: str,
 ) -> list[tuple[dict[str, Any], str]]:
     """Like recall_memories, but returns (raw_dict, formatted_string) pairs."""
-    seen = get_seen_ids(session_id)
-    seen_list = list(seen)
-
-    with logfire.span("recall", session_id=session_id):
-        queries, names = await _extract_queries_and_names(text)
-
-        if not queries and not names:
-            return []
-
-        try:
-            embeddings, name_memories = await asyncio.gather(
-                embed_queries_batch(queries) if queries else _noop_embeddings(),
-                _search_by_names(names, seen_list),
-            )
-        except EmbeddingError:
-            embeddings = []
-            name_memories = await _search_by_names(names, seen_list) if names else []
-
-        name_ids = [m["id"] for m in name_memories]
-        query_exclude = seen_list + name_ids
-        query_memories = await _search_by_queries(queries, embeddings, query_exclude) if embeddings else []
-
-        all_memories = name_memories + query_memories
-
-    if all_memories:
-        mark_seen(session_id, [m["id"] for m in all_memories])
-
-    return [(m, format_memory(m)) for m in all_memories]
+    memories = await _recall_core(text, session_id)
+    return [(m, format_memory(m)) for m in memories]
 
 
 async def _noop_embeddings() -> list[list[float]]:

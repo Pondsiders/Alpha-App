@@ -16,6 +16,7 @@ from .db import (
     search_memories,
     search_memories_by_embedding,
     search_memories_by_name,
+    count_memories_containing,
     get_recent_memories,
     get_memory,
     forget_memory,
