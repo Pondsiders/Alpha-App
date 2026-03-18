@@ -200,6 +200,46 @@ async def websocket_chat(ws: WebSocket) -> None:
                         "data": chat.wire_state(),
                     })
 
+            elif msg_type == "join-chat":
+                # The "gimme the fucking chat" protocol.
+                # One payload: all messages + chat metadata including topics.
+                # Replaces replay for frontends that support it.
+                chat_id = raw.get("chatId")
+                if not chat_id:
+                    await ws.send_json({"type": "error", "data": "Missing chatId"})
+                    continue
+
+                from alpha_app.db import load_messages
+
+                # Load or find the chat object
+                chat = chats.get(chat_id)
+                if not chat:
+                    chat = await load_chat(chat_id)
+                    if chat:
+                        chat.on_reap = on_chat_reap
+                        chat._topic_registry = getattr(ws.app.state, "topic_registry", None)
+                        chats[chat_id] = chat
+                if chat:
+                    chat._topic_registry = getattr(ws.app.state, "topic_registry", None)
+
+                # Load all messages from app.messages
+                messages = await load_messages(chat_id)
+
+                # Build the payload
+                metadata = chat.wire_state() if chat else {
+                    "state": "dead",
+                    "topics": {},
+                }
+
+                await ws.send_json({
+                    "type": "chat-data",
+                    "chatId": chat_id,
+                    "data": {
+                        "messages": messages,
+                        "metadata": metadata,
+                    },
+                })
+
             else:
                 pass
 
