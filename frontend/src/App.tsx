@@ -514,6 +514,7 @@ function Layout() {
       case "chat-data": {
         // The "gimme the fucking chat" response. One payload, all messages + metadata.
         if (!eChatId) break;
+        console.log("[chat-data] received for", eChatId, "topics:", (event.data as Record<string, unknown>).metadata);
         const chatData = event.data as {
           messages: Array<{ role: string; data: Record<string, unknown> }>;
           metadata: {
@@ -568,18 +569,20 @@ function Layout() {
         // Load messages into store
         actions.loadMessages(eChatId, storeMessages);
 
-        // Update chat metadata (including topics!)
+        // Ensure the chat exists in the store, then update with metadata.
+        // chat-data often arrives BEFORE chat-list, so the chat may not
+        // exist in state.chats yet. addChat creates it if missing.
         const md = chatData.metadata;
-        actions.updateChatState(
-          eChatId,
-          md.state as ChatState,
-          md.title,
-          md.updatedAt,
-          md.sessionUuid || undefined,
-          md.tokenCount,
-          md.contextWindow,
-          md.topics,
-        );
+        actions.addChat({
+          id: eChatId,
+          title: md.title || "",
+          state: md.state as ChatState,
+          updatedAt: md.updatedAt || 0,
+          sessionUuid: md.sessionUuid || undefined,
+          tokenCount: md.tokenCount,
+          contextWindow: md.contextWindow,
+          topics: md.topics,
+        });
 
         actions.setReplaying(false);
         break;
