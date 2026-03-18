@@ -18,7 +18,7 @@ import logfire
 from fastapi import WebSocket
 
 from alpha_app.chat import MODEL, Chat, ConversationState, SuggestState
-from alpha_app.db import persist_chat
+from alpha_app.db import persist_chat, store_message, next_message_ordinal
 from alpha_app.routes.broadcast import broadcast
 from alpha_app.routes.enrobe import enrobe
 from alpha_app.routes.spans import build_prompt_preview, format_input_messages
@@ -189,6 +189,10 @@ async def handle_new_turn(
                         "data": event["data"],
                     })
 
+            # -- Dual-write: store UserMessage to app.messages --------
+            user_ordinal = await next_message_ordinal(chat_id)
+            await store_message(chat_id, user_ordinal, "user", result.message.to_wire())
+
             # -- Send enriched content: ENRICHING -> RESPONDING ------------
             await chat.send(result.content)
 
@@ -203,6 +207,13 @@ async def handle_new_turn(
 
             # -- Stream events to all connections -------------------------
             assistant_text = await stream_chat_events(connections, chat, span)
+
+            # -- Dual-write: store AssistantMessage to app.messages --------
+            if assistant_text.strip():
+                asst_ordinal = await next_message_ordinal(chat_id)
+                await store_message(chat_id, asst_ordinal, "assistant", {
+                    "content": [{"type": "text", "text": assistant_text}],
+                })
 
             # -- Fire suggest in dead time ---------------------------------
             user_text = " ".join(

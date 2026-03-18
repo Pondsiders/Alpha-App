@@ -65,6 +65,19 @@ async def init_pool() -> None:
             " ON app.events (chat_id, seq)"
         )
 
+        # Message-level storage: the "gimme the fucking chat" table.
+        # Each row is one complete UserMessage or AssistantMessage as JSONB.
+        # Replaces event replay with a single SELECT for chat loading.
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS app.messages (
+                chat_id TEXT NOT NULL,
+                ordinal INTEGER NOT NULL,
+                role TEXT NOT NULL,
+                data JSONB NOT NULL,
+                PRIMARY KEY (chat_id, ordinal)
+            )
+        """)
+
 
 async def close_pool() -> None:
     """Close the connection pool. Call once at shutdown."""
@@ -164,6 +177,55 @@ async def replay_events(chat_id: str) -> list[dict]:
         chat_id,
     )
     return [row["event"] for row in rows]
+
+
+# -- Message storage (the "gimme the fucking chat" table) --------------------
+
+
+async def store_message(chat_id: str, ordinal: int, role: str, data: dict) -> None:
+    """Store a complete UserMessage or AssistantMessage.
+
+    Dual-write: called alongside store_event during the transition period.
+    Once replay is replaced with join-chat, store_event goes away.
+    """
+    try:
+        pool = get_pool()
+        await pool.execute(
+            """
+            INSERT INTO app.messages (chat_id, ordinal, role, data)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (chat_id, ordinal) DO UPDATE SET data = EXCLUDED.data
+            """,
+            chat_id,
+            ordinal,
+            role,
+            data,
+        )
+    except Exception:
+        pass  # Non-fatal
+
+
+async def load_messages(chat_id: str) -> list[dict]:
+    """Load all messages for a chat, ordered. For join-chat.
+
+    Returns list of {"role": "user"|"assistant", "data": {...}} dicts.
+    """
+    pool = get_pool()
+    rows = await pool.fetch(
+        "SELECT role, data FROM app.messages WHERE chat_id = $1 ORDER BY ordinal",
+        chat_id,
+    )
+    return [{"role": row["role"], "data": row["data"]} for row in rows]
+
+
+async def next_message_ordinal(chat_id: str) -> int:
+    """Get the next ordinal for a message in a chat."""
+    pool = get_pool()
+    row = await pool.fetchrow(
+        "SELECT COALESCE(MAX(ordinal), -1) + 1 AS next_ord FROM app.messages WHERE chat_id = $1",
+        chat_id,
+    )
+    return row["next_ord"]
 
 
 # -- Chat loading -------------------------------------------------------------
