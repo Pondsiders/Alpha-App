@@ -25,6 +25,7 @@ async def handle_create_chat(
         chat = Chat(id=chat_id)
         chat._system_prompt = ws.app.state.system_prompt
         chat.on_reap = on_reap
+        chat._topic_registry = getattr(ws.app.state, "topic_registry", None)
         chats[chat_id] = chat
 
         await persist_chat(chat)

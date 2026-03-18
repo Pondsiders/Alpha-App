@@ -85,13 +85,15 @@ export default defineConfig({
     https: getHttpsConfig(),
     proxy: {
       '/api': {
-        target: `http://localhost:${BACKEND_PORT}`,
+        target: `https://localhost:${BACKEND_PORT}`,
         changeOrigin: true,
+        secure: false,  // Accept self-signed Tailscale certs
       },
       '/ws': {
-        target: `http://localhost:${BACKEND_PORT}`,
+        target: `https://localhost:${BACKEND_PORT}`,
         changeOrigin: true,
         ws: true,
+        secure: false,
       },
     },
     allowedHosts: [

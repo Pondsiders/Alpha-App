@@ -124,12 +124,7 @@ async def handle_new_turn(
                 await broadcast(connections, {
                     "type": "chat-state",
                     "chatId": chat_id,
-                    "data": {
-                        "state": "starting",
-                        "sessionUuid": chat.session_uuid or "",
-                        "tokenCount": chat.token_count,
-                        "contextWindow": chat.context_window,
-                    },
+                    "data": chat.wire_state(state="starting"),
                 })
 
                 if not chat.session_uuid:
@@ -151,12 +146,7 @@ async def handle_new_turn(
                 await broadcast(connections, {
                     "type": "chat-state",
                     "chatId": chat_id,
-                    "data": {
-                        "state": chat.state.wire_value,
-                        "sessionUuid": chat.session_uuid or "",
-                        "tokenCount": chat.token_count,
-                        "contextWindow": chat.context_window,
-                    },
+                    "data": chat.wire_state(),
                 })
 
             chat.set_trace_context(logfire.get_context())
@@ -170,14 +160,7 @@ async def handle_new_turn(
             await broadcast(connections, {
                 "type": "chat-state",
                 "chatId": chat_id,
-                "data": {
-                    "state": chat.state.wire_value,
-                    "title": chat.title,
-                    "updatedAt": chat.updated_at,
-                    "sessionUuid": chat.session_uuid or "",
-                    "tokenCount": chat.token_count,
-                    "contextWindow": chat.context_window,
-                },
+                "data": chat.wire_state(),
             })
 
             # -- Enrobe: wrap user message in enrichment -------------------
@@ -213,14 +196,7 @@ async def handle_new_turn(
             await broadcast(connections, {
                 "type": "chat-state",
                 "chatId": chat_id,
-                "data": {
-                    "state": chat.state.wire_value,
-                    "title": chat.title,
-                    "updatedAt": chat.updated_at,
-                    "sessionUuid": chat.session_uuid or "",
-                    "tokenCount": chat.token_count,
-                    "contextWindow": chat.context_window,
-                },
+                "data": chat.wire_state(),
             })
 
             await persist_chat(chat)

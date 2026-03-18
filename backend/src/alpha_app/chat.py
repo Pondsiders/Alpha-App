@@ -145,6 +145,10 @@ class Chat:
         # context window. Reset on compaction/resurrection (new window).
         self._injected_topics: set[str] = set()
 
+        # Topic registry reference — set externally so wire_state can include
+        # available topics. Not serialized — comes from app.state.topic_registry.
+        self._topic_registry: Any | None = None
+
         # Broadcast callback — called after reap so all clients see the state change.
         # Set externally by the WS handler. Signature: async (chat_id: str) -> None.
         self.on_reap: Callable[[str], Awaitable[None]] | None = None
@@ -160,6 +164,7 @@ class Chat:
         chat.updated_at = updated_at
         chat._cached_token_count = data.get("token_count", 0) or 0
         chat._cached_context_window = data.get("context_window", 0) or CONTEXT_WINDOW
+        chat._injected_topics = set(data.get("injected_topics", []))
         return chat
 
     # -- Token state properties -----------------------------------------------
@@ -225,7 +230,35 @@ class Chat:
             "created_at": self.created_at,
             "token_count": self.token_count,
             "context_window": self.context_window,
+            "injected_topics": sorted(self._injected_topics) if self._injected_topics else [],
         }
+
+    def wire_state(self, **overrides) -> dict:
+        """Build the chat-state data dict for WebSocket broadcasts.
+
+        Includes all runtime state the frontend needs: state, title, session,
+        tokens, context window, and injected topics. Extra fields can be
+        passed as keyword arguments (e.g., state="starting").
+        """
+        data = {
+            "state": self.state.wire_value,
+            "title": self.title,
+            "updatedAt": self.updated_at,
+            "sessionUuid": self.session_uuid or "",
+            "tokenCount": self.token_count,
+            "contextWindow": self.context_window,
+        }
+
+        # Include topics only when registry is available.
+        # Omitting the key entirely means the frontend preserves its existing
+        # topics state (the `if (topics !== undefined)` guard in updateChatState).
+        if self._topic_registry:
+            topics: dict[str, str] = {}
+            for name in self._topic_registry.list_topics():
+                topics[name] = "on" if name in self._injected_topics else "off"
+            data["topics"] = topics
+        data.update(overrides)
+        return data
 
     def set_trace_context(self, ctx: dict | None) -> None:
         """Set trace context so proxy spans nest under the consumer's trace."""
@@ -428,7 +461,8 @@ class Chat:
             self._crossed_yellow = False
             self._crossed_red = False
             self._needs_orientation = False
-            self._injected_topics = set()
+            # Don't reset _injected_topics — they persist across resurrections.
+            # Only reset on wake() (new chat) and compact_boundary (new window).
             self._start_reap_timer()
 
         except Exception:

@@ -41,6 +41,7 @@ export interface ClientMessage {
   chatId?: string;
   content?: string | Array<Record<string, unknown>>;
   messageId?: string;
+  topics?: string[];
 }
 
 interface UseWebSocketOptions {

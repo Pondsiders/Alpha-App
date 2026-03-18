@@ -14,6 +14,7 @@ import { ArrowUp, Square, Copy, Check } from "lucide-react";
 import { ToolFallback } from "../components/ToolFallback";
 import { MemoryCard } from "../components/MemoryCard";
 import { MemoryNote } from "../components/tools/MemoryNote";
+import { TopicBar } from "../components/TopicBar";
 import {
   ComposerAttachments,
   ComposerAddAttachment,
@@ -268,6 +269,31 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
   // isRunning is derived from chat state — no more global boolean
   const isRunning = activeChat?.state === "busy" || activeChat?.state === "starting";
 
+  // ---- Topics ----
+  // Topic states come from chat-state events as { "alpha-app": "on", "intake": "off" }.
+  // The backend's TopicRegistry scans the filesystem; Chat tracks injection.
+  const backendTopics = activeChat?.topics ?? {};
+  const [armedTopics, setArmedTopics] = useState<Set<string>>(new Set());
+
+  const topicPills = Object.entries(backendTopics).map(([name, backendState]) => ({
+    name,
+    state: backendState === "on" ? "on" as const
+      : armedTopics.has(name) ? "armed" as const
+      : "off" as const,
+  }));
+
+  const handleTopicToggle = useCallback((name: string) => {
+    setArmedTopics((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) {
+        next.delete(name);
+      } else {
+        next.add(name);
+      }
+      return next;
+    });
+  }, []);
+
   const addUserMessage = useWorkshopStore((s) => s.addUserMessage);
   const addAssistantPlaceholder = useWorkshopStore((s) => s.addAssistantPlaceholder);
   const appendToAssistant = useWorkshopStore((s) => s.appendToAssistant);
@@ -278,6 +304,8 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
   activeChatIdRef.current = activeChatId;
   const sendRef = useRef(send);
   sendRef.current = send;
+  const armedTopicsRef = useRef(armedTopics);
+  armedTopicsRef.current = armedTopics;
 
   // ---- Load messages when active chat changes or connection is established ----
   useEffect(() => {
@@ -353,7 +381,8 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
       }
       // Interjection: no new placeholder — the existing assistant message keeps accumulating
 
-      // Send via WebSocket with chatId + messageId for reconciliation
+      // Send via WebSocket with chatId + messageId + armed topics
+      const topicsToSend = Array.from(armedTopicsRef.current);
       const sent = sendRef.current({
         type: "send",
         chatId,
@@ -362,7 +391,12 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
           backendContent.length === 1 && backendContent[0].type === "text"
             ? (backendContent[0] as { text: string }).text // Simple string for text-only
             : backendContent,
+        ...(topicsToSend.length > 0 && { topics: topicsToSend }),
       });
+      // Don't clear armed state here — let it stay amber until
+      // chat-state arrives with injectedTopics, then pill goes green.
+      // The pill builder prefers "on" over "armed", so the transition
+      // is smooth: armed (amber) → on (green) with no flash to off.
 
       if (!sent) {
         const existingId = assistantIdMapRef.current[chatId];
@@ -467,6 +501,9 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
             <ComposerPrimitive.Root className="flex flex-col gap-3 p-4 bg-composer rounded-2xl shadow-[0_0.25rem_1.25rem_rgba(0,0,0,0.4),0_0_0_0.5px_rgba(108,106,96,0.15)]">
               {/* Attachment previews */}
               <ComposerAttachments />
+
+              {/* Topic pills — above the input, always visible */}
+              <TopicBar topics={topicPills} onToggle={handleTopicToggle} />
 
               <ComposerPrimitive.Input
                 placeholder="Message Alpha..."

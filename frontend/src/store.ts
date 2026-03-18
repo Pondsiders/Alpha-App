@@ -80,6 +80,7 @@ export interface ChatMeta {
   sessionUuid?: string;
   tokenCount?: number;
   contextWindow?: number;
+  topics?: Record<string, string>;  // { "alpha-app": "on", "intake": "off" }
 }
 
 // -----------------------------------------------------------------------------
@@ -119,7 +120,7 @@ interface WorkshopActions {
   // Chat management
   setChats: (chatList: ChatMeta[]) => void;
   addChat: (chat: ChatMeta) => void;
-  updateChatState: (chatId: string, state: ChatState, title?: string, updatedAt?: number, sessionUuid?: string, tokenCount?: number, contextWindow?: number) => void;
+  updateChatState: (chatId: string, state: ChatState, title?: string, updatedAt?: number, sessionUuid?: string, tokenCount?: number, contextWindow?: number, topics?: Record<string, string>) => void;
   setActiveChatId: (chatId: string | null) => void;
 
   // Messages
@@ -214,7 +215,10 @@ export const useWorkshopStore = create<WorkshopStore>()(
       set((state) => {
         const map: Record<string, ChatMeta> = {};
         for (const chat of chatList) {
-          map[chat.id] = chat;
+          // Merge with existing chat data to preserve fields (like topics)
+          // that chat-list doesn't carry but chat-state does.
+          const existing = state.chats[chat.id];
+          map[chat.id] = existing ? { ...existing, ...chat } : chat;
         }
         state.chats = map;
 
@@ -244,7 +248,7 @@ export const useWorkshopStore = create<WorkshopStore>()(
       });
     },
 
-    updateChatState: (chatId, chatState, title, updatedAt, sessionUuid?, tokenCount?, contextWindow?) => {
+    updateChatState: (chatId, chatState, title, updatedAt, sessionUuid?, tokenCount?, contextWindow?, topics?) => {
       set((state) => {
         const chat = state.chats[chatId];
         if (!chat) return;
@@ -254,6 +258,7 @@ export const useWorkshopStore = create<WorkshopStore>()(
         if (sessionUuid !== undefined) chat.sessionUuid = sessionUuid;
         if (tokenCount !== undefined) chat.tokenCount = tokenCount;
         if (contextWindow !== undefined) chat.contextWindow = contextWindow;
+        if (topics !== undefined) chat.topics = topics;
 
         // Update global meter if this is the active chat
         if (chatId === state.activeChatId && tokenCount !== undefined && contextWindow !== undefined) {

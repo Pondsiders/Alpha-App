@@ -12,8 +12,8 @@ interface MarkdownTextProps {
  */
 export const MarkdownText: FC<MarkdownTextProps> = ({ text }) => {
   return (
+    <div className="markdown-text">
     <Markdown
-      className="markdown-text"
       remarkPlugins={[remarkGfm]}
       components={{
         p: ({ children }) => (
@@ -99,5 +99,6 @@ export const MarkdownText: FC<MarkdownTextProps> = ({ text }) => {
     >
       {text}
     </Markdown>
+    </div>
   );
 };

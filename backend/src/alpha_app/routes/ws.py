@@ -116,6 +116,7 @@ async def websocket_chat(ws: WebSocket) -> None:
                     chat = await load_chat(chat_id)
                     if chat:
                         chat.on_reap = on_chat_reap
+                        chat._topic_registry = getattr(ws.app.state, "topic_registry", None)
                         chats[chat_id] = chat
                     else:
                         await ws.send_json({"type": "error", "chatId": chat_id, "data": "Chat not found"})
@@ -148,6 +149,7 @@ async def websocket_chat(ws: WebSocket) -> None:
                     chat = await load_chat(chat_id)
                     if chat:
                         chat.on_reap = on_chat_reap
+                        chat._topic_registry = getattr(ws.app.state, "topic_registry", None)
                         chats[chat_id] = chat
                     else:
                         await ws.send_json({"type": "error", "chatId": chat_id, "data": "Chat not found"})
@@ -179,6 +181,24 @@ async def websocket_chat(ws: WebSocket) -> None:
                 for event in events:
                     await ws.send_json(event)
                 await ws.send_json({"type": "replay-done", "chatId": chat_id})
+
+                # After replay: send fresh chat-state with topics so pills populate.
+                # This fires AFTER replay-done, so isReplaying is false by the time
+                # the frontend processes it.
+                chat = chats.get(chat_id)
+                if not chat:
+                    chat = await load_chat(chat_id)
+                    if chat:
+                        chat.on_reap = on_chat_reap
+                        chat._topic_registry = getattr(ws.app.state, "topic_registry", None)
+                        chats[chat_id] = chat
+                if chat:
+                    chat._topic_registry = getattr(ws.app.state, "topic_registry", None)
+                    await ws.send_json({
+                        "type": "chat-state",
+                        "chatId": chat_id,
+                        "data": chat.wire_state(),
+                    })
 
             else:
                 pass

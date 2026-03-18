@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef } from "react";
 import ChatPage from "./pages/ChatPage";
 import DevContextMeter from "./pages/DevContextMeter";
 import DevStatusBar from "./pages/DevStatusBar";
+import DevTopics from "./pages/DevTopics";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
 import { useWebSocket, type ServerEvent, type ClientMessage } from "@/lib/useWebSocket";
@@ -292,6 +293,7 @@ function Layout() {
           sessionUuid?: string;
           tokenCount?: number;
           contextWindow?: number;
+          topics?: Record<string, string>;
         }>;
         const chatList: ChatMeta[] = raw.map((c) => ({
           id: c.chatId,
@@ -301,6 +303,8 @@ function Layout() {
           sessionUuid: c.sessionUuid || undefined,
           tokenCount: c.tokenCount,
           contextWindow: c.contextWindow,
+          // topics intentionally omitted — chat-list is for sidebar data only.
+          // Topic state arrives via chat-state events after replay.
         }));
         actions.setChats(chatList);
         // If the URL chatId isn't in the list, the stored chat no longer exists —
@@ -340,6 +344,7 @@ function Layout() {
           sessionUuid?: string;
           tokenCount?: number;
           contextWindow?: number;
+          topics?: Record<string, string>;
         };
         actions.updateChatState(
           eChatId,
@@ -349,6 +354,7 @@ function Layout() {
           data.sessionUuid || undefined,
           data.tokenCount,
           data.contextWindow,
+          data.topics,
         );
         break;
       }
@@ -608,6 +614,7 @@ function App() {
         <Route path="/chat/:chatId" element={<Layout />} />
         <Route path="/dev/context-meter" element={<DevContextMeter />} />
         <Route path="/dev/status-bar" element={<DevStatusBar />} />
+        <Route path="/dev/topics" element={<DevTopics />} />
       </Routes>
     </BrowserRouter>
   );
