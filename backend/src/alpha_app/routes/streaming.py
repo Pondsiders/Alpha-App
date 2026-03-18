@@ -119,6 +119,10 @@ async def stream_chat_events(connections: set, chat: Chat, span=None) -> Assista
             if isinstance(event, SystemEvent) and event.subtype == "compact_boundary":
                 chat._needs_orientation = True
                 chat._injected_topics = set()
+                # Clear the recall seen-cache — post-compact, old memories
+                # may be relevant again in the new context window.
+                from alpha_app.memories.recall import clear_seen
+                clear_seen(chat_id)
                 logfire.info(
                     "compact_boundary detected",
                     chat_id=chat_id,

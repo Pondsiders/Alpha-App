@@ -165,6 +165,14 @@ class Chat:
         chat._cached_token_count = data.get("token_count", 0) or 0
         chat._cached_context_window = data.get("context_window", 0) or CONTEXT_WINDOW
         chat._injected_topics = set(data.get("injected_topics", []))
+
+        # Restore the recall seen-cache from persisted data.
+        # Survives backend restarts — no more resurfacing stored memories.
+        seen_ids = data.get("seen_ids", [])
+        if seen_ids:
+            from alpha_app.memories.recall import mark_seen
+            mark_seen(chat_id, seen_ids)
+
         return chat
 
     # -- Token state properties -----------------------------------------------
@@ -229,6 +237,8 @@ class Chat:
 
     def to_data(self) -> dict:
         """Serialize chat metadata as a JSONB-ready dict."""
+        from alpha_app.memories.recall import get_seen_ids
+        seen = get_seen_ids(self.id)
         return {
             "session_uuid": self.session_uuid or "",
             "title": self.title,
@@ -236,6 +246,7 @@ class Chat:
             "token_count": self.token_count,
             "context_window": self.context_window,
             "injected_topics": sorted(self._injected_topics) if self._injected_topics else [],
+            "seen_ids": sorted(seen) if seen else [],
         }
 
     def wire_state(self, **overrides) -> dict:
