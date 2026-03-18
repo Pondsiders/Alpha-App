@@ -23,6 +23,7 @@ from ..memories.cortex import (
     recent as cortex_recent,
     get as cortex_get,
 )
+from ..memories.recall import mark_seen
 
 if TYPE_CHECKING:
     from ..topics import TopicRegistry
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
 def create_cortex_server(
     clear_memorables: Callable[[], int] | None = None,
     topic_registry: TopicRegistry | None = None,
+    session_id: str | None = None,
 ) -> FastMCP:
     """Create the Cortex MCP server.
 
@@ -59,6 +61,12 @@ def create_cortex_server(
             return "Error storing memory"
 
         memory_id = result.get("id", "unknown")
+
+        # Mark as seen so recall won't resurface this memory in the same session.
+        # Prevents the self-referencing problem: storing a memory about X
+        # and then recalling it when X is mentioned again.
+        if session_id and isinstance(memory_id, int):
+            mark_seen(session_id, [memory_id])
 
         # Clear the memorables buffer — feedback mechanism with Intro
         cleared = clear_memorables() if clear_memorables else 0

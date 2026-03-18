@@ -117,6 +117,7 @@ async def handle_new_turn(
                 cortex = create_cortex_server(
                     clear_memorables=_clear,
                     topic_registry=topic_registry,
+                    session_id=chat.id,
                 )
                 handoff = create_handoff_server(chat)
                 mcp_servers = {"cortex": cortex, "handoff": handoff}
