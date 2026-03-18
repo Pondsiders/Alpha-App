@@ -315,9 +315,9 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
     // If we already have messages (restored from cache by setActiveChatId), skip
     if (useWorkshopStore.getState().messages.length > 0) return;
 
-    // Request replay over WebSocket — events arrive through the same
-    // handlers as live streaming (user-message, text-delta, tool-call, done)
-    send({ type: "replay", chatId: activeChatId });
+    // Request the whole chat in one shot — join-chat returns all messages
+    // + metadata (including topics) as a single payload.
+    send({ type: "join-chat", chatId: activeChatId });
   }, [activeChatId, connected, send]);
 
   // ---- Send handler ----

@@ -19,6 +19,7 @@ import {
   type ToolCallPart,
   type RecalledMemory,
   type CapsuleData,
+  type MessageSource,
 } from "./store";
 
 // ---------------------------------------------------------------------------
@@ -510,6 +511,80 @@ function Layout() {
         break;
       }
 
+      case "chat-data": {
+        // The "gimme the fucking chat" response. One payload, all messages + metadata.
+        if (!eChatId) break;
+        const chatData = event.data as {
+          messages: Array<{ role: string; data: Record<string, unknown> }>;
+          metadata: {
+            state: string;
+            title?: string;
+            updatedAt?: number;
+            sessionUuid?: string;
+            tokenCount?: number;
+            contextWindow?: number;
+            topics?: Record<string, string>;
+          };
+        };
+
+        // Convert backend messages to store Message objects
+        const storeMessages: Message[] = chatData.messages.map((msg, idx) => {
+          const d = msg.data as Record<string, unknown>;
+          if (msg.role === "user") {
+            // UserMessage wire format: { id, content, timestamp, memories, source, ... }
+            const rawContent = (d.content as Array<{ type: string; text?: string; image?: string }>) || [];
+            const parts: ContentPart[] = rawContent.map((b) => {
+              if (b.type === "image" && b.image) return { type: "image" as const, image: b.image };
+              return { type: "text" as const, text: b.text || "" };
+            });
+            return {
+              id: (d.id as string) || `replay-u-${idx}`,
+              role: "user" as const,
+              content: parts,
+              createdAt: new Date(),
+              source: (d.source as MessageSource) || "human",
+              timestamp: d.timestamp as string | undefined,
+              memories: d.memories as RecalledMemory[] | undefined,
+              capsules: d.orientation
+                ? ((d.orientation as Record<string, unknown>).capsules as CapsuleData[] | undefined)
+                : undefined,
+            };
+          } else {
+            // AssistantMessage: { content: [{ type: "text", text: "..." }] }
+            const rawContent = (d.content as Array<{ type: string; text?: string }>) || [];
+            const parts: ContentPart[] = rawContent.map((b) => ({
+              type: "text" as const,
+              text: b.text || "",
+            }));
+            return {
+              id: `replay-a-${idx}`,
+              role: "assistant" as const,
+              content: parts,
+              createdAt: new Date(),
+            };
+          }
+        });
+
+        // Load messages into store
+        actions.loadMessages(eChatId, storeMessages);
+
+        // Update chat metadata (including topics!)
+        const md = chatData.metadata;
+        actions.updateChatState(
+          eChatId,
+          md.state as ChatState,
+          md.title,
+          md.updatedAt,
+          md.sessionUuid || undefined,
+          md.tokenCount,
+          md.contextWindow,
+          md.topics,
+        );
+
+        actions.setReplaying(false);
+        break;
+      }
+
       case "replay-done": {
         // Flush the replay buffer: build the full message list in pure JS
         // (no Zustand, no immer) and render once. Fast buggering.
@@ -539,10 +614,13 @@ function Layout() {
   );
   const { send, connected } = useWebSocket({ onEvent, onConnectionChange });
 
-  // Intercept replay sends to initialize buffer + show loading state
+  // Intercept replay/join-chat sends to initialize buffer + show loading state
   const wrappedSend = useCallback((msg: ClientMessage) => {
     if (msg.type === "replay" && msg.chatId) {
       replayBuffersRef.current[msg.chatId] = [];
+      useWorkshopStore.getState().setReplaying(true);
+    }
+    if (msg.type === "join-chat" && msg.chatId) {
       useWorkshopStore.getState().setReplaying(true);
     }
     return send(msg);
