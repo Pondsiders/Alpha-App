@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate, useParams, useNavigate } from "react-router-dom";
 import { useCallback, useEffect, useRef } from "react";
+import { TypeOnBuffer } from "@/lib/typeOnBuffer";
 import ChatPage from "./pages/ChatPage";
 import DevContextMeter from "./pages/DevContextMeter";
 import DevStatusBar from "./pages/DevStatusBar";
@@ -266,6 +267,11 @@ function Layout() {
   // Shared assistant ID map — Layout reads, ChatPage writes
   const assistantIdMapRef = useRef<Record<string, string | null>>({});
 
+  // Type-on buffers — smooth out chunky text-delta and thinking-delta streams.
+  // Keyed by chatId. Created per streaming session, flushed on done/assistant-message.
+  const textBufferRef = useRef<Record<string, TypeOnBuffer>>({});
+  const thinkingBufferRef = useRef<Record<string, TypeOnBuffer>>({});
+
   // Replay buffer — accumulates events per chatId until replay-done
   const replayBuffersRef = useRef<Record<string, ServerEvent[]>>({});
 
@@ -418,8 +424,9 @@ function Layout() {
       }
 
       // -- Message streaming events --
-      // All streaming actions pass eChatId so the store can accumulate
-      // deltas in the messageCache when the target chat is in the background.
+      // Deltas go through type-on buffers for smooth rendering.
+      // The buffer drains at a steady rate via requestAnimationFrame,
+      // converting burst-pause-burst into smooth character flow.
       case "text-delta": {
         if (!eChatId) break;
         let aid = assistantIdMapRef.current[eChatId];
@@ -427,7 +434,15 @@ function Layout() {
           aid = actions.addRemoteAssistantPlaceholder(eChatId);
           assistantIdMapRef.current[eChatId] = aid;
         }
-        actions.appendToAssistant(aid, event.data as string, eChatId);
+        // Create buffer on first delta for this chat
+        if (!textBufferRef.current[eChatId]) {
+          const capturedAid = aid;
+          const capturedChatId = eChatId;
+          textBufferRef.current[eChatId] = new TypeOnBuffer(
+            (text) => actions.appendToAssistant(capturedAid, text, capturedChatId),
+          );
+        }
+        textBufferRef.current[eChatId].push(event.data as string);
         break;
       }
 
@@ -438,12 +453,24 @@ function Layout() {
           aid = actions.addRemoteAssistantPlaceholder(eChatId);
           assistantIdMapRef.current[eChatId] = aid;
         }
-        actions.appendThinking(aid, event.data as string, eChatId);
+        if (!thinkingBufferRef.current[eChatId]) {
+          const capturedAid = aid;
+          const capturedChatId = eChatId;
+          thinkingBufferRef.current[eChatId] = new TypeOnBuffer(
+            (text) => actions.appendThinking(capturedAid, text, capturedChatId),
+          );
+        }
+        thinkingBufferRef.current[eChatId].push(event.data as string);
         break;
       }
 
       case "tool-call": {
         if (!eChatId) break;
+        // Flush text/thinking buffers BEFORE rendering the tool call.
+        // Otherwise buffered text would drain AFTER the tool call renders,
+        // causing text to appear below the tool call instead of above it.
+        textBufferRef.current[eChatId]?.flush();
+        thinkingBufferRef.current[eChatId]?.flush();
         let aid = assistantIdMapRef.current[eChatId];
         if (!aid) {
           aid = actions.addRemoteAssistantPlaceholder(eChatId);
@@ -502,12 +529,25 @@ function Layout() {
       }
 
       case "done": {
-        if (eChatId) assistantIdMapRef.current[eChatId] = null;
+        // Flush type-on buffers — any remaining text renders immediately
+        if (eChatId) {
+          textBufferRef.current[eChatId]?.flush();
+          thinkingBufferRef.current[eChatId]?.flush();
+          delete textBufferRef.current[eChatId];
+          delete thinkingBufferRef.current[eChatId];
+          assistantIdMapRef.current[eChatId] = null;
+        }
         break;
       }
 
       case "interrupted": {
-        if (eChatId) assistantIdMapRef.current[eChatId] = null;
+        if (eChatId) {
+          textBufferRef.current[eChatId]?.flush();
+          thinkingBufferRef.current[eChatId]?.flush();
+          delete textBufferRef.current[eChatId];
+          delete thinkingBufferRef.current[eChatId];
+          assistantIdMapRef.current[eChatId] = null;
+        }
         break;
       }
 
@@ -550,14 +590,37 @@ function Layout() {
                 : undefined,
             };
           } else {
-            // AssistantMessage: { content: [{ type: "text", text: "..." }] }
-            const rawContent = (d.content as Array<{ type: string; text?: string }>) || [];
-            const parts: ContentPart[] = rawContent.map((b) => ({
-              type: "text" as const,
-              text: b.text || "",
-            }));
+            // AssistantMessage — two formats:
+            // New (to_db): { id, parts: [{type, text?, thinking?, toolCallId?, ...}], ... }
+            // Old (pre-AssistantMessage): { content: [{ type: "text", text: "..." }] }
+            const rawParts = (d.parts as Array<{
+              type: string;
+              text?: string;
+              thinking?: string;
+              toolCallId?: string;
+              toolName?: string;
+              args?: JSONObject;
+              argsText?: string;
+            }>) || (d.content as Array<{ type: string; text?: string }>) || [];
+
+            const parts: ContentPart[] = [];
+            for (const p of rawParts) {
+              if (p.type === "text" && p.text) {
+                parts.push({ type: "text", text: p.text });
+              } else if (p.type === "thinking" && p.thinking) {
+                parts.push({ type: "thinking", thinking: p.thinking });
+              } else if (p.type === "tool-call" && p.toolCallId) {
+                parts.push({
+                  type: "tool-call",
+                  toolCallId: p.toolCallId,
+                  toolName: p.toolName || "",
+                  args: (p.args || {}) as JSONObject,
+                  argsText: p.argsText || "",
+                });
+              }
+            }
             return {
-              id: `replay-a-${idx}`,
+              id: (d.id as string) || `replay-a-${idx}`,
               role: "assistant" as const,
               content: parts,
               createdAt: new Date(),
