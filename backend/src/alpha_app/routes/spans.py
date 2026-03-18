@@ -1,12 +1,9 @@
 """spans.py — Logfire span helpers for gen_ai semantic conventions.
 
-Formats input/output messages and sets response attributes on turn spans
-following the OpenTelemetry gen_ai conventions that Logfire understands.
+Formats input/output messages for Logfire Model Run cards.
+The turn-level span attributes are now set by streaming.py's
+_set_turn_span_response(), which reads from AssistantMessage.
 """
-
-from alpha_app import ResultEvent
-
-from alpha_app.chat import Chat
 
 
 def build_prompt_preview(content: list[dict], max_len: int = 50) -> str:
@@ -66,30 +63,3 @@ def format_output_messages(output_parts: list[dict]) -> list[dict]:
     return [{"role": "assistant", "parts": parts}]
 
 
-def set_turn_span_response(span, chat: Chat, result: ResultEvent, output_parts: list) -> None:
-    """Set gen_ai response attributes on the turn span."""
-    span.set_attribute("gen_ai.response.model", chat.response_model or "")
-    span.set_attribute("gen_ai.usage.input_tokens", chat.total_input_tokens)
-    span.set_attribute("gen_ai.usage.output_tokens", chat.output_tokens)
-    span.set_attribute("gen_ai.usage.cache_creation.input_tokens", chat.cache_creation_tokens)
-    span.set_attribute("gen_ai.usage.cache_read.input_tokens", chat.cache_read_tokens)
-
-    output_messages = format_output_messages(output_parts)
-    span.set_attribute("gen_ai.output.messages", output_messages)
-
-    span.set_attribute("gen_ai.response.id", chat.response_id or "")
-    span.set_attribute("gen_ai.response.finish_reasons", [chat.stop_reason or "unknown"])
-    span.set_attribute("gen_ai.token_count", chat.token_count)
-    span.set_attribute("cost_usd", result.cost_usd)
-    span.set_attribute("duration_ms", result.duration_ms)
-    span.set_attribute("inference_count", result.num_turns)
-    span.set_attribute("response_length", sum(
-        len(p.get("content", ""))
-        for msg in output_messages
-        for p in msg.get("parts", [])
-    ))
-
-    if chat.usage_5h is not None:
-        span.set_attribute("anthropic.quota.usage_5h", chat.usage_5h)
-    if chat.usage_7d is not None:
-        span.set_attribute("anthropic.quota.usage_7d", chat.usage_7d)

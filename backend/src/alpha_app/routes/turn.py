@@ -206,19 +206,18 @@ async def handle_new_turn(
             await persist_chat(chat)
 
             # -- Stream events to all connections -------------------------
-            assistant_text = await stream_chat_events(connections, chat, span)
+            assistant_msg = await stream_chat_events(connections, chat, span)
 
             # -- Dual-write: store AssistantMessage to app.messages --------
-            if assistant_text.strip():
+            if assistant_msg.parts:
                 asst_ordinal = await next_message_ordinal(chat_id)
-                await store_message(chat_id, asst_ordinal, "assistant", {
-                    "content": [{"type": "text", "text": assistant_text}],
-                })
+                await store_message(chat_id, asst_ordinal, "assistant", assistant_msg.to_db())
 
             # -- Fire suggest in dead time ---------------------------------
             user_text = " ".join(
                 b.get("text", "") for b in content if b.get("type") == "text"
             )
+            assistant_text = assistant_msg.text
             if (
                 chat.suggest == SuggestState.ARMED
                 and user_text.strip()

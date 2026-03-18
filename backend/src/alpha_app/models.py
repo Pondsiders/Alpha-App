@@ -1,10 +1,15 @@
 """models.py — Domain objects for messages.
 
 The source of truth for what a message IS. Both backend (Python) and
-frontend (TypeScript) agree on the shapes defined here. Two serializations:
+frontend (TypeScript) agree on the shapes defined here.
 
-    to_wire()           → WebSocket JSON for the frontend (labeled fields)
-    to_content_blocks() → Messages API format for Claude (positional blocks)
+UserMessage — assembled progressively by enrobe.py from user input.
+    to_wire()           → labeled JSON for the frontend
+    to_content_blocks() → flat block list for Claude
+
+AssistantMessage — assembled progressively by streaming.py from Claude output.
+    to_wire()           → labeled JSON for the frontend
+    to_db()             → full-fidelity JSONB for app.messages
 
 Same information, shaped for different consumers.
 """
@@ -167,3 +172,89 @@ class UserMessage:
             blocks.append({"type": "text", "text": self.topic_context})
 
         return blocks
+
+
+# ---------------------------------------------------------------------------
+# AssistantMessage — the domain object
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class AssistantMessage:
+    """An assistant response, assembled progressively during streaming.
+
+    Built incrementally in streaming.py as events arrive from Claude.
+    Parts accumulate as thinking, text, and tool-call blocks stream in.
+    Token counts are fed in by streaming.py reading the proxy's sniffed
+    values — the model doesn't know about the proxy, just holds the data.
+
+    Two serializations:
+        to_wire() → labeled JSON for the frontend (WebSocket broadcast)
+        to_db()   → full-fidelity JSONB for app.messages (Postgres)
+
+    No to_content_blocks() — Claude produces these, doesn't consume them.
+    """
+
+    id: str
+    parts: list[dict] = field(default_factory=list)
+    # Parts are:
+    #   {"type": "thinking", "thinking": "..."}
+    #   {"type": "text", "text": "..."}
+    #   {"type": "tool-call", "toolCallId": "...", "toolName": "...",
+    #    "args": {...}, "argsText": "..."}
+
+    # Token accounting — accumulated during assembly by streaming.py
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_creation_tokens: int = 0
+    cache_read_tokens: int = 0
+    context_window: int = 0
+
+    # Metadata — set at turn completion
+    model: str | None = None
+    stop_reason: str | None = None
+    cost_usd: float = 0.0
+    duration_ms: float = 0.0
+    inference_count: int = 0
+
+    def to_wire(self) -> dict:
+        """WebSocket format for the frontend.
+
+        Matches the shape the frontend already expects from the
+        coalesced assistant-message event.
+        """
+        return {
+            "id": self.id,
+            "parts": self.parts,
+            "tokenCount": self.input_tokens,
+            "contextWindow": self.context_window,
+        }
+
+    def to_db(self) -> dict:
+        """Full-fidelity format for app.messages.
+
+        Includes everything: parts, token accounting, model info.
+        Richer than the wire format — the database gets the full picture.
+        """
+        return {
+            "id": self.id,
+            "parts": self.parts,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "cache_creation_tokens": self.cache_creation_tokens,
+            "cache_read_tokens": self.cache_read_tokens,
+            "context_window": self.context_window,
+            "model": self.model,
+            "stop_reason": self.stop_reason,
+            "cost_usd": self.cost_usd,
+            "duration_ms": self.duration_ms,
+            "inference_count": self.inference_count,
+        }
+
+    @property
+    def text(self) -> str:
+        """Just the text content — for the suggest pipeline."""
+        return " ".join(
+            p["text"] for p in self.parts
+            if p.get("type") == "text" and p.get("text")
+        )

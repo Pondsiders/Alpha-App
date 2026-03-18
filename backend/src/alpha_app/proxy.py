@@ -603,6 +603,19 @@ class _Proxy:
             message = payload.get("message", {})
             usage = message.get("usage", {})
 
+            # New turn detection: if the previous API call ended the turn
+            # (stop_reason != "tool_use"), this is the start of a new turn.
+            # Reset the output token accumulator. Within a multi-step tool-use
+            # turn (stop_reason == "tool_use"), keep accumulating.
+            prev_stop = self._stop_reason
+            if prev_stop != "tool_use":
+                self._output_tokens = 0
+            logfire.debug(
+                "proxy: message_start prev_stop={prev_stop} output_tokens_after_reset={output_tokens}",
+                prev_stop=prev_stop,
+                output_tokens=self._output_tokens,
+            )
+
             self._input_tokens = usage.get("input_tokens", 0)
             self._cache_creation_tokens = usage.get("cache_creation_input_tokens", 0)
             self._cache_read_tokens = usage.get("cache_read_input_tokens", 0)
@@ -619,8 +632,15 @@ class _Proxy:
             usage = payload.get("usage", {})
             delta = payload.get("delta", {})
 
-            self._output_tokens = usage.get("output_tokens", 0)
+            new_tokens = usage.get("output_tokens", 0)
+            self._output_tokens += new_tokens
             self._stop_reason = delta.get("stop_reason")
+            logfire.debug(
+                "proxy: message_delta +{new_tokens} = {total} stop_reason={stop_reason}",
+                new_tokens=new_tokens,
+                total=self._output_tokens,
+                stop_reason=self._stop_reason,
+            )
 
     # -- Usage headers --------------------------------------------------------
 

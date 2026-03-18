@@ -3,17 +3,21 @@
 Handles the inner event loop: reads from chat.events(), broadcasts
 text deltas, thinking deltas, tool calls, context updates, approach
 light interjections, and the final result to every connected WebSocket.
+
+Assembles an AssistantMessage progressively as events arrive — the same
+pattern as enrobe.py building a UserMessage from parts.
 """
 
 import json
+import uuid
 
 import logfire
 from alpha_app import AssistantEvent, ErrorEvent, ResultEvent, StreamEvent, SystemEvent, UserEvent
 
 from alpha_app.chat import Chat, ConversationState
 from alpha_app.db import persist_chat
+from alpha_app.models import AssistantMessage
 from alpha_app.routes.broadcast import broadcast
-from alpha_app.routes.spans import set_turn_span_response
 
 # Approach light warning messages — injected as interjections mid-turn.
 _APPROACH_WARNINGS = {
@@ -78,25 +82,27 @@ async def _check_approach_light(
     return last_token_count, interjections_sent
 
 
-async def stream_chat_events(connections: set, chat: Chat, span=None) -> str:
+async def stream_chat_events(connections: set, chat: Chat, span=None) -> AssistantMessage:
     """Stream events from a Chat to ALL connected clients.
 
+    Assembles an AssistantMessage progressively as events arrive.
     All emitted events carry the chatId and broadcast to every connection.
     On turn completion, emits chat-state with the updated state, then done.
 
     Returns:
-        The assistant's text output from this turn (for suggest pipeline).
+        The completed AssistantMessage with parts, token counts, and metadata.
     """
     chat_id = chat.id
     turn_completed = False
     last_token_count = chat.token_count
-    output_parts: list[dict] = []
     interjection_count = 0
 
-    # Accumulate assistant message parts for the coalesced event.
-    # Each part is {"type": "thinking"|"text"|"tool-call", ...}.
-    # Built from stream deltas and assistant events as they arrive.
-    wire_parts: list[dict] = []
+    # The message being assembled — the lazy susan
+    msg = AssistantMessage(id=f"msg-{uuid.uuid4().hex[:12]}")
+
+    # Raw output parts for Logfire gen_ai.output.messages (Messages API format).
+    # Separate from msg.parts which uses wire format.
+    output_parts: list[dict] = []
 
     try:
         async for event in chat.events():
@@ -133,21 +139,21 @@ async def stream_chat_events(connections: set, chat: Chat, span=None) -> str:
                         await broadcast(connections, {
                             "type": "text-delta", "chatId": chat_id, "data": text,
                         }, persist=False)
-                        # Accumulate into wire_parts
-                        if wire_parts and wire_parts[-1]["type"] == "text":
-                            wire_parts[-1]["text"] += text
+                        # Accumulate into AssistantMessage parts
+                        if msg.parts and msg.parts[-1]["type"] == "text":
+                            msg.parts[-1]["text"] += text
                         else:
-                            wire_parts.append({"type": "text", "text": text})
+                            msg.parts.append({"type": "text", "text": text})
                 elif event.delta_type == "thinking_delta":
                     text = event.delta_text
                     if text:
                         await broadcast(connections, {
                             "type": "thinking-delta", "chatId": chat_id, "data": text,
                         }, persist=False)
-                        if wire_parts and wire_parts[-1]["type"] == "thinking":
-                            wire_parts[-1]["thinking"] += text
+                        if msg.parts and msg.parts[-1]["type"] == "thinking":
+                            msg.parts[-1]["thinking"] += text
                         else:
-                            wire_parts.append({"type": "thinking", "thinking": text})
+                            msg.parts.append({"type": "thinking", "thinking": text})
 
             elif isinstance(event, AssistantEvent):
                 output_parts.extend(event.content)
@@ -165,26 +171,33 @@ async def stream_chat_events(connections: set, chat: Chat, span=None) -> str:
                             "chatId": chat_id,
                             "data": tool_data,
                         }, persist=False)
-                        # Accumulate into wire_parts
-                        wire_parts.append({"type": "tool-call", **tool_data})
+                        # Accumulate into AssistantMessage parts
+                        msg.parts.append({"type": "tool-call", **tool_data})
 
             elif isinstance(event, ResultEvent):
                 await persist_chat(chat)
 
+                # Snapshot token counts and metadata onto the message
+                msg.input_tokens = chat.total_input_tokens
+                msg.output_tokens = chat.output_tokens
+                msg.cache_creation_tokens = chat.cache_creation_tokens
+                msg.cache_read_tokens = chat.cache_read_tokens
+                msg.context_window = chat.context_window
+                msg.model = chat.response_model
+                msg.stop_reason = chat.stop_reason
+                msg.cost_usd = event.cost_usd
+                msg.duration_ms = event.duration_ms
+                msg.inference_count = event.num_turns
+
                 if span:
-                    set_turn_span_response(span, chat, event, output_parts)
+                    _set_turn_span_response(span, msg, chat, output_parts)
 
                 # Emit the coalesced assistant-message (persisted for replay).
-                # Includes context window info so the frontend can sync the meter.
-                if wire_parts:
+                if msg.parts:
                     await broadcast(connections, {
                         "type": "assistant-message",
                         "chatId": chat_id,
-                        "data": {
-                            "parts": wire_parts,
-                            "tokenCount": chat.token_count,
-                            "contextWindow": chat.context_window,
-                        },
+                        "data": msg.to_wire(),
                     })
 
                 await broadcast(connections, {
@@ -238,9 +251,40 @@ async def stream_chat_events(connections: set, chat: Chat, span=None) -> str:
     except Exception:
         pass
 
-    # Return assistant text for suggest pipeline
-    return " ".join(
-        block.get("text", "")
-        for block in output_parts
-        if block.get("type") == "text"
-    )
+    return msg
+
+
+def _set_turn_span_response(span, msg: AssistantMessage, chat: Chat, output_parts: list) -> None:
+    """Set gen_ai response attributes on the turn span.
+
+    Reads from the AssistantMessage for token counts and metadata,
+    from the Chat for quota usage, and from output_parts for the
+    Logfire gen_ai.output.messages format.
+    """
+    from alpha_app.routes.spans import format_output_messages
+
+    span.set_attribute("gen_ai.response.model", msg.model or "")
+    span.set_attribute("gen_ai.usage.input_tokens", msg.input_tokens)
+    span.set_attribute("gen_ai.usage.output_tokens", msg.output_tokens)
+    span.set_attribute("gen_ai.usage.cache_creation.input_tokens", msg.cache_creation_tokens)
+    span.set_attribute("gen_ai.usage.cache_read.input_tokens", msg.cache_read_tokens)
+
+    output_messages = format_output_messages(output_parts)
+    span.set_attribute("gen_ai.output.messages", output_messages)
+
+    span.set_attribute("gen_ai.response.id", chat.response_id or "")
+    span.set_attribute("gen_ai.response.finish_reasons", [msg.stop_reason or "unknown"])
+    span.set_attribute("gen_ai.token_count", msg.input_tokens)
+    span.set_attribute("cost_usd", msg.cost_usd)
+    span.set_attribute("duration_ms", msg.duration_ms)
+    span.set_attribute("inference_count", msg.inference_count)
+    span.set_attribute("response_length", sum(
+        len(p.get("content", ""))
+        for m in output_messages
+        for p in m.get("parts", [])
+    ))
+
+    if chat.usage_5h is not None:
+        span.set_attribute("anthropic.quota.usage_5h", chat.usage_5h)
+    if chat.usage_7d is not None:
+        span.set_attribute("anthropic.quota.usage_7d", chat.usage_7d)
