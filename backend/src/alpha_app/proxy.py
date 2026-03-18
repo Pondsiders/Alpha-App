@@ -430,6 +430,15 @@ class _Proxy:
         self._response_model = None
         self._response_id = None
 
+    def reset_output_tokens(self) -> None:
+        """Reset just the output token accumulator. Call at turn start.
+
+        The proxy accumulates output tokens with += across all API calls.
+        Only the consumer (streaming.py) knows when a new turn begins,
+        so it calls this before streaming starts.
+        """
+        self._output_tokens = 0
+
     def set_trace_context(self, ctx: dict | None) -> None:
         """Set trace context for proxy request handlers to inherit.
 
@@ -603,18 +612,12 @@ class _Proxy:
             message = payload.get("message", {})
             usage = message.get("usage", {})
 
-            # New turn detection: if the previous API call ended the turn
-            # (stop_reason != "tool_use"), this is the start of a new turn.
-            # Reset the output token accumulator. Within a multi-step tool-use
-            # turn (stop_reason == "tool_use"), keep accumulating.
-            prev_stop = self._stop_reason
-            if prev_stop != "tool_use":
-                self._output_tokens = 0
-            logfire.debug(
-                "proxy: message_start prev_stop={prev_stop} output_tokens_after_reset={output_tokens}",
-                prev_stop=prev_stop,
-                output_tokens=self._output_tokens,
-            )
+            # No reset here — the proxy accumulates output tokens blindly
+            # across all API calls. Only streaming.py knows when a turn
+            # begins (via ResultEvent), so it calls reset_output_tokens()
+            # at the right time. The claude subprocess produces multiple
+            # end_turn stop reasons within a single user-facing turn,
+            # so stop_reason is NOT a reliable turn boundary signal.
 
             self._input_tokens = usage.get("input_tokens", 0)
             self._cache_creation_tokens = usage.get("cache_creation_input_tokens", 0)

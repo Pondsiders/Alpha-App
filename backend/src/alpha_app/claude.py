@@ -360,6 +360,11 @@ class Claude:
         if self._proxy:
             self._proxy.reset_token_count()
 
+    def reset_output_tokens(self) -> None:
+        """Reset just the output token accumulator. Call at turn start."""
+        if self._proxy:
+            self._proxy.reset_output_tokens()
+
     def set_trace_context(self, ctx: dict | None) -> None:
         """Set trace context so proxy spans nest under the consumer's trace.
 

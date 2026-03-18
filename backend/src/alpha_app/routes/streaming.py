@@ -97,6 +97,10 @@ async def stream_chat_events(connections: set, chat: Chat, span=None) -> Assista
     last_token_count = chat.token_count
     interjection_count = 0
 
+    # Reset output token accumulator for this turn. The proxy accumulates
+    # with += across all API calls; only we know when a new turn begins.
+    chat.reset_output_tokens()
+
     # The message being assembled — the lazy susan
     msg = AssistantMessage(id=f"msg-{uuid.uuid4().hex[:12]}")
 

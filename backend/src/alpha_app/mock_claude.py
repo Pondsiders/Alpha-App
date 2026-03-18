@@ -138,6 +138,9 @@ class MockClaude:
     def reset_token_count(self) -> None:
         pass
 
+    def reset_output_tokens(self) -> None:
+        pass
+
     def set_trace_context(self, ctx: dict | None) -> None:
         pass
 

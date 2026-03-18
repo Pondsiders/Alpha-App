@@ -202,6 +202,11 @@ class Chat:
     def output_tokens(self) -> int:
         return self._claude.output_tokens if self._claude else 0
 
+    def reset_output_tokens(self) -> None:
+        """Reset output token accumulator. Call at turn start."""
+        if self._claude:
+            self._claude.reset_output_tokens()
+
     @property
     def stop_reason(self) -> str | None:
         return self._claude.stop_reason if self._claude else None
