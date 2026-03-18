@@ -22,10 +22,9 @@ export function MemoryCard({ memory }: MemoryCardProps) {
       className="flex-shrink-0 px-3 py-2 rounded-lg border border-border bg-surface/50 max-w-[220px] min-w-[160px] cursor-default select-none"
       title={memory.content}
     >
-      <div className="flex items-center gap-2 text-[11px] text-muted mb-0.5">
+      <div className="flex items-center justify-between text-[11px] text-muted mb-0.5">
         <span className="font-mono">#{memory.id}</span>
-        <span className="text-muted/60">·</span>
-        <span>{(memory.score * 100).toFixed(0)}%</span>
+        <span className="font-mono">{memory.score.toFixed(2)}</span>
       </div>
       {preview && (
         <div className="text-[12px] text-text/70 leading-tight line-clamp-2">
