@@ -107,6 +107,12 @@ def _parse_memorables(text: str) -> list[str]:
 
     text = text.strip()
 
+    # Strip markdown code fences if present
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+    if text.endswith("```"):
+        text = text[:-3].strip()
+
     try:
         parsed = json.loads(text)
 

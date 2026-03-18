@@ -177,7 +177,15 @@ async def _extract_queries_and_names(message: str) -> tuple[list[str], list[str]
                 ]},
             ]))
 
-            parsed = json.loads(output)
+            # Strip markdown code fences if present. The schema constraint
+            # usually prevents this, but Qwen occasionally sneaks through.
+            cleaned = output.strip()
+            if cleaned.startswith("```"):
+                cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
+            if cleaned.endswith("```"):
+                cleaned = cleaned[:-3].strip()
+
+            parsed = json.loads(cleaned)
 
             queries = parsed.get("queries", [])
             if isinstance(queries, list):
