@@ -33,7 +33,7 @@ import httpx
 import logfire
 import pendulum
 
-from alpha_app.constants import OLLAMA_CHAT_MODEL, OLLAMA_URL
+from alpha_app.constants import OLLAMA_CHAT_MODEL, OLLAMA_NUM_CTX, OLLAMA_URL
 
 from .cortex import search_by_embedding, search_by_name, count_memories_containing
 from .embeddings import embed_queries_batch, EmbeddingError
@@ -158,7 +158,7 @@ async def _extract_queries_and_names(message: str) -> tuple[list[str], list[str]
                             "required": ["queries", "names"],
                         },
                         "keep_alive": -1,
-                        "options": {"num_ctx": 4096},
+                        "options": {"num_ctx": OLLAMA_NUM_CTX},
                     },
                 )
                 response.raise_for_status()

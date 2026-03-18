@@ -17,7 +17,7 @@ import json
 import httpx
 import logfire
 
-from alpha_app.constants import OLLAMA_URL, OLLAMA_CHAT_MODEL
+from alpha_app.constants import OLLAMA_URL, OLLAMA_CHAT_MODEL, OLLAMA_NUM_CTX
 
 # Intro's system prompt — their soul, their taste
 INTRO_SYSTEM_PROMPT = """\
@@ -197,7 +197,7 @@ async def _call_llm(user_content: str, assistant_content: str) -> list[str]:
                             "required": ["memorables"],
                         },
                         "keep_alive": -1,
-                        "options": {"num_ctx": 8192},
+                        "options": {"num_ctx": OLLAMA_NUM_CTX},
                     },
                 )
                 response.raise_for_status()

@@ -21,7 +21,7 @@ CLAUDE_CONFIG_DIR = Path("/Pondside/Alpha-Home/.claude")
 # -- Network ------------------------------------------------------------------
 
 REDIS_URL = "redis://alpha-pi:6379"
-OLLAMA_URL = "http://primer.tail8bd569.ts.net:11434"
+OLLAMA_URL = "http://primer:11434"
 PORT = 18010
 
 # -- Models -------------------------------------------------------------------
@@ -32,3 +32,4 @@ CONTEXT_WINDOW = 1_000_000
 
 OLLAMA_EMBED_MODEL = "nomic-embed-text"
 OLLAMA_CHAT_MODEL = "qwen3.5:4b"
+OLLAMA_NUM_CTX = 4096  # Same for recall AND suggest — prevents model reloads
