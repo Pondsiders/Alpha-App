@@ -180,7 +180,16 @@ async def _call_llm(user_content: str, assistant_content: str) -> list[str]:
                         ],
                         "stream": False,
                         "think": False,
-                        "format": "json",
+                        "format": {
+                            "type": "object",
+                            "properties": {
+                                "memorables": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                },
+                            },
+                            "required": ["memorables"],
+                        },
                         "keep_alive": -1,
                         "options": {"num_ctx": 8192},
                     },

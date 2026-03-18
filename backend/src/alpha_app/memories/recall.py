@@ -132,7 +132,16 @@ async def _extract_queries(message: str) -> list[str]:
                         "messages": [{"role": "user", "content": prompt}],
                         "stream": False,
                         "think": False,
-                        "format": "json",
+                        "format": {
+                            "type": "object",
+                            "properties": {
+                                "queries": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                },
+                            },
+                            "required": ["queries"],
+                        },
                         "keep_alive": -1,
                         "options": {"num_ctx": 4096},
                     },
