@@ -14,6 +14,8 @@ from .embeddings import embed_document, embed_query, EmbeddingError
 from .db import (
     store_memory,
     search_memories,
+    search_memories_by_embedding,
+    search_memories_by_name,
     get_recent_memories,
     get_memory,
     forget_memory,
@@ -139,6 +141,80 @@ async def search(
 
     except EmbeddingError:
         return []
+    except Exception:
+        return []
+
+
+async def search_by_embedding(
+    embedding: list[float],
+    limit: int = DEFAULT_LIMIT,
+    exclude: list[int] | None = None,
+    min_score: float | None = MIN_SCORE,
+) -> list[dict[str, Any]]:
+    """Search Cortex with a pre-computed embedding vector.
+
+    Like search(), but skips the embed step — for use with batch-embedded
+    queries where the caller already has the vector.
+    """
+    try:
+        results = await search_memories_by_embedding(
+            query_embedding=embedding,
+            limit=limit,
+            exclude=exclude,
+            min_score=min_score,
+        )
+
+        memories = []
+        for item in results:
+            metadata = item.get("metadata", {})
+            mem = {
+                "id": item["id"],
+                "content": item["content"],
+                "created_at": metadata.get("created_at", ""),
+                "score": item.get("score"),
+            }
+            if metadata.get("image_path"):
+                mem["image_path"] = metadata["image_path"]
+            memories.append(mem)
+
+        return memories
+
+    except Exception:
+        return []
+
+
+async def search_by_name(
+    name: str,
+    limit: int = 1,
+    exclude: list[int] | None = None,
+) -> list[dict[str, Any]]:
+    """Search Cortex for memories mentioning a proper name.
+
+    Word-boundary regex match, case-insensitive, newest first.
+    Like looking up a name in an index.
+    """
+    try:
+        results = await search_memories_by_name(
+            name=name,
+            limit=limit,
+            exclude=exclude,
+        )
+
+        memories = []
+        for item in results:
+            metadata = item.get("metadata", {})
+            mem = {
+                "id": item["id"],
+                "content": item["content"],
+                "created_at": metadata.get("created_at", ""),
+                "score": item.get("score"),
+            }
+            if metadata.get("image_path"):
+                mem["image_path"] = metadata["image_path"]
+            memories.append(mem)
+
+        return memories
+
     except Exception:
         return []
 

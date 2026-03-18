@@ -21,7 +21,7 @@ CLAUDE_CONFIG_DIR = Path("/Pondside/Alpha-Home/.claude")
 # -- Network ------------------------------------------------------------------
 
 REDIS_URL = "redis://alpha-pi:6379"
-OLLAMA_URL = "http://primer.tail8bd569.ts.net:8200"
+OLLAMA_URL = "http://primer.tail8bd569.ts.net:11434"
 PORT = 18010
 
 # -- Models -------------------------------------------------------------------

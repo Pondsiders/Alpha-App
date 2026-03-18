@@ -243,6 +243,144 @@ async def search_memories(
         ]
 
 
+async def search_memories_by_embedding(
+    query_embedding: list[float],
+    limit: int = 10,
+    exclude: list[int] | None = None,
+    min_score: float | None = None,
+) -> list[dict[str, Any]]:
+    """Search memories by pre-computed embedding — pure cosine similarity.
+
+    Simpler than search_memories: no FTS, no exact match, no query_text.
+    For use with batch-embedded queries where we already have the vector.
+    """
+    pool = await get_pool()
+
+    async with pool.acquire() as conn:
+        conditions = ["NOT forgotten", "embedding IS NOT NULL"]
+        params: list = []
+        param_idx = 1
+
+        if exclude:
+            conditions.append(f"id != ALL(${param_idx}::int[])")
+            params.append(exclude)
+            param_idx += 1
+
+        embedding_json = json.dumps(query_embedding)
+
+        where_clause = " AND ".join(conditions)
+
+        min_score_clause = ""
+        if min_score is not None:
+            min_score_clause = f"AND score >= ${param_idx + 1}"
+
+        query = f"""
+            SELECT
+                id,
+                content,
+                metadata,
+                1 - (embedding <=> ${param_idx}::vector) as score
+            FROM cortex.memories
+            WHERE {where_clause}
+            {min_score_clause}
+            ORDER BY score DESC
+            LIMIT ${param_idx + 1 if min_score is None else param_idx + 2}
+        """
+        params.append(embedding_json)
+        if min_score is not None:
+            # Need to re-wrap: the score filter goes in a HAVING or subquery
+            # Actually, simpler: use a CTE
+            query = f"""
+                WITH scored AS (
+                    SELECT
+                        id,
+                        content,
+                        metadata,
+                        1 - (embedding <=> ${param_idx}::vector) as score
+                    FROM cortex.memories
+                    WHERE {where_clause}
+                )
+                SELECT id, content, metadata, score
+                FROM scored
+                WHERE score >= ${param_idx + 1}
+                ORDER BY score DESC
+                LIMIT ${param_idx + 2}
+            """
+            params.extend([min_score, limit])
+        else:
+            params.append(limit)
+
+        rows = await conn.fetch(query, *params)
+
+        return [
+            {
+                "id": row["id"],
+                "content": row["content"],
+                "metadata": json.loads(row["metadata"]),
+                "score": float(row["score"]),
+            }
+            for row in rows
+        ]
+
+
+async def search_memories_by_name(
+    name: str,
+    limit: int = 1,
+    exclude: list[int] | None = None,
+) -> list[dict[str, Any]]:
+    """Search memories by proper name using word-boundary regex.
+
+    Like looking up a name in an index — finds memories that literally
+    contain the name as a whole word. Case-insensitive. No embeddings,
+    no FTS scoring — just "does this name appear?"
+
+    Results ordered by recency (newest first) since all matches are
+    equally "relevant" for a name lookup.
+    """
+    pool = await get_pool()
+    import re
+    # Escape regex special chars in the name
+    regex_safe = re.sub(r'([.*+?^${}()|[\]\\])', r'\\\1', name)
+
+    async with pool.acquire() as conn:
+        conditions = ["NOT forgotten"]
+        params: list = []
+        param_idx = 1
+
+        if exclude:
+            conditions.append(f"id != ALL(${param_idx}::int[])")
+            params.append(exclude)
+            param_idx += 1
+
+        # Word-boundary regex match (case-insensitive)
+        conditions.append(f"content ~* ('\\m' || ${param_idx} || '\\M')")
+        params.append(regex_safe)
+        param_idx += 1
+
+        where_clause = " AND ".join(conditions)
+
+        query = f"""
+            SELECT id, content, metadata
+            FROM cortex.memories
+            WHERE {where_clause}
+            ORDER BY (metadata->>'created_at')::timestamptz DESC
+            LIMIT ${param_idx}
+        """
+        params.append(limit)
+
+        rows = await conn.fetch(query, *params)
+
+        return [
+            {
+                "id": row["id"],
+                "content": row["content"],
+                "metadata": json.loads(row["metadata"]),
+                "score": 1.0,  # Name matches are binary — found or not
+            }
+            for row in rows
+        ]
+
+
 async def get_recent_memories(
     limit: int = 10,
     hours: int = 24,

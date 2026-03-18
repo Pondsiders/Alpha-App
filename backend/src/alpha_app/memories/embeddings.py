@@ -34,6 +34,59 @@ async def embed_query(query: str) -> list[float]:
     return await _embed(f"search_query: {query}", operation="query", text=query)
 
 
+async def embed_queries_batch(queries: list[str]) -> list[list[float]]:
+    """Batch-embed multiple queries in a single Ollama call.
+
+    Uses the /api/embed endpoint (not /api/embeddings) which accepts
+    an array of inputs and returns an array of embeddings. One HTTP
+    round-trip instead of N.
+
+    Returns embeddings in the same order as the input queries.
+    """
+    if not queries:
+        return []
+    if not OLLAMA_URL:
+        raise EmbeddingError("OLLAMA_URL not set")
+
+    # Add the nomic search_query prefix to each query
+    prefixed = [f"search_query: {q}" for q in queries]
+
+    with logfire.span(
+        "embed.batch_queries",
+        model=OLLAMA_EMBED_MODEL,
+        count=len(queries),
+    ):
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(
+                    f"{OLLAMA_URL.rstrip('/')}/api/embed",
+                    json={
+                        "model": OLLAMA_EMBED_MODEL,
+                        "input": prefixed,
+                        "keep_alive": -1,
+                    },
+                )
+                response.raise_for_status()
+                data = response.json()
+                embeddings = data.get("embeddings", [])
+                if len(embeddings) != len(queries):
+                    raise EmbeddingError(
+                        f"Expected {len(queries)} embeddings, got {len(embeddings)}"
+                    )
+                return embeddings
+        except httpx.TimeoutException:
+            raise EmbeddingError("Batch embedding timed out")
+        except httpx.HTTPStatusError as e:
+            body = e.response.text[:500] if e.response else "no response body"
+            raise EmbeddingError(f"Batch embedding error {e.response.status_code}: {body}")
+        except httpx.ConnectError:
+            raise EmbeddingError("Embedding service unreachable")
+        except EmbeddingError:
+            raise
+        except Exception as e:
+            raise EmbeddingError(f"Batch embedding failed: {e}")
+
+
 async def _embed(
     prompt: str,
     timeout: float = 5.0,
