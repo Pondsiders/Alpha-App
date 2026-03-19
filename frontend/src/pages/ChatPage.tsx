@@ -422,7 +422,9 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
         const assistantId = addAssistantPlaceholder();
         assistantIdMapRef.current[chatId] = assistantId;
       }
-      // Interjection: no new placeholder — the existing assistant message keeps accumulating
+      // Interjection: don't create placeholder here. The claude echo
+      // (user-message handler in App.tsx) creates it + flushes the
+      // type-on buffer so post-interjection deltas go to the new message.
 
       // Send via WebSocket with chatId + messageId + armed topics
       const topicsToSend = Array.from(armedTopicsRef.current);

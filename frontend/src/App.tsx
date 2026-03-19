@@ -416,6 +416,12 @@ function Layout() {
           }
 
           // Genuine new message: interjection, replay, or remote.
+          // Flush the type-on buffer so pre-interjection text finishes rendering
+          // to the OLD assistant message. Then delete the buffer so the next
+          // text-delta creates a fresh one targeting the NEW assistant message.
+          textBufferRef.current[eChatId]?.flush();
+          delete textBufferRef.current[eChatId];
+
           // Use the server-provided ID so subsequent events for the same message
           // (e.g., claude echo, enrichment updates) reconcile by ID instead of duplicating.
           actions.addRemoteUserMessage(eChatId, umContent, umData.id);
