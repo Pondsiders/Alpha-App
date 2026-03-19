@@ -17,6 +17,7 @@ import { MemoryNote } from "../components/tools/MemoryNote";
 import { BashResult } from "../components/tools/BashResult";
 import { ReadResult } from "../components/tools/ReadResult";
 import { EditResult } from "../components/tools/EditResult";
+import { WriteResult } from "../components/tools/WriteResult";
 import { TopicBar } from "../components/TopicBar";
 import {
   ComposerAttachments,
@@ -172,6 +173,7 @@ const AssistantMessage = () => {
                 Bash: BashResult,
                 Read: ReadResult,
                 Edit: EditResult,
+                Write: WriteResult,
               },
               Fallback: ToolFallback,
             },
