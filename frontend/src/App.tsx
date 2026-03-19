@@ -524,9 +524,12 @@ function Layout() {
       }
 
       case "done": {
-        // Flush text buffer — any remaining text renders immediately
+        // DON'T flush — let the type-on buffer drain naturally.
+        // The text keeps appearing at 2 chars/frame even after streaming ends.
+        // But DO remove the buffer reference so the next turn creates a fresh one.
+        // The old buffer continues draining via its own rAF loop (it holds its
+        // own callback closure), but new deltas will go to a new buffer.
         if (eChatId) {
-          textBufferRef.current[eChatId]?.flush();
           delete textBufferRef.current[eChatId];
           assistantIdMapRef.current[eChatId] = null;
         }

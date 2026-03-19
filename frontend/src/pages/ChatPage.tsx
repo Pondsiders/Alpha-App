@@ -152,6 +152,21 @@ const AssistantMessage = () => {
   const message = useMessage();
   const [copied, setCopied] = useState(false);
 
+  // Cursor: visible on the LAST assistant message while the chat is busy.
+  // IMPORTANT: selector returns a primitive boolean, not an array/object reference.
+  // Subscribing to `s.messages` directly would re-render on every text delta
+  // during streaming, killing performance (1-2 chars/sec instead of smooth flow).
+  const showCursor = useWorkshopStore((s) => {
+    const chat = s.activeChatId ? s.chats[s.activeChatId] : null;
+    const isBusy = chat?.state === "busy" || chat?.state === "starting";
+    if (!isBusy) return false;
+    // Find the last assistant message — is it this one?
+    for (let i = s.messages.length - 1; i >= 0; i--) {
+      if (s.messages[i].role === "assistant") return s.messages[i].id === message.id;
+    }
+    return false;
+  });
+
   const handleCopy = async () => {
     const rawText = (message.content as Array<{ type: string; text?: string }>)
       .filter((p) => p.type === "text" && p.text)
@@ -184,6 +199,16 @@ const AssistantMessage = () => {
             },
           }}
         />
+
+        {/* Cursor — the "I'm working" cue. Visible on the last assistant message while busy. */}
+        {showCursor && (
+          <div className="flex items-center gap-1.5 h-5">
+            <span
+              className="w-2 h-2 rounded-full animate-pulse-dot"
+              style={{ backgroundColor: "var(--theme-primary)" }}
+            />
+          </div>
+        )}
       </div>
       <div className="mt-1 opacity-0 group-hover/assistant:opacity-100 transition-opacity">
         <button

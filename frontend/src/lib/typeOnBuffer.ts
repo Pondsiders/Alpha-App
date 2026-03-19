@@ -6,36 +6,37 @@
  * A requestAnimationFrame loop drains the buffer at a steady rate,
  * producing smooth character-by-character rendering.
  *
+ * The buffer does NOT flush on stream end — it drains naturally so the
+ * type-on effect continues past the last delta. Flush is reserved for
+ * interrupts: user sends a message, tool call arrives, or the turn is
+ * explicitly interrupted.
+ *
  * Usage:
- *   const buffer = new TypeOnBuffer((text) => appendToAssistant(id, text));
- *   // On each text-delta event:
- *   buffer.push(deltaText);
- *   // When streaming ends:
- *   buffer.flush();
+ *   const buffer = new TypeOnBuffer(
+ *     (text) => appendToAssistant(id, text),
+ *     () => setDrainComplete(true),
+ *   );
+ *   buffer.push(deltaText);    // on each text-delta event
+ *   // DON'T flush on done — let it drain naturally
+ *   buffer.flush();             // only on interrupt/tool-call/user-send
  */
 
 export class TypeOnBuffer {
   private queue = "";
   private frameId: number | null = null;
   private callback: (text: string) => void;
+  private onDrained: (() => void) | null;
 
   /**
    * Characters to drain per animation frame (~16ms at 60fps).
-   * Higher = faster reveal. Lower = smoother but potentially laggy.
-   *
-   * At 5 chars/frame: ~300 chars/sec = readable typewriter speed
-   * At 10 chars/frame: ~600 chars/sec = fast but smooth
-   * At 20 chars/frame: ~1200 chars/sec = very fast, still smoothed
-   *
-   * Claude produces ~60 chars/sec (15 tok/s × 4 chars/tok), so even
-   * 5 chars/frame drains faster than it arrives. The smoothing comes
-   * from spreading bursts across frames instead of dumping them all
-   * in one render.
+   * At 2 chars/frame: ~120 chars/sec. Claude produces ~60 chars/sec,
+   * so the buffer slowly catches up after streaming ends.
    */
   charsPerFrame = 2;
 
-  constructor(callback: (text: string) => void) {
+  constructor(callback: (text: string) => void, onDrained?: () => void) {
     this.callback = callback;
+    this.onDrained = onDrained ?? null;
   }
 
   /** Add text to the buffer. Starts draining if not already running. */
@@ -46,7 +47,12 @@ export class TypeOnBuffer {
     }
   }
 
-  /** Immediately flush all remaining text. Call when streaming ends. */
+  /** True if the buffer has text remaining to drain. */
+  get isDraining(): boolean {
+    return this.queue.length > 0 || this.frameId !== null;
+  }
+
+  /** Immediately flush all remaining text. Use for interrupts only. */
   flush(): void {
     if (this.frameId !== null) {
       cancelAnimationFrame(this.frameId);
@@ -56,6 +62,7 @@ export class TypeOnBuffer {
       this.callback(this.queue);
       this.queue = "";
     }
+    this.onDrained?.();
   }
 
   /** Stop the drain loop and discard any remaining text. */
@@ -71,6 +78,7 @@ export class TypeOnBuffer {
     const drain = () => {
       if (this.queue.length === 0) {
         this.frameId = null;
+        this.onDrained?.();
         return;
       }
 
