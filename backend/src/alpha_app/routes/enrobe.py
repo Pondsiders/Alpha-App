@@ -29,8 +29,10 @@ from typing import TYPE_CHECKING
 
 import pendulum
 
+from alpha_app.db import get_pool
 from alpha_app.images import process_image_blocks
 from alpha_app.memories.recall import recall_memories_rich
+from alpha_app.memories.vision import process_image
 from alpha_app.models import Capsule, Orientation, RecalledMemory, UserMessage
 from alpha_app.orientation import assemble_orientation
 from alpha_app.sources import fetch_all_orientation
@@ -150,9 +152,12 @@ async def enrobe(
 
     # 4. Memory recall — takes time, broadcast snapshot when complete
     #    User story: memories appear AFTER user message as "something to munch on."
+    #    Includes both text recall AND visual recall (if images present).
     user_text = " ".join(
         b.get("text", "") for b in content if b.get("type") == "text"
     )
+
+    # 4a. Text recall
     if user_text.strip():
         rich_memories = await recall_memories_rich(user_text, session_id=chat.id)
         if rich_memories:
@@ -164,7 +169,37 @@ async def enrobe(
                     score=raw["score"],
                     formatted=formatted,
                 ))
-            events.append(_snapshot())
+
+    # 4b. Visual recall — process images through the vision pipeline
+    #     New images → stored as memories (no results returned)
+    #     Known images → matching memories returned and merged
+    image_blocks = [
+        b for b in content
+        if b.get("type") == "image" and b.get("source", {}).get("type") == "base64"
+    ]
+    for img_block in image_blocks:
+        try:
+            import base64 as b64
+            image_data = b64.b64decode(img_block["source"]["data"])
+            image_memories = await process_image(
+                image_data,
+                source="attachment",
+                db_pool=get_pool(),
+            )
+            for mem in image_memories:
+                msg.memories.append(RecalledMemory(
+                    id=mem["id"],
+                    content=mem["content"],
+                    created_at=mem["created_at"],
+                    score=mem["score"],
+                    formatted=f'## Memory #{mem["id"]} ({mem["created_at"]}, score {mem["score"]:.2f})\n{mem["content"]}',
+                ))
+        except Exception:
+            pass  # Don't let vision failures break the message pipeline
+
+    # Broadcast memory snapshot if any memories were found
+    if msg.memories:
+        events.append(_snapshot())
 
     # 5. Topic context — inject if requested and not already in this window
     if topics and topic_registry:
