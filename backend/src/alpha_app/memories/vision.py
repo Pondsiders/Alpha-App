@@ -82,26 +82,23 @@ async def process_image(
             return []
 
         # Step 6 + 7: ALWAYS search, ALSO store if new.
-        # Most images you see once. A screenshot of the app should remind you
-        # of the workshop photo — different files, related content.
-        #
-        # Two embeddings needed for new images:
-        #   DOCUMENT (search_document: prefix) → stored with the memory
-        #   QUERY (search_query: prefix) → used to search existing memories
-        # Known images only need the query embedding (for search).
+        # SEARCH FIRST, STORE SECOND — prevents the just-stored memory from
+        # appearing in its own search results (cosine ~0.95 against itself).
         if not db_pool:
             return []
 
-        # Store if new
+        # Search existing memories (before the new one exists in the DB)
+        query_embedding = await _embed_query(caption)
+        results = await _search_memories(db_pool, query_embedding)
+
+        # Then store if new
         if not is_known:
             doc_embedding = await _embed_document(caption)
             await _store_image_memory(
                 db_pool, caption, doc_embedding, garage_key, source, content_hash,
             )
 
-        # Always search — new or known
-        query_embedding = await _embed_query(caption)
-        return await _search_memories(db_pool, query_embedding)
+        return results
 
 
 # -- Internal -----------------------------------------------------------------
