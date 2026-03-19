@@ -200,15 +200,20 @@ const AssistantMessage = () => {
           }}
         />
 
-        {/* Cursor — the "I'm working" cue. Visible on the last assistant message while busy. */}
-        {showCursor && (
-          <div className="flex items-center gap-1.5 h-5">
-            <span
-              className="w-2 h-2 rounded-full animate-pulse-dot"
-              style={{ backgroundColor: "var(--theme-primary)" }}
-            />
-          </div>
-        )}
+        {/* Cursor — the "I'm working" cue.
+            Always rendered (no layout shift), opacity toggles on busy state.
+            Negative margin-top pulls it closer to the content above — the
+            full gap-8 (32px) is too much breathing room for a tiny dot. */}
+        <div
+          className={`flex items-center h-5 -mt-4 transition-opacity duration-200 ${
+            showCursor ? "opacity-100" : "opacity-0"
+          }`}
+        >
+          <span
+            className={`w-2 h-2 rounded-full ${showCursor ? "animate-pulse-dot" : ""}`}
+            style={{ backgroundColor: "var(--theme-primary)" }}
+          />
+        </div>
       </div>
       <div className="mt-1 opacity-0 group-hover/assistant:opacity-100 transition-opacity">
         <button
