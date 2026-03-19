@@ -441,12 +441,19 @@ function Layout() {
           aid = actions.addRemoteAssistantPlaceholder(eChatId);
           assistantIdMapRef.current[eChatId] = aid;
         }
-        // Create buffer on first delta for this chat
+        // Create buffer on first delta for this chat.
+        // The callback reads assistantIdMapRef LIVE (not captured) so that
+        // interjections can redirect text to a new assistant message by
+        // updating the ref — the buffer follows the ref automatically.
         if (!textBufferRef.current[eChatId]) {
-          const capturedAid = aid;
           const capturedChatId = eChatId;
           textBufferRef.current[eChatId] = new TypeOnBuffer(
-            (text) => actions.appendToAssistant(capturedAid, text, capturedChatId),
+            (text) => {
+              const currentAid = assistantIdMapRef.current[capturedChatId];
+              if (currentAid) {
+                actions.appendToAssistant(currentAid, text, capturedChatId);
+              }
+            },
           );
         }
         textBufferRef.current[eChatId].push(event.data as string);

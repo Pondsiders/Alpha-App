@@ -417,14 +417,13 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
       const activeChat = useWorkshopStore.getState().chats[chatId];
       const isBusy = activeChat?.state === "busy";
 
-      if (!isBusy) {
-        // Normal turn — create placeholder for assistant response
-        const assistantId = addAssistantPlaceholder();
-        assistantIdMapRef.current[chatId] = assistantId;
-      }
-      // Interjection: don't create placeholder here. The claude echo
-      // (user-message handler in App.tsx) creates it + flushes the
-      // type-on buffer so post-interjection deltas go to the new message.
+      // Always create a new assistant placeholder — even for interjections.
+      // Text deltas arrive BEFORE the claude echo, so if we wait for the
+      // echo to create the placeholder, post-interjection text lands in
+      // the old message. Creating it here means the next text-delta finds
+      // a fresh assistantIdMapRef and targets the new message.
+      const assistantId = addAssistantPlaceholder();
+      assistantIdMapRef.current[chatId] = assistantId;
 
       // Send via WebSocket with chatId + messageId + armed topics
       const topicsToSend = Array.from(armedTopicsRef.current);
