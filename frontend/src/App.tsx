@@ -267,10 +267,10 @@ function Layout() {
   // Shared assistant ID map — Layout reads, ChatPage writes
   const assistantIdMapRef = useRef<Record<string, string | null>>({});
 
-  // Type-on buffers — smooth out chunky text-delta and thinking-delta streams.
-  // Keyed by chatId. Created per streaming session, flushed on done/assistant-message.
+  // Type-on buffer — smooths out chunky text-delta streams.
+  // Keyed by chatId. Created per streaming session, flushed on done/interrupted.
+  // Thinking deltas bypass the buffer (collapsed behind a disclosure triangle anyway).
   const textBufferRef = useRef<Record<string, TypeOnBuffer>>({});
-  const thinkingBufferRef = useRef<Record<string, TypeOnBuffer>>({});
 
   // Replay buffer — accumulates events per chatId until replay-done
   const replayBuffersRef = useRef<Record<string, ServerEvent[]>>({});
@@ -424,9 +424,8 @@ function Layout() {
       }
 
       // -- Message streaming events --
-      // Deltas go through type-on buffers for smooth rendering.
-      // The buffer drains at a steady rate via requestAnimationFrame,
-      // converting burst-pause-burst into smooth character flow.
+      // Text deltas go through a type-on buffer for smooth rendering.
+      // Thinking deltas render immediately (collapsed behind disclosure).
       case "text-delta": {
         if (!eChatId) break;
         let aid = assistantIdMapRef.current[eChatId];
@@ -453,24 +452,20 @@ function Layout() {
           aid = actions.addRemoteAssistantPlaceholder(eChatId);
           assistantIdMapRef.current[eChatId] = aid;
         }
-        if (!thinkingBufferRef.current[eChatId]) {
-          const capturedAid = aid;
-          const capturedChatId = eChatId;
-          thinkingBufferRef.current[eChatId] = new TypeOnBuffer(
-            (text) => actions.appendThinking(capturedAid, text, capturedChatId),
-          );
-        }
-        thinkingBufferRef.current[eChatId].push(event.data as string);
+        // Thinking renders immediately — no type-on buffer.
+        // It's collapsed behind a disclosure triangle anyway, and buffering it
+        // causes interleaving with text deltas (both drain at 2 chars/frame,
+        // creating dozens of tiny alternating thinking/text blocks).
+        actions.appendThinking(aid, event.data as string, eChatId);
         break;
       }
 
       case "tool-call": {
         if (!eChatId) break;
-        // Flush text/thinking buffers BEFORE rendering the tool call.
+        // Flush text buffer BEFORE rendering the tool call.
         // Otherwise buffered text would drain AFTER the tool call renders,
         // causing text to appear below the tool call instead of above it.
         textBufferRef.current[eChatId]?.flush();
-        thinkingBufferRef.current[eChatId]?.flush();
         let aid = assistantIdMapRef.current[eChatId];
         if (!aid) {
           aid = actions.addRemoteAssistantPlaceholder(eChatId);
@@ -529,12 +524,10 @@ function Layout() {
       }
 
       case "done": {
-        // Flush type-on buffers — any remaining text renders immediately
+        // Flush text buffer — any remaining text renders immediately
         if (eChatId) {
           textBufferRef.current[eChatId]?.flush();
-          thinkingBufferRef.current[eChatId]?.flush();
           delete textBufferRef.current[eChatId];
-          delete thinkingBufferRef.current[eChatId];
           assistantIdMapRef.current[eChatId] = null;
         }
         break;
@@ -543,9 +536,7 @@ function Layout() {
       case "interrupted": {
         if (eChatId) {
           textBufferRef.current[eChatId]?.flush();
-          thinkingBufferRef.current[eChatId]?.flush();
           delete textBufferRef.current[eChatId];
-          delete thinkingBufferRef.current[eChatId];
           assistantIdMapRef.current[eChatId] = null;
         }
         break;
