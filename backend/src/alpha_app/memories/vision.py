@@ -81,22 +81,27 @@ async def process_image(
             logfire.warn("vision: caption failed, skipping")
             return []
 
-        # Step 6 + 7: Fork based on novelty.
-        # NEW image: embed as DOCUMENT (search_document: prefix) → store in Cortex.
-        # KNOWN image: embed as QUERY (search_query: prefix) → cosine search Cortex.
-        # The prefix matters: nomic-embed-text produces different vectors for
-        # documents vs queries, optimized for asymmetric retrieval.
-        if not is_known and db_pool:
+        # Step 6 + 7: ALWAYS search, ALSO store if new.
+        # Most images you see once. A screenshot of the app should remind you
+        # of the workshop photo — different files, related content.
+        #
+        # Two embeddings needed for new images:
+        #   DOCUMENT (search_document: prefix) → stored with the memory
+        #   QUERY (search_query: prefix) → used to search existing memories
+        # Known images only need the query embedding (for search).
+        if not db_pool:
+            return []
+
+        # Store if new
+        if not is_known:
             doc_embedding = await _embed_document(caption)
             await _store_image_memory(
                 db_pool, caption, doc_embedding, garage_key, source, content_hash,
             )
-            return []
-        elif db_pool:
-            query_embedding = await _embed_query(caption)
-            return await _search_memories(db_pool, query_embedding)
-        else:
-            return []
+
+        # Always search — new or known
+        query_embedding = await _embed_query(caption)
+        return await _search_memories(db_pool, query_embedding)
 
 
 # -- Internal -----------------------------------------------------------------
