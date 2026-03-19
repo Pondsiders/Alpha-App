@@ -230,7 +230,7 @@ async def _search_memories(
     top_k: int = 5,
 ) -> list[dict]:
     """Cosine search Cortex for memories related to this image."""
-    with logfire.span("vision.search_memories"):
+    with logfire.span("vision.search_memories") as span:
         vec_str = "[" + ",".join(str(x) for x in embedding) + "]"
         try:
             rows = await pool.fetch(
@@ -246,7 +246,7 @@ async def _search_memories(
                 vec_str,
                 top_k,
             )
-            return [
+            results = [
                 {
                     "id": row["id"],
                     "content": row["content"],
@@ -256,6 +256,15 @@ async def _search_memories(
                 for row in rows
                 if float(row["score"]) > 0.5  # minimum similarity threshold
             ]
+
+            # Attach results to span for Logfire visibility
+            span.set_attribute("vision.search.result_count", len(results))
+            for i, mem in enumerate(results[:5]):
+                span.set_attribute(f"vision.search.result.{i}.id", mem["id"])
+                span.set_attribute(f"vision.search.result.{i}.score", round(mem["score"], 4))
+                span.set_attribute(f"vision.search.result.{i}.preview", mem["content"][:100])
+
+            return results
         except Exception as e:
             logfire.warn("vision.search_memories failed: {error}", error=str(e))
             return []
