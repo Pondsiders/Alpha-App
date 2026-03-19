@@ -415,8 +415,10 @@ function Layout() {
             break;
           }
 
-          // Genuine new message: interjection, replay, or remote
-          actions.addRemoteUserMessage(eChatId, umContent);
+          // Genuine new message: interjection, replay, or remote.
+          // Use the server-provided ID so subsequent events for the same message
+          // (e.g., claude echo, enrichment updates) reconcile by ID instead of duplicating.
+          actions.addRemoteUserMessage(eChatId, umContent, umData.id);
           const aid = actions.addRemoteAssistantPlaceholder(eChatId);
           assistantIdMapRef.current[eChatId] = aid;
         }

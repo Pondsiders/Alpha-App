@@ -139,7 +139,7 @@ interface WorkshopActions {
   setMessages: (messages: readonly Message[] | Message[]) => void;
 
   // Remote messages (echoed from other connections via the switch)
-  addRemoteUserMessage: (chatId: string, content: ContentPart[]) => string;
+  addRemoteUserMessage: (chatId: string, content: ContentPart[], serverId?: string) => string;
   addRemoteAssistantPlaceholder: (chatId: string) => string;
 
   // Reconciliation — merge enrobed echo into optimistic user message
@@ -431,8 +431,8 @@ export const useWorkshopStore = create<WorkshopStore>()(
 
     // -- Remote messages (echoed from other connections via the switch) --------
 
-    addRemoteUserMessage: (chatId, content) => {
-      const id = generateId();
+    addRemoteUserMessage: (chatId, content, serverId?) => {
+      const id = serverId || generateId();
       set((state) => {
         const msg: Message = {
           id,
