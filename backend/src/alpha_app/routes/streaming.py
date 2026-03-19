@@ -139,6 +139,39 @@ async def stream_chat_events(connections: set, chat: Chat, span=None) -> Assista
                     "data": {"content": event.content},
                 }, persist=False)
 
+                # Extract tool results from the echoed user message.
+                # When claude runs a built-in tool (Bash, Read, etc.), the
+                # result comes back as a tool_result block in the echoed
+                # user message. Forward these so the frontend can display output.
+                for block in event.content:
+                    if block.get("type") == "tool_result":
+                        tool_use_id = block.get("tool_use_id", "")
+                        # Content can be a string or list of content blocks
+                        content = block.get("content", "")
+                        if isinstance(content, list):
+                            result_text = "\n".join(
+                                b.get("text", "") for b in content if b.get("type") == "text"
+                            )
+                        else:
+                            result_text = str(content)
+
+                        await broadcast(connections, {
+                            "type": "tool-result",
+                            "chatId": chat_id,
+                            "data": {
+                                "toolCallId": tool_use_id,
+                                "result": result_text,
+                                "isError": block.get("is_error", False),
+                            },
+                        }, persist=False)
+
+                        # Also update the coalesced AssistantMessage
+                        for part in msg.parts:
+                            if part.get("type") == "tool-call" and part.get("toolCallId") == tool_use_id:
+                                part["result"] = result_text
+                                part["isError"] = block.get("is_error", False)
+                                break
+
             elif isinstance(event, StreamEvent):
                 if event.delta_type == "text_delta":
                     text = event.delta_text

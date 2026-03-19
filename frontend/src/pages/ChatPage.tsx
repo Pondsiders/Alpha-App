@@ -14,6 +14,7 @@ import { ArrowUp, Square, Copy, Check } from "lucide-react";
 import { ToolFallback } from "../components/ToolFallback";
 import { MemoryCard } from "../components/MemoryCard";
 import { MemoryNote } from "../components/tools/MemoryNote";
+import { BashResult } from "../components/tools/BashResult";
 import { TopicBar } from "../components/TopicBar";
 import {
   ComposerAttachments,
@@ -166,6 +167,7 @@ const AssistantMessage = () => {
             tools: {
               by_name: {
                 mcp__cortex__store: MemoryNote,
+                Bash: BashResult,
               },
               Fallback: ToolFallback,
             },

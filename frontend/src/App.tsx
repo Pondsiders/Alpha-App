@@ -592,6 +592,8 @@ function Layout() {
               toolName?: string;
               args?: JSONObject;
               argsText?: string;
+              result?: JSONValue;
+              isError?: boolean;
             }>) || (d.content as Array<{ type: string; text?: string }>) || [];
 
             const parts: ContentPart[] = [];
@@ -601,13 +603,17 @@ function Layout() {
               } else if (p.type === "thinking" && p.thinking) {
                 parts.push({ type: "thinking", thinking: p.thinking });
               } else if (p.type === "tool-call" && p.toolCallId) {
-                parts.push({
+                const toolPart: ToolCallPart = {
                   type: "tool-call",
                   toolCallId: p.toolCallId,
                   toolName: p.toolName || "",
                   args: (p.args || {}) as JSONObject,
                   argsText: p.argsText || "",
-                });
+                };
+                // Preserve tool results from the database (added by streaming.py)
+                if (p.result !== undefined) toolPart.result = p.result;
+                if (p.isError) toolPart.isError = p.isError;
+                parts.push(toolPart);
               }
             }
             return {
