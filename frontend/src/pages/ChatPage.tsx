@@ -19,6 +19,7 @@ import { ReadResult } from "../components/tools/ReadResult";
 import { EditResult } from "../components/tools/EditResult";
 import { WriteResult } from "../components/tools/WriteResult";
 import { GrepResult } from "../components/tools/GrepResult";
+import { TodoResult } from "../components/tools/TodoResult";
 import { TopicBar } from "../components/TopicBar";
 import {
   ComposerAttachments,
@@ -177,6 +178,7 @@ const AssistantMessage = () => {
                 Write: WriteResult,
                 Grep: GrepResult,
                 Glob: GrepResult,
+                TodoWrite: TodoResult,
               },
               Fallback: ToolFallback,
             },
