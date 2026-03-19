@@ -17,6 +17,8 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "Pillow>=11.0.0",
     "APScheduler>=3.10.0,<4",
+    "numpy>=2.4.3",
+    "boto3>=1.42.71",
 ]
 
 [project.scripts]

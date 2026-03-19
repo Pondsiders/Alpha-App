@@ -22,6 +22,9 @@ CLAUDE_CONFIG_DIR = Path("/Pondside/Alpha-Home/.claude")
 
 REDIS_URL = "redis://alpha-pi:6379"
 OLLAMA_URL = "http://primer:11434"
+GARAGE_ENDPOINT = "http://primer:3900"
+GARAGE_BUCKET = "pondside"
+GARAGE_REGION = "pondside"
 PORT = 18010
 
 # -- Models -------------------------------------------------------------------
