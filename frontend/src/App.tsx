@@ -538,13 +538,13 @@ function Layout() {
 
       case "done": {
         // DON'T flush — let the type-on buffer drain naturally.
-        // The text keeps appearing at 2 chars/frame even after streaming ends.
-        // But DO remove the buffer reference so the next turn creates a fresh one.
-        // The old buffer continues draining via its own rAF loop (it holds its
-        // own callback closure), but new deltas will go to a new buffer.
+        // DON'T clear assistantIdMapRef — `done` fires after each internal
+        // subprocess turn (tool call cycle), not just at the end of the whole
+        // response. Clearing it here caused tool calls to split into a new
+        // assistant message. The ref gets cleared when chat-state transitions
+        // to idle (handled by the assistant-message or chat-state events).
         if (eChatId) {
           delete textBufferRef.current[eChatId];
-          assistantIdMapRef.current[eChatId] = null;
         }
         break;
       }
