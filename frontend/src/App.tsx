@@ -405,30 +405,19 @@ function Layout() {
         const reconciled = actions.reconcileUserMessage(eChatId, umContent);
 
         if (!reconciled) {
-          // Distinguish interjection echoes from stale echoes.
-          // Both have null stash and no ID. The difference: during an
-          // interjection, the chat is BUSY (assistant still streaming).
-          // A stale echo arrives when the chat is idle or starting.
+          // Check if this is a stale echo — if the stash is already null
+          // (cleared by ID-based reconciliation), this echo is redundant.
+          // Only create a new message for genuine remote/replay messages.
           const stash = useWorkshopStore.getState()._pendingSendText;
-          const chatState = useWorkshopStore.getState().chats[eChatId]?.state;
-          const isBusy = chatState === "busy";
-
-          if (stash === null && !umData.id && !isBusy) {
-            // Stash consumed + chat idle = stale echo. Drop it.
+          if (stash === null && !umData.id) {
+            // Stash already consumed — this is a claude echo arriving late.
+            // Drop it silently to avoid duplicating the message.
             break;
           }
 
-          if (stash === null && !umData.id && isBusy) {
-            // Stash consumed + chat busy = interjection echo from claude.
-            // Don't add another user message (optimistic one is already there).
-            // Just create a new assistant placeholder so post-interjection
-            // text deltas go to the right message.
-            const aid = actions.addRemoteAssistantPlaceholder(eChatId);
-            assistantIdMapRef.current[eChatId] = aid;
-            break;
-          }
-
-          // Genuine new message: replay, or remote.
+          // Genuine new message: interjection, replay, or remote.
+          // Use the server-provided ID so subsequent events for the same message
+          // (e.g., claude echo, enrichment updates) reconcile by ID instead of duplicating.
           actions.addRemoteUserMessage(eChatId, umContent, umData.id);
           const aid = actions.addRemoteAssistantPlaceholder(eChatId);
           assistantIdMapRef.current[eChatId] = aid;
