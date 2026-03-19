@@ -59,25 +59,21 @@ async def process_image(
     with logfire.span("vision.process_image", source=source):
         # Step 1: Hash the raw bytes for content addressing
         content_hash = hashlib.sha256(image_data).hexdigest()
-        garage_key = f"images/{source}/{content_hash}.jpg"
+        content_type = _guess_content_type(image_data)
+        ext = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif",
+               "image/webp": "webp"}.get(content_type, "bin")
+        garage_key = f"images/{source}/{content_hash}.{ext}"
 
         # Step 2: Check if we've seen this exact image before
         is_known = garage.head_object(garage_key)
 
-        # Step 3: Resize for Qwen (regardless of novelty — we need the caption)
+        # Step 3: Resize for Qwen (60ms — cheap enough to derive every time)
         resized_jpeg = _resize_to_1mp(image_data)
         image_b64 = base64.b64encode(resized_jpeg).decode()
 
-        # Step 4: Store in Garage (skip if already there)
+        # Step 4: Store original in Garage (one copy, derive 1MP on demand)
         if not is_known:
-            # Store the original (full-res) for archival
-            garage.put_object(
-                f"images/{source}/{content_hash}_original",
-                image_data,
-                content_type=_guess_content_type(image_data),
-            )
-            # Store the 1MP JPEG for quick retrieval
-            garage.put_object(garage_key, resized_jpeg, content_type="image/jpeg")
+            garage.put_object(garage_key, image_data, content_type=content_type)
 
         # Step 5: Caption via Qwen 3.5 4B
         caption = await _caption_image(image_b64)
