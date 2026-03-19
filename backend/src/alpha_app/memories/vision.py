@@ -125,7 +125,12 @@ async def _caption_image(image_b64: str) -> str:
     """Send image to Qwen 3.5 4B for captioning."""
     import json as _json
 
-    messages = [{"role": "user", "content": CAPTION_PROMPT, "images": ["(image)"]}]
+    # Logfire Model Run card expects messages in {role, parts: [{type, content}]} format
+    input_messages = [{"role": "user", "parts": [
+        {"type": "text", "content": CAPTION_PROMPT},
+        {"type": "text", "content": "(image attached)"},
+    ]}]
+    output_placeholder = [{"role": "assistant", "parts": []}]
 
     with logfire.span(
         "vision.caption",
@@ -134,8 +139,8 @@ async def _caption_image(image_b64: str) -> str:
             "gen_ai.system": "ollama",
             "gen_ai.provider.name": "ollama",
             "gen_ai.response.model": OLLAMA_CHAT_MODEL,
-            "gen_ai.system_instructions": CAPTION_PROMPT,
-            "gen_ai.input.messages": _json.dumps(messages),
+            "gen_ai.system_instructions": [{"type": "text", "content": CAPTION_PROMPT}],
+            "gen_ai.input.messages": input_messages,
         },
     ) as span:
         try:
@@ -161,7 +166,7 @@ async def _caption_image(image_b64: str) -> str:
                 # Set gen_ai output attributes for Logfire Model Run card
                 span.set_attribute(
                     "gen_ai.output.messages",
-                    _json.dumps([{"role": "assistant", "content": caption}]),
+                    [{"role": "assistant", "parts": [{"type": "text", "content": caption}]}],
                 )
                 tokens = data.get("eval_count", 0)
                 if tokens:
@@ -232,8 +237,9 @@ async def _search_memories(
                 """
                 SELECT id, content,
                        1 - (embedding <=> $1::vector) AS score,
-                       created_at
+                       metadata->>'created_at' AS created_at
                 FROM cortex.memories
+                WHERE NOT forgotten
                 ORDER BY embedding <=> $1::vector
                 LIMIT $2
                 """,
@@ -245,7 +251,7 @@ async def _search_memories(
                     "id": row["id"],
                     "content": row["content"],
                     "score": float(row["score"]),
-                    "created_at": str(row["created_at"]),
+                    "created_at": row["created_at"] or "unknown",
                 }
                 for row in rows
                 if float(row["score"]) > 0.5  # minimum similarity threshold
