@@ -26,7 +26,7 @@ from PIL import Image
 
 from alpha_app.constants import OLLAMA_CHAT_MODEL, OLLAMA_NUM_CTX, OLLAMA_URL
 from alpha_app.memories import garage
-from alpha_app.memories.embeddings import embed_document, embed_query
+from alpha_app.memories.embeddings import embed_document as _embed_document, embed_query as _embed_query
 
 # -- Config -------------------------------------------------------------------
 
@@ -81,19 +81,20 @@ async def process_image(
             logfire.warn("vision: caption failed, skipping")
             return []
 
-        # Step 6: Embed the caption
-        embedding = await embed_query(caption)
-
-        # Step 7: Fork based on novelty
+        # Step 6 + 7: Fork based on novelty.
+        # NEW image: embed as DOCUMENT (search_document: prefix) → store in Cortex.
+        # KNOWN image: embed as QUERY (search_query: prefix) → cosine search Cortex.
+        # The prefix matters: nomic-embed-text produces different vectors for
+        # documents vs queries, optimized for asymmetric retrieval.
         if not is_known and db_pool:
-            # NEW image — store a memory
+            doc_embedding = await _embed_document(caption)
             await _store_image_memory(
-                db_pool, caption, embedding, garage_key, source, content_hash,
+                db_pool, caption, doc_embedding, garage_key, source, content_hash,
             )
             return []
         elif db_pool:
-            # KNOWN image — recall related memories
-            return await _search_memories(db_pool, embedding)
+            query_embedding = await _embed_query(caption)
+            return await _search_memories(db_pool, query_embedding)
         else:
             return []
 
@@ -122,7 +123,21 @@ def _resize_to_1mp(image_data: bytes) -> bytes:
 
 async def _caption_image(image_b64: str) -> str:
     """Send image to Qwen 3.5 4B for captioning."""
-    with logfire.span("vision.caption", model=OLLAMA_CHAT_MODEL):
+    import json as _json
+
+    messages = [{"role": "user", "content": CAPTION_PROMPT, "images": ["(image)"]}]
+
+    with logfire.span(
+        "vision.caption",
+        **{
+            "gen_ai.operation.name": "chat",
+            "gen_ai.system": "ollama",
+            "gen_ai.provider.name": "ollama",
+            "gen_ai.response.model": OLLAMA_CHAT_MODEL,
+            "gen_ai.system_instructions": CAPTION_PROMPT,
+            "gen_ai.input.messages": _json.dumps(messages),
+        },
+    ) as span:
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 resp = await client.post(
@@ -140,7 +155,22 @@ async def _caption_image(image_b64: str) -> str:
                     },
                 )
                 resp.raise_for_status()
-                return resp.json().get("message", {}).get("content", "")
+                data = resp.json()
+                caption = data.get("message", {}).get("content", "")
+
+                # Set gen_ai output attributes for Logfire Model Run card
+                span.set_attribute(
+                    "gen_ai.output.messages",
+                    _json.dumps([{"role": "assistant", "content": caption}]),
+                )
+                tokens = data.get("eval_count", 0)
+                if tokens:
+                    span.set_attribute("gen_ai.usage.output_tokens", tokens)
+                prompt_tokens = data.get("prompt_eval_count", 0)
+                if prompt_tokens:
+                    span.set_attribute("gen_ai.usage.input_tokens", prompt_tokens)
+
+                return caption
         except Exception as e:
             logfire.warn("vision.caption failed: {error}", error=str(e))
             return ""
