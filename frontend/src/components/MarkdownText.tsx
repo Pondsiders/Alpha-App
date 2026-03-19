@@ -17,7 +17,7 @@ export const MarkdownText: FC<MarkdownTextProps> = ({ text }) => {
       remarkPlugins={[remarkGfm]}
       components={{
         p: ({ children }) => (
-          <p className="mb-4">{children}</p>
+          <p className="mb-4 last:mb-0">{children}</p>
         ),
         ul: ({ children }) => (
           <ul className="mb-4 pl-6 list-disc">{children}</ul>

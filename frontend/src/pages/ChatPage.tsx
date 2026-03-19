@@ -164,7 +164,7 @@ const AssistantMessage = () => {
 
   return (
     <MessagePrimitive.Root data-testid="assistant-message" className="mb-6 pl-2 pr-12 group/assistant">
-      <div className="text-text leading-relaxed flex flex-col gap-3">
+      <div className="text-text leading-relaxed flex flex-col gap-8">
         <MessagePrimitive.Parts
           components={{
             Text: MarkdownText,
