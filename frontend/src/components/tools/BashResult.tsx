@@ -18,11 +18,15 @@ import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
 /** Max lines to show before truncating. */
 const TRUNCATE_AFTER = 15;
 
+/** Max visible command length before truncating with ellipsis. */
+const CMD_TRUNCATE = 80;
+
 export const BashResult: ToolCallMessagePartComponent = ({
   argsText,
   result,
 }) => {
   const [expanded, setExpanded] = useState(false);
+  const [cmdExpanded, setCmdExpanded] = useState(false);
   const outputRef = useRef<HTMLPreElement>(null);
 
   // Parse args
@@ -105,9 +109,28 @@ export const BashResult: ToolCallMessagePartComponent = ({
           {description && (
             <div className="text-[12px] text-muted mb-0.5">{description}</div>
           )}
-          <code className="text-[13px] text-text break-all leading-snug">
-            {command}
-          </code>
+          {command.length > CMD_TRUNCATE && !cmdExpanded ? (
+            <code
+              className="text-[13px] text-text leading-snug cursor-pointer"
+              onClick={() => setCmdExpanded(true)}
+              title="Click to show full command"
+            >
+              {command.slice(0, CMD_TRUNCATE)}
+              <span className="text-muted">…</span>
+            </code>
+          ) : command.length > CMD_TRUNCATE ? (
+            <code
+              className="text-[13px] text-text break-all leading-snug cursor-pointer"
+              onClick={() => setCmdExpanded(false)}
+              title="Click to collapse"
+            >
+              {command}
+            </code>
+          ) : (
+            <code className="text-[13px] text-text break-all leading-snug">
+              {command}
+            </code>
+          )}
         </div>
         <span
           className={`w-2 h-2 mt-[5px] rounded-full shrink-0 ${isRunning ? "animate-pulse-dot" : ""}`}
