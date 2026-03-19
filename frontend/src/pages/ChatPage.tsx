@@ -16,6 +16,7 @@ import { MemoryCard } from "../components/MemoryCard";
 import { MemoryNote } from "../components/tools/MemoryNote";
 import { BashResult } from "../components/tools/BashResult";
 import { ReadResult } from "../components/tools/ReadResult";
+import { EditResult } from "../components/tools/EditResult";
 import { TopicBar } from "../components/TopicBar";
 import {
   ComposerAttachments,
@@ -170,6 +171,7 @@ const AssistantMessage = () => {
                 mcp__cortex__store: MemoryNote,
                 Bash: BashResult,
                 Read: ReadResult,
+                Edit: EditResult,
               },
               Fallback: ToolFallback,
             },
