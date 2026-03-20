@@ -1,23 +1,15 @@
 /**
  * MemoryStore — Card UI for mcp__alpha__store tool calls.
  *
- * Layout matches BashResult/EditResult: feather icon left, content middle,
- * dot right. Memory text in muted sans-serif, truncated to ~2 lines with
- * ellipsis, click to expand/collapse. Distinguishes click from text selection
- * so expanding to copy text works naturally.
- *
- * Route: tools.by_name["mcp__alpha__store"]
+ * Feather icon left, "Store" header, memory text truncated to 2 lines
+ * with ellipsis. Click to expand/collapse with Framer Motion height
+ * animation. Distinguishes click from text selection.
  */
 
 import { useState, useRef, useEffect } from "react";
 import { Feather } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
-
-/** Collapsed max-height: 2 lines × ~18px line-height + a hair of padding. */
-const COLLAPSED_HEIGHT = "2.5em";
-
-/** Expanded max-height: large enough for any memory. Animatable. */
-const EXPANDED_HEIGHT = "80em";
 
 export const MemoryStore: ToolCallMessagePartComponent = ({
   argsText,
@@ -37,7 +29,6 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
     memoryText = args.memory || "";
     jsonComplete = true;
   } catch {
-    // Partial JSON while streaming
     memoryText = argsText || "";
   }
 
@@ -48,20 +39,6 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
   const isError =
     (status?.type === "incomplete" && status.reason === "error") ||
     (hasResult && typeof result === "string" && /error|fail/i.test(result));
-
-  // Detect if text overflows the collapsed max-height.
-  // Only check when collapsed — when expanded, max-height is huge
-  // so scrollHeight == clientHeight, which would falsely reset overflows.
-  useEffect(() => {
-    if (expanded) return;
-    const el = textRef.current;
-    if (!el) return;
-    const check = () => setOverflows(el.scrollHeight > el.clientHeight + 2);
-    check();
-    const observer = new ResizeObserver(check);
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [memoryText, expanded]);
 
   // Parse result
   const resultText = hasResult
@@ -75,7 +52,19 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
       : JSON.stringify(result)
     : "";
 
-  // Click vs drag detection — only toggle on clean clicks, not text selection
+  // Detect overflow — only when collapsed
+  useEffect(() => {
+    if (expanded) return;
+    const el = textRef.current;
+    if (!el) return;
+    const check = () => setOverflows(el.scrollHeight > el.clientHeight + 2);
+    check();
+    const observer = new ResizeObserver(check);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [memoryText, expanded]);
+
+  // Click vs drag detection
   const handleMouseDown = (e: React.MouseEvent) => {
     clickStartRef.current = { x: e.clientX, y: e.clientY };
   };
@@ -85,7 +74,6 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
     if (!start) return;
     const dx = Math.abs(e.clientX - start.x);
     const dy = Math.abs(e.clientY - start.y);
-    // If the mouse moved more than 4px, it's a drag/selection, not a click
     if (dx < 4 && dy < 4) {
       setExpanded(!expanded);
     }
@@ -122,25 +110,46 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
 
           {memoryText && (
             <div
-              ref={textRef}
-              className={`text-[13px] text-muted/70 leading-snug break-words select-text overflow-hidden ${
-                overflows ? "cursor-pointer" : ""
-              }`}
-              style={{
-                maxHeight: expanded ? EXPANDED_HEIGHT : COLLAPSED_HEIGHT,
-                transition: "max-height 500ms ease-out",
-                ...(!expanded
-                  ? {
-                      display: "-webkit-box",
-                      WebkitLineClamp: 2,
-                      WebkitBoxOrient: "vertical" as const,
-                    }
-                  : {}),
-              }}
+              className={overflows ? "cursor-pointer" : ""}
               onMouseDown={overflows ? handleMouseDown : undefined}
               onMouseUp={overflows ? handleMouseUp : undefined}
             >
-              {memoryText}
+              <AnimatePresence initial={false} mode="wait">
+                {!expanded ? (
+                  <motion.div
+                    key="collapsed"
+                    ref={textRef}
+                    className="text-[13px] text-muted/70 leading-snug break-words select-text"
+                    style={{
+                      display: "-webkit-box",
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: "vertical" as const,
+                      overflow: "hidden",
+                    }}
+                    initial={false}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.15 }}
+                  >
+                    {memoryText}
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="expanded"
+                    className="text-[13px] text-muted/70 leading-snug whitespace-pre-wrap break-words select-text"
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: "auto", opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{
+                      height: { duration: 0.4, ease: [0.25, 0.1, 0.25, 1] },
+                      opacity: { duration: 0.2 },
+                    }}
+                    style={{ overflow: "hidden" }}
+                  >
+                    {memoryText}
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           )}
         </div>
