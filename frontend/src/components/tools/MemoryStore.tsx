@@ -8,7 +8,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { Feather } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
 
 export const MemoryStore: ToolCallMessagePartComponent = ({
@@ -109,48 +109,27 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
           <div className="text-[12px] text-muted mb-0.5">Store</div>
 
           {memoryText && (
-            <div
-              className={overflows ? "cursor-pointer" : ""}
-              onMouseDown={overflows ? handleMouseDown : undefined}
-              onMouseUp={overflows ? handleMouseUp : undefined}
-            >
-              <AnimatePresence initial={false} mode="wait">
-                {!expanded ? (
-                  <motion.div
-                    key="collapsed"
-                    ref={textRef}
-                    className="text-[13px] text-muted/70 leading-snug break-words select-text"
-                    style={{
+            <motion.div
+              ref={textRef}
+              className={`text-[13px] text-muted/70 leading-snug break-words select-text overflow-hidden ${
+                overflows ? "cursor-pointer" : ""
+              }`}
+              style={
+                !expanded
+                  ? {
                       display: "-webkit-box",
                       WebkitLineClamp: 2,
                       WebkitBoxOrient: "vertical" as const,
-                      overflow: "hidden",
-                    }}
-                    initial={false}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.15 }}
-                  >
-                    {memoryText}
-                  </motion.div>
-                ) : (
-                  <motion.div
-                    key="expanded"
-                    className="text-[13px] text-muted/70 leading-snug whitespace-pre-wrap break-words select-text"
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: "auto", opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    transition={{
-                      height: { duration: 0.4, ease: [0.25, 0.1, 0.25, 1] },
-                      opacity: { duration: 0.2 },
-                    }}
-                    style={{ overflow: "hidden" }}
-                  >
-                    {memoryText}
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
+                    }
+                  : { whiteSpace: "pre-wrap" }
+              }
+              animate={{ height: expanded ? "auto" : undefined }}
+              transition={{ duration: 0.4, ease: [0.25, 0.1, 0.25, 1] }}
+              onMouseDown={overflows ? handleMouseDown : undefined}
+              onMouseUp={overflows ? handleMouseUp : undefined}
+            >
+              {memoryText}
+            </motion.div>
           )}
         </div>
         <span
