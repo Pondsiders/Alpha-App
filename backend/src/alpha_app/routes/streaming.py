@@ -196,6 +196,33 @@ async def stream_chat_events(connections: set, chat: Chat, span=None) -> Assista
                         else:
                             msg.parts.append({"type": "thinking", "thinking": text})
 
+                elif event.delta_type == "input_json_delta":
+                    # Tool-use JSON streaming — forward partial JSON fragments
+                    # so the frontend can render a live ticker during dead air.
+                    partial = event.delta_partial_json
+                    if partial:
+                        await broadcast(connections, {
+                            "type": "tool-use-delta",
+                            "chatId": chat_id,
+                            "data": {
+                                "index": event.index,
+                                "partialJson": partial,
+                            },
+                        }, persist=False)
+
+                elif event.event_type == "content_block_start" and event.block_type == "tool_use":
+                    # Tool-use start — the card shell appears immediately.
+                    # Fires before any input_json_delta events for this block.
+                    await broadcast(connections, {
+                        "type": "tool-use-start",
+                        "chatId": chat_id,
+                        "data": {
+                            "toolCallId": event.block_id,
+                            "toolName": event.block_name,
+                            "index": event.index,
+                        },
+                    }, persist=False)
+
             elif isinstance(event, AssistantEvent):
                 output_parts.extend(event.content)
                 for block in event.content:

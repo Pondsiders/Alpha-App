@@ -182,8 +182,20 @@ class StreamEvent(Event):
         return delta.get("text", "") or delta.get("thinking", "")
 
     @property
+    def delta_partial_json(self) -> str:
+        return self.inner.get("delta", {}).get("partial_json", "")
+
+    @property
     def block_type(self) -> str:
         return self.inner.get("content_block", {}).get("type", "")
+
+    @property
+    def block_id(self) -> str:
+        return self.inner.get("content_block", {}).get("id", "")
+
+    @property
+    def block_name(self) -> str:
+        return self.inner.get("content_block", {}).get("name", "")
 
 
 # Internal — not yielded to consumers

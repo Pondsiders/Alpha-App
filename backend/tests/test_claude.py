@@ -179,6 +179,62 @@ class TestParseStreamEvent:
         })
         assert event.delta_text == ""
 
+    def test_input_json_delta(self):
+        """Tool-use JSON streaming deltas expose partial_json."""
+        raw = {
+            "type": "stream_event",
+            "event": {
+                "type": "content_block_delta",
+                "index": 2,
+                "delta": {"type": "input_json_delta", "partial_json": '{"mem'},
+            },
+        }
+        event = Claude._parse_event(raw)
+        assert isinstance(event, StreamEvent)
+        assert event.delta_type == "input_json_delta"
+        assert event.delta_partial_json == '{"mem'
+        assert event.index == 2
+        # Should NOT appear in delta_text (that's for text/thinking only)
+        assert event.delta_text == ""
+
+    def test_content_block_start_tool_use(self):
+        """content_block_start with tool_use exposes block_id and block_name."""
+        raw = {
+            "type": "stream_event",
+            "event": {
+                "type": "content_block_start",
+                "index": 1,
+                "content_block": {
+                    "type": "tool_use",
+                    "id": "toolu_01ABC",
+                    "name": "Bash",
+                },
+            },
+        }
+        event = Claude._parse_event(raw)
+        assert isinstance(event, StreamEvent)
+        assert event.event_type == "content_block_start"
+        assert event.block_type == "tool_use"
+        assert event.block_id == "toolu_01ABC"
+        assert event.block_name == "Bash"
+        assert event.index == 1
+
+    def test_partial_json_empty_when_missing(self):
+        """delta_partial_json returns empty string for non-json deltas."""
+        event = StreamEvent(raw={}, inner={
+            "delta": {"type": "text_delta", "text": "hello"},
+        })
+        assert event.delta_partial_json == ""
+
+    def test_block_id_empty_when_no_content_block(self):
+        """block_id returns empty string for non-start events."""
+        event = StreamEvent(raw={}, inner={
+            "type": "content_block_delta",
+            "delta": {"type": "text_delta", "text": "x"},
+        })
+        assert event.block_id == ""
+        assert event.block_name == ""
+
     def test_malformed_missing_event(self):
         """Missing 'event' key doesn't crash."""
         event = Claude._parse_event({"type": "stream_event"})
