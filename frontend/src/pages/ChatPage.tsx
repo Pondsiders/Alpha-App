@@ -14,6 +14,7 @@ import { ArrowUp, Square, Copy, Check } from "lucide-react";
 import { ToolFallback } from "../components/ToolFallback";
 import { MemoryCard } from "../components/MemoryCard";
 import { MemoryNote } from "../components/tools/MemoryNote";
+import { MemoryStore } from "../components/tools/MemoryStore";
 import { BashResult } from "../components/tools/BashResult";
 import { ReadResult } from "../components/tools/ReadResult";
 import { EditResult } from "../components/tools/EditResult";
@@ -187,6 +188,7 @@ const AssistantMessage = () => {
             tools: {
               by_name: {
                 mcp__cortex__store: MemoryNote,
+                mcp__alpha__store: MemoryStore,
                 Bash: BashResult,
                 Read: ReadResult,
                 Edit: EditResult,

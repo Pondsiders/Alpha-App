@@ -5,6 +5,7 @@ import ChatPage from "./pages/ChatPage";
 import DevContextMeter from "./pages/DevContextMeter";
 import DevStatusBar from "./pages/DevStatusBar";
 import DevTopics from "./pages/DevTopics";
+import DevMemoryStore from "./pages/DevMemoryStore";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
 import { useWebSocket, type ServerEvent, type ClientMessage } from "@/lib/useWebSocket";
@@ -835,6 +836,7 @@ function App() {
         <Route path="/dev/context-meter" element={<DevContextMeter />} />
         <Route path="/dev/status-bar" element={<DevStatusBar />} />
         <Route path="/dev/topics" element={<DevTopics />} />
+        <Route path="/dev/memory-store" element={<DevMemoryStore />} />
       </Routes>
     </BrowserRouter>
   );
