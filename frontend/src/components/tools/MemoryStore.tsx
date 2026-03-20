@@ -6,7 +6,7 @@
  */
 
 import { useState, useRef } from "react";
-import { Feather } from "lucide-react";
+import { Feather, ChevronDown } from "lucide-react";
 import { motion } from "framer-motion";
 import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
 
@@ -41,16 +41,15 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
     (status?.type === "incomplete" && status.reason === "error") ||
     (hasResult && typeof result === "string" && /error|fail/i.test(result));
 
-  // Get the real content height for the expanded state
-  const getContentHeight = () => {
-    if (!contentRef.current) return COLLAPSED_PX;
-    return contentRef.current.scrollHeight;
-  };
+  // Get heights — collapsed is min(content, COLLAPSED_PX) so short
+  // memories don't get padded to 2 lines
+  const getFullHeight = () => contentRef.current?.scrollHeight ?? COLLAPSED_PX;
+  const getCollapsedHeight = () => Math.min(getFullHeight(), COLLAPSED_PX);
 
-  // Does it need truncation?
+  // Does the content overflow the collapsed height?
   const needsTruncation = contentRef.current
     ? contentRef.current.scrollHeight > COLLAPSED_PX + 4
-    : memoryText.length > 100; // rough guess before first render
+    : memoryText.length > 100;
 
   // Result text
   const resultText = hasResult
@@ -101,20 +100,30 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
           <div className="text-[12px] text-muted mb-0.5">Store</div>
 
           {memoryText && (
-            <motion.div
-              className={`overflow-hidden ${needsTruncation ? "cursor-pointer" : ""}`}
-              animate={{ height: expanded ? getContentHeight() : COLLAPSED_PX }}
-              transition={{ duration: 0.4, ease: [0.4, 0, 0.2, 1] }}
-              onMouseDown={needsTruncation ? handleMouseDown : undefined}
-              onMouseUp={needsTruncation ? handleMouseUp : undefined}
-            >
-              <div
-                ref={contentRef}
-                className="text-[13px] text-muted/70 leading-snug whitespace-pre-wrap break-words select-text"
+            <div className="relative">
+              <motion.div
+                className={`overflow-hidden ${needsTruncation ? "cursor-pointer" : ""}`}
+                initial={false}
+                animate={{ height: expanded ? getFullHeight() : getCollapsedHeight() }}
+                transition={{ duration: 0.4, ease: [0.4, 0, 0.2, 1] }}
+                onMouseDown={needsTruncation ? handleMouseDown : undefined}
+                onMouseUp={needsTruncation ? handleMouseUp : undefined}
               >
-                {memoryText}
-              </div>
-            </motion.div>
+                <div
+                  ref={contentRef}
+                  className="text-[13px] text-muted/70 leading-snug whitespace-pre-wrap break-words select-text"
+                >
+                  {memoryText}
+                </div>
+              </motion.div>
+
+              {/* "More" indicator — only when collapsed and overflowing */}
+              {!expanded && needsTruncation && (
+                <div className="absolute bottom-0 right-0 flex items-center text-muted/30">
+                  <ChevronDown size={14} />
+                </div>
+              )}
+            </div>
           )}
         </div>
         <span
