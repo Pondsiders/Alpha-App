@@ -111,7 +111,8 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
           {memoryText && (
             <motion.div
               ref={textRef}
-              className={`text-[13px] text-muted/70 leading-snug break-words select-text overflow-hidden ${
+              layout
+              className={`text-[13px] text-muted/70 leading-snug break-words select-text ${
                 overflows ? "cursor-pointer" : ""
               }`}
               style={
@@ -120,11 +121,11 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
                       display: "-webkit-box",
                       WebkitLineClamp: 2,
                       WebkitBoxOrient: "vertical" as const,
+                      overflow: "hidden",
                     }
                   : { whiteSpace: "pre-wrap" }
               }
-              animate={{ height: expanded ? "auto" : undefined }}
-              transition={{ duration: 0.4, ease: [0.25, 0.1, 0.25, 1] }}
+              transition={{ layout: { duration: 0.35, ease: [0.25, 0.1, 0.25, 1] } }}
               onMouseDown={overflows ? handleMouseDown : undefined}
               onMouseUp={overflows ? handleMouseUp : undefined}
             >
