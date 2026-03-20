@@ -13,8 +13,11 @@ import { useState, useRef, useEffect } from "react";
 import { Feather } from "lucide-react";
 import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
 
-/** Number of lines to show before truncating. */
-const LINE_CLAMP = 2;
+/** Collapsed max-height: 2 lines × ~18px line-height + a hair of padding. */
+const COLLAPSED_HEIGHT = "2.5em";
+
+/** Expanded max-height: large enough for any memory. Animatable. */
+const EXPANDED_HEIGHT = "80em";
 
 export const MemoryStore: ToolCallMessagePartComponent = ({
   argsText,
@@ -46,8 +49,8 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
     (status?.type === "incomplete" && status.reason === "error") ||
     (hasResult && typeof result === "string" && /error|fail/i.test(result));
 
-  // Detect if text overflows the line-clamp.
-  // Only check when collapsed — when expanded, line-clamp is off
+  // Detect if text overflows the collapsed max-height.
+  // Only check when collapsed — when expanded, max-height is huge
   // so scrollHeight == clientHeight, which would falsely reset overflows.
   useEffect(() => {
     if (expanded) return;
@@ -120,19 +123,13 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
           {memoryText && (
             <div
               ref={textRef}
-              className={`text-[13px] text-muted/70 leading-snug break-words select-text ${
+              className={`text-[13px] text-muted/70 leading-snug break-words select-text overflow-hidden ${
                 overflows ? "cursor-pointer" : ""
               }`}
-              style={
-                !expanded
-                  ? {
-                      display: "-webkit-box",
-                      WebkitLineClamp: LINE_CLAMP,
-                      WebkitBoxOrient: "vertical" as const,
-                      overflow: "hidden",
-                    }
-                  : undefined
-              }
+              style={{
+                maxHeight: expanded ? EXPANDED_HEIGHT : COLLAPSED_HEIGHT,
+                transition: "max-height 250ms ease-out",
+              }}
               onMouseDown={overflows ? handleMouseDown : undefined}
               onMouseUp={overflows ? handleMouseUp : undefined}
             >
