@@ -8,7 +8,6 @@
 
 import { useState, useRef, useEffect } from "react";
 import { Feather } from "lucide-react";
-import { motion } from "framer-motion";
 import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
 
 export const MemoryStore: ToolCallMessagePartComponent = ({
@@ -18,7 +17,10 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
 }) => {
   const [expanded, setExpanded] = useState(false);
   const [overflows, setOverflows] = useState(false);
+  const [collapsedHeight, setCollapsedHeight] = useState<number | null>(null);
+  const [fullHeight, setFullHeight] = useState<number | null>(null);
   const textRef = useRef<HTMLDivElement>(null);
+  const measureRef = useRef<HTMLDivElement>(null);
   const clickStartRef = useRef<{ x: number; y: number } | null>(null);
 
   // Parse memory text from args
@@ -52,17 +54,28 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
       : JSON.stringify(result)
     : "";
 
-  // Detect overflow — only when collapsed
+  // Measure collapsed and full heights once on mount / text change.
+  // A hidden measurer div (off-screen) gives us exact pixel values.
   useEffect(() => {
-    if (expanded) return;
-    const el = textRef.current;
-    if (!el) return;
-    const check = () => setOverflows(el.scrollHeight > el.clientHeight + 2);
-    check();
-    const observer = new ResizeObserver(check);
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [memoryText, expanded]);
+    const el = measureRef.current;
+    if (!el || !memoryText) return;
+
+    // Full height — no clamp
+    el.style.cssText = "position:absolute;visibility:hidden;width:" + (textRef.current?.offsetWidth || 300) + "px;white-space:pre-wrap;word-break:break-word;font-size:13px;line-height:1.375;";
+    el.textContent = memoryText;
+    const full = el.offsetHeight;
+
+    // Collapsed height — clamp to 2 lines
+    el.style.cssText += "display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;";
+    const collapsed = el.offsetHeight;
+
+    setFullHeight(full);
+    setCollapsedHeight(collapsed);
+    setOverflows(full > collapsed + 2);
+
+    el.style.cssText = "position:absolute;visibility:hidden;";
+    el.textContent = "";
+  }, [memoryText]);
 
   // Click vs drag detection
   const handleMouseDown = (e: React.MouseEvent) => {
@@ -109,28 +122,32 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
           <div className="text-[12px] text-muted mb-0.5">Store</div>
 
           {memoryText && (
-            <motion.div
-              ref={textRef}
-              layout
-              className={`text-[13px] text-muted/70 leading-snug break-words select-text ${
-                overflows ? "cursor-pointer" : ""
-              }`}
-              style={
-                !expanded
-                  ? {
-                      display: "-webkit-box",
-                      WebkitLineClamp: 2,
-                      WebkitBoxOrient: "vertical" as const,
-                      overflow: "hidden",
-                    }
-                  : { whiteSpace: "pre-wrap" }
-              }
-              transition={{ layout: { duration: 0.35, ease: [0.25, 0.1, 0.25, 1] } }}
-              onMouseDown={overflows ? handleMouseDown : undefined}
-              onMouseUp={overflows ? handleMouseUp : undefined}
-            >
-              {memoryText}
-            </motion.div>
+            <>
+              {/* Hidden measurer — off-screen, used to calculate heights */}
+              <div ref={measureRef} style={{ position: "absolute", visibility: "hidden" }} />
+
+              {/* Visible text — animates between collapsedHeight and fullHeight */}
+              <div
+                ref={textRef}
+                className={`text-[13px] text-muted/70 leading-snug break-words select-text overflow-hidden ${
+                  overflows ? "cursor-pointer" : ""
+                }`}
+                style={{
+                  height: expanded
+                    ? fullHeight != null ? `${fullHeight}px` : "auto"
+                    : collapsedHeight != null ? `${collapsedHeight}px` : "auto",
+                  transition: overflows ? "height 2500ms ease-in-out" : undefined,
+                  whiteSpace: "pre-wrap",
+                }}
+                onMouseDown={overflows ? handleMouseDown : undefined}
+                onMouseUp={overflows ? handleMouseUp : undefined}
+              >
+                {memoryText}
+                {!expanded && overflows && (
+                  <span className="text-muted/40">...</span>
+                )}
+              </div>
+            </>
           )}
         </div>
         <span
