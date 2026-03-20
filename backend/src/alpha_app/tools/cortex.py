@@ -17,12 +17,14 @@ from typing import Callable, TYPE_CHECKING
 
 from mcp.server.fastmcp import FastMCP
 
+from ..db import get_pool
 from ..memories.cortex import (
     store as cortex_store,
     search as cortex_search,
     recent as cortex_recent,
     get as cortex_get,
 )
+from ..memories.dream import dream as dream_generate
 from ..memories.recall import mark_seen
 
 if TYPE_CHECKING:
@@ -145,6 +147,59 @@ def create_cortex_server(
         result += image_flag
 
         return result
+
+    # -- Dream tool (image generation via Runpod + vision pipeline) --
+
+    @server.tool(
+        description=(
+            "Generate an image from a text prompt. The image is created by SDXL "
+            "on Runpod, then processed through the vision pipeline: stored in "
+            "Garage, captioned by Qwen, embedded, and either stored as a new "
+            "memory or matched against existing memories. Returns the image "
+            "as a viewable content block."
+        ),
+    )
+    async def imagine(
+        prompt: str,
+        negative_prompt: str = "blurry, low quality, deformed, ugly, text, watermark, signature",
+        width: int = 1152,
+        height: int = 768,
+    ) -> list:
+        """Generate an image and process it through the vision pipeline."""
+        result = await dream_generate(
+            prompt,
+            negative_prompt=negative_prompt,
+            width=width,
+            height=height,
+            db_pool=get_pool(),
+        )
+
+        if "error" in result:
+            return [{"type": "text", "text": f"Dream failed: {result['error']}"}]
+
+        # Build response: image content block + text summary
+        parts = []
+
+        # The image as a viewable content block
+        parts.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": "image/png",
+                "data": result["image"],
+            },
+        })
+
+        # Text summary
+        summary = f'Dream: "{prompt}" ({result["generation_time"]:.1f}s)'
+        if result.get("memory_stored"):
+            summary += " — stored as new memory"
+        if result.get("memories"):
+            memory_ids = [str(m["id"]) for m in result["memories"]]
+            summary += f" — recalled: #{', #'.join(memory_ids)}"
+        parts.append({"type": "text", "text": summary})
+
+        return parts
 
     # -- Topic context tool --
     if topic_registry is not None:
