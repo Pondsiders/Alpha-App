@@ -1,20 +1,20 @@
 /**
  * MemoryStore — Card UI for mcp__alpha__store tool calls.
  *
- * Layout matches BashResult/EditResult: icon left, content middle, dot right.
- * Memory text displayed in muted sans-serif, two-line truncation with
- * click-to-expand. Output shows "Memory stored (id: N)" on success,
- * screams on failure.
+ * Layout matches BashResult/EditResult: feather icon left, content middle,
+ * dot right. Memory text in muted sans-serif, truncated to ~2 lines with
+ * ellipsis, click to expand/collapse. Distinguishes click from text selection
+ * so expanding to copy text works naturally.
  *
  * Route: tools.by_name["mcp__alpha__store"]
  */
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef } from "react";
 import { Feather } from "lucide-react";
 import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
 
-/** Max height for collapsed memory text: ~2 lines at 13px. */
-const COLLAPSED_MAX = "2.6em";
+/** Approximate characters before truncation (2 lines at ~60 chars/line). */
+const TRUNCATE_CHARS = 120;
 
 export const MemoryStore: ToolCallMessagePartComponent = ({
   argsText,
@@ -22,8 +22,7 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
   status,
 }) => {
   const [expanded, setExpanded] = useState(false);
-  const [overflows, setOverflows] = useState(false);
-  const textRef = useRef<HTMLDivElement>(null);
+  const clickStartRef = useRef<{ x: number; y: number } | null>(null);
 
   // Parse memory text from args
   let memoryText = "";
@@ -45,6 +44,13 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
     (status?.type === "incomplete" && status.reason === "error") ||
     (hasResult && typeof result === "string" && /error|fail/i.test(result));
 
+  // Truncation
+  const needsTruncation = memoryText.length > TRUNCATE_CHARS;
+  const displayText =
+    !expanded && needsTruncation
+      ? memoryText.slice(0, TRUNCATE_CHARS).trimEnd()
+      : memoryText;
+
   // Parse result
   const resultText = hasResult
     ? typeof result === "string"
@@ -57,16 +63,22 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
       : JSON.stringify(result)
     : "";
 
-  // Detect overflow after text renders
-  useEffect(() => {
-    const el = textRef.current;
-    if (!el || expanded) return;
-    const check = () => setOverflows(el.scrollHeight > el.clientHeight + 2);
-    check();
-    const observer = new ResizeObserver(check);
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [memoryText, expanded]);
+  // Click vs drag detection — only toggle on clean clicks, not text selection
+  const handleMouseDown = (e: React.MouseEvent) => {
+    clickStartRef.current = { x: e.clientX, y: e.clientY };
+  };
+  const handleMouseUp = (e: React.MouseEvent) => {
+    if (!needsTruncation) return;
+    const start = clickStartRef.current;
+    if (!start) return;
+    const dx = Math.abs(e.clientX - start.x);
+    const dy = Math.abs(e.clientY - start.y);
+    // If the mouse moved more than 4px, it's a drag/selection, not a click
+    if (dx < 4 && dy < 4) {
+      setExpanded(!expanded);
+    }
+    clickStartRef.current = null;
+  };
 
   // Theme colors
   const dotColor = isStreaming || isRunning
@@ -86,7 +98,7 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
       data-testid="memory-store"
       className="w-full rounded-lg border border-border overflow-hidden"
     >
-      {/* Header — "Store" + dot */}
+      {/* Header */}
       <div className="flex items-start gap-2 px-3 py-2.5 bg-surface">
         <Feather
           size={14}
@@ -96,29 +108,17 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
         <div className="min-w-0 flex-1">
           <div className="text-[12px] text-muted mb-0.5">Store</div>
 
-          {/* Memory text — muted, sans-serif, truncatable */}
           {memoryText && (
             <div
-              className={`relative ${overflows && !expanded ? "cursor-pointer" : ""}`}
-              onClick={() => overflows && setExpanded(!expanded)}
+              className={`text-[13px] text-muted/70 leading-snug whitespace-pre-wrap break-words select-text ${
+                needsTruncation ? "cursor-pointer" : ""
+              }`}
+              onMouseDown={needsTruncation ? handleMouseDown : undefined}
+              onMouseUp={needsTruncation ? handleMouseUp : undefined}
             >
-              <div
-                ref={textRef}
-                className="text-[13px] text-muted/70 leading-snug whitespace-pre-wrap break-words transition-[max-height] duration-300 ease-in-out"
-                style={{ maxHeight: expanded ? "2000px" : COLLAPSED_MAX }}
-              >
-                {memoryText}
-              </div>
-
-              {/* Gradient fade when truncated */}
-              {!expanded && overflows && (
-                <div
-                  className="absolute bottom-0 left-0 right-0 h-5 pointer-events-none"
-                  style={{
-                    background:
-                      "linear-gradient(to top, var(--theme-surface), transparent)",
-                  }}
-                />
+              {displayText}
+              {!expanded && needsTruncation && (
+                <span className="text-muted/40">...</span>
               )}
             </div>
           )}
@@ -131,7 +131,7 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
         />
       </div>
 
-      {/* Result — success or error */}
+      {/* Result */}
       {hasResult && (
         <div
           className={`px-3 py-2 border-t border-border bg-code-bg text-xs font-mono ${
@@ -142,7 +142,7 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
         </div>
       )}
 
-      {/* Error state — loud */}
+      {/* Error without result */}
       {isError && !hasResult && (
         <div className="px-3 py-2 border-t border-border bg-error/10 text-error text-xs font-mono font-bold">
           STORE FAILED
