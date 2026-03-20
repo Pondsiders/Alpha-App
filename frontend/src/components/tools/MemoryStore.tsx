@@ -9,12 +9,12 @@
  * Route: tools.by_name["mcp__alpha__store"]
  */
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Feather } from "lucide-react";
 import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
 
-/** Approximate characters before truncation (2 lines at ~60 chars/line). */
-const TRUNCATE_CHARS = 120;
+/** Number of lines to show before truncating. */
+const LINE_CLAMP = 2;
 
 export const MemoryStore: ToolCallMessagePartComponent = ({
   argsText,
@@ -22,6 +22,8 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
   status,
 }) => {
   const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  const textRef = useRef<HTMLDivElement>(null);
   const clickStartRef = useRef<{ x: number; y: number } | null>(null);
 
   // Parse memory text from args
@@ -44,12 +46,16 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
     (status?.type === "incomplete" && status.reason === "error") ||
     (hasResult && typeof result === "string" && /error|fail/i.test(result));
 
-  // Truncation
-  const needsTruncation = memoryText.length > TRUNCATE_CHARS;
-  const displayText =
-    !expanded && needsTruncation
-      ? memoryText.slice(0, TRUNCATE_CHARS).trimEnd()
-      : memoryText;
+  // Detect if text overflows the line-clamp
+  useEffect(() => {
+    const el = textRef.current;
+    if (!el) return;
+    const check = () => setOverflows(el.scrollHeight > el.clientHeight + 2);
+    check();
+    const observer = new ResizeObserver(check);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [memoryText]);
 
   // Parse result
   const resultText = hasResult
@@ -68,7 +74,7 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
     clickStartRef.current = { x: e.clientX, y: e.clientY };
   };
   const handleMouseUp = (e: React.MouseEvent) => {
-    if (!needsTruncation) return;
+    if (!overflows) return;
     const start = clickStartRef.current;
     if (!start) return;
     const dx = Math.abs(e.clientX - start.x);
@@ -110,16 +116,24 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
 
           {memoryText && (
             <div
-              className={`text-[13px] text-muted/70 leading-snug whitespace-pre-wrap break-words select-text ${
-                needsTruncation ? "cursor-pointer" : ""
+              ref={textRef}
+              className={`text-[13px] text-muted/70 leading-snug break-words select-text ${
+                overflows ? "cursor-pointer" : ""
               }`}
-              onMouseDown={needsTruncation ? handleMouseDown : undefined}
-              onMouseUp={needsTruncation ? handleMouseUp : undefined}
+              style={
+                !expanded && overflows
+                  ? {
+                      display: "-webkit-box",
+                      WebkitLineClamp: LINE_CLAMP,
+                      WebkitBoxOrient: "vertical" as const,
+                      overflow: "hidden",
+                    }
+                  : undefined
+              }
+              onMouseDown={overflows ? handleMouseDown : undefined}
+              onMouseUp={overflows ? handleMouseUp : undefined}
             >
-              {displayText}
-              {!expanded && needsTruncation && (
-                <span className="text-muted/40">...</span>
-              )}
+              {memoryText}
             </div>
           )}
         </div>
