@@ -30,7 +30,7 @@ from alpha_app import AssistantEvent, ResultEvent, SystemEvent
 from alpha_app.chat import Chat, ConversationState
 from alpha_app.routes.enrobe import enrobe
 from alpha_app.routes.spans import format_input_messages, format_output_messages
-from alpha_app.tools import create_cortex_server, create_handoff_server
+from alpha_app.tools import create_alpha_server
 
 PACIFIC = "America/Los_Angeles"
 
@@ -74,9 +74,7 @@ def _set_solitude_chat(app, chat: Chat | None) -> None:
 def _create_mcp_servers(chat: Chat, app=None) -> dict:
     """Create MCP tool servers for Solitude.
 
-    Same tools as the browser UI — cortex for memories, handoff for
-    context transitions. When we add fetch or other tools, they go here
-    too and Solitude gets them automatically.
+    Same server as the browser UI — one unified Alpha toolbelt.
     """
     def _clear() -> int:
         if chat._pending_intro:
@@ -86,11 +84,11 @@ def _create_mcp_servers(chat: Chat, app=None) -> dict:
 
     topic_registry = getattr(app.state, "topic_registry", None) if app else None
     return {
-        "cortex": create_cortex_server(
+        "alpha": create_alpha_server(
+            chat=chat,
             clear_memorables=_clear,
             topic_registry=topic_registry,
         ),
-        "handoff": create_handoff_server(chat),
     }
 
 

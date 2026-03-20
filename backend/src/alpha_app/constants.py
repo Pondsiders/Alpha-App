@@ -35,4 +35,4 @@ CONTEXT_WINDOW = 1_000_000
 
 OLLAMA_EMBED_MODEL = "nomic-embed-text"
 OLLAMA_CHAT_MODEL = "qwen3.5:4b"
-OLLAMA_NUM_CTX = 4096  # Same for recall AND suggest — prevents model reloads
+OLLAMA_NUM_CTX = 16384  # Same for recall, suggest, AND reading — prevents model reloads

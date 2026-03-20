@@ -24,7 +24,7 @@ from alpha_app.routes.enrobe import enrobe
 from alpha_app.routes.spans import build_prompt_preview, format_input_messages
 from alpha_app.routes.streaming import stream_chat_events
 from alpha_app.suggest import suggest, format_intro_block
-from alpha_app.tools import create_cortex_server, create_handoff_server
+from alpha_app.tools import create_alpha_server
 
 
 
@@ -114,13 +114,12 @@ async def handle_new_turn(
                     return 0
 
                 topic_registry = getattr(ws.app.state, "topic_registry", None)
-                cortex = create_cortex_server(
+                mcp_servers = {"alpha": create_alpha_server(
+                    chat=chat,
                     clear_memorables=_clear,
                     topic_registry=topic_registry,
                     session_id=chat.id,
-                )
-                handoff = create_handoff_server(chat)
-                mcp_servers = {"cortex": cortex, "handoff": handoff}
+                )}
 
                 await broadcast(connections, {
                     "type": "chat-state",

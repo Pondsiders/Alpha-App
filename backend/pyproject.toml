@@ -19,6 +19,8 @@ dependencies = [
     "APScheduler>=3.10.0,<4",
     "numpy>=2.4.3",
     "boto3>=1.42.71",
+    "tokenizers>=0.21.0",
+    "html2text>=2024.2.26",
 ]
 
 [project.scripts]
