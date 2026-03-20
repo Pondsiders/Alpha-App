@@ -233,6 +233,8 @@ function Layout() {
     appendToAssistant: useWorkshopStore.getState().appendToAssistant,
     appendThinking: useWorkshopStore.getState().appendThinking,
     addToolCall: useWorkshopStore.getState().addToolCall,
+    addStreamingToolCall: useWorkshopStore.getState().addStreamingToolCall,
+    appendToolUseDelta: useWorkshopStore.getState().appendToolUseDelta,
     updateToolResult: useWorkshopStore.getState().updateToolResult,
     updateChatTokens: useWorkshopStore.getState().updateChatTokens,
     addRemoteUserMessage: useWorkshopStore.getState().addRemoteUserMessage,
@@ -253,6 +255,8 @@ function Layout() {
     appendToAssistant: useWorkshopStore.getState().appendToAssistant,
     appendThinking: useWorkshopStore.getState().appendThinking,
     addToolCall: useWorkshopStore.getState().addToolCall,
+    addStreamingToolCall: useWorkshopStore.getState().addStreamingToolCall,
+    appendToolUseDelta: useWorkshopStore.getState().appendToolUseDelta,
     updateToolResult: useWorkshopStore.getState().updateToolResult,
     updateChatTokens: useWorkshopStore.getState().updateChatTokens,
     addRemoteUserMessage: useWorkshopStore.getState().addRemoteUserMessage,
@@ -274,6 +278,11 @@ function Layout() {
 
   // Replay buffer — accumulates events per chatId until replay-done
   const replayBuffersRef = useRef<Record<string, ServerEvent[]>>({});
+
+  // Tool-use index → toolCallId map — needed because input_json_delta events
+  // carry an index (position in content blocks) not a toolCallId. Keyed by
+  // chatId, then index → toolCallId. Cleared on done.
+  const toolIndexMapRef = useRef<Record<string, Record<number, string>>>({});
 
   // Guard for auto-create at /chat
   const createPendingRef = useRef(false);
@@ -481,7 +490,43 @@ function Layout() {
         break;
       }
 
+      case "tool-use-start": {
+        // Card shell appears immediately — before any JSON arrives.
+        if (!eChatId) break;
+        textBufferRef.current[eChatId]?.flush();
+        let tusAid = assistantIdMapRef.current[eChatId];
+        if (!tusAid) {
+          tusAid = actions.addRemoteAssistantPlaceholder(eChatId);
+          assistantIdMapRef.current[eChatId] = tusAid;
+        }
+        const tus = event.data as {
+          toolCallId: string;
+          toolName: string;
+          index: number;
+        };
+        // Register index → toolCallId mapping for subsequent deltas
+        if (!toolIndexMapRef.current[eChatId]) {
+          toolIndexMapRef.current[eChatId] = {};
+        }
+        toolIndexMapRef.current[eChatId][tus.index] = tus.toolCallId;
+        actions.addStreamingToolCall(tusAid, tus.toolCallId, tus.toolName, eChatId);
+        break;
+      }
+
+      case "tool-use-delta": {
+        // JSON fragment — feed the ticker.
+        if (!eChatId) break;
+        const tud = event.data as { index: number; partialJson: string };
+        const toolCallId = toolIndexMapRef.current[eChatId]?.[tud.index];
+        if (!toolCallId) break;
+        const tudAid = assistantIdMapRef.current[eChatId];
+        if (!tudAid) break;
+        actions.appendToolUseDelta(tudAid, toolCallId, tud.partialJson, eChatId);
+        break;
+      }
+
       case "tool-call": {
+        // Complete tool call — finalize the streaming placeholder.
         if (!eChatId) break;
         // Flush text buffer BEFORE rendering the tool call.
         // Otherwise buffered text would drain AFTER the tool call renders,
@@ -561,6 +606,7 @@ function Layout() {
         if (eChatId) {
           textBufferRef.current[eChatId]?.flush();
           delete textBufferRef.current[eChatId];
+          delete toolIndexMapRef.current[eChatId];
           assistantIdMapRef.current[eChatId] = null;
         }
         break;

@@ -18,6 +18,8 @@ export interface ServerEvent {
     | "text-delta"
     | "thinking-delta"
     | "tool-call"
+    | "tool-use-start"
+    | "tool-use-delta"
     | "tool-result"
     | "chat-created"
     | "chat-state"

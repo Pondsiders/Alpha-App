@@ -32,6 +32,8 @@ export type ToolCallPart = {
   argsText: string;
   result?: JSONValue;
   isError?: boolean;
+  /** True while input_json_delta events are still arriving. */
+  streaming?: boolean;
 };
 export type ContentPart = TextPart | ThinkingPart | ImagePart | ToolCallPart;
 
@@ -136,6 +138,8 @@ interface WorkshopActions {
   appendToAssistant: (messageId: string, text: string, chatId?: string) => void;
   appendThinking: (messageId: string, thinking: string, chatId?: string) => void;
   addToolCall: (messageId: string, toolCall: Omit<ToolCallPart, "type">, chatId?: string) => void;
+  addStreamingToolCall: (messageId: string, toolCallId: string, toolName: string, chatId?: string) => void;
+  appendToolUseDelta: (messageId: string, toolCallId: string, partialJson: string, chatId?: string) => void;
   updateToolResult: (
     messageId: string,
     toolCallId: string,
@@ -411,7 +415,55 @@ export const useWorkshopStore = create<WorkshopStore>()(
           if (cached) message = cached.find((m) => m.id === messageId);
         }
         if (!message || message.role !== "assistant") return;
-        message.content.push({ type: "tool-call", ...toolCall });
+        // If a streaming placeholder exists for this toolCallId, finalize it.
+        const existing = message.content.find(
+          (p): p is ToolCallPart =>
+            p.type === "tool-call" && p.toolCallId === toolCall.toolCallId
+        );
+        if (existing) {
+          existing.args = toolCall.args;
+          existing.argsText = toolCall.argsText;
+          existing.streaming = false;
+        } else {
+          message.content.push({ type: "tool-call", ...toolCall });
+        }
+      });
+    },
+
+    addStreamingToolCall: (messageId, toolCallId, toolName, chatId?) => {
+      set((state) => {
+        let message = state.messages.find((m) => m.id === messageId);
+        if (!message && chatId && chatId !== state.activeChatId) {
+          const cached = state.messageCache[chatId];
+          if (cached) message = cached.find((m) => m.id === messageId);
+        }
+        if (!message || message.role !== "assistant") return;
+        message.content.push({
+          type: "tool-call",
+          toolCallId,
+          toolName,
+          args: {},
+          argsText: "",
+          streaming: true,
+        });
+      });
+    },
+
+    appendToolUseDelta: (messageId, toolCallId, partialJson, chatId?) => {
+      set((state) => {
+        let message = state.messages.find((m) => m.id === messageId);
+        if (!message && chatId && chatId !== state.activeChatId) {
+          const cached = state.messageCache[chatId];
+          if (cached) message = cached.find((m) => m.id === messageId);
+        }
+        if (!message) return;
+        const toolCall = message.content.find(
+          (p): p is ToolCallPart =>
+            p.type === "tool-call" && p.toolCallId === toolCallId
+        );
+        if (toolCall) {
+          toolCall.argsText += partialJson;
+        }
       });
     },
 

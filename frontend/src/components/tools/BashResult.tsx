@@ -14,6 +14,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Terminal } from "lucide-react";
 import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
+import { StreamingTicker } from "./StreamingTicker";
 
 /** Max lines to show before truncating. */
 const TRUNCATE_AFTER = 15;
@@ -32,19 +33,22 @@ export const BashResult: ToolCallMessagePartComponent = ({
   // Parse args
   let command = "";
   let description = "";
+  let jsonComplete = false;
   try {
     const args = argsText ? JSON.parse(argsText) : {};
     command = args.command || "";
     description = args.description || "";
+    jsonComplete = true;
   } catch {
-    // Partial JSON while streaming — show raw command
-    command = argsText || "";
+    // Partial JSON while streaming — ticker takes over
   }
+
+  const isStreaming = !jsonComplete && !!argsText;
 
   // Derive state from result, not from assistant-ui status.
   // We set isRunning=false globally for duplex, so status is unreliable.
   const hasResult = result !== undefined && result !== null;
-  const isRunning = !hasResult;
+  const isRunning = !hasResult && !isStreaming;
 
   // Resolve output text
   const outputText = (() => {
@@ -80,14 +84,14 @@ export const BashResult: ToolCallMessagePartComponent = ({
     }
   }, [outputText, isTruncated]);
 
-  // Theme colors — avocado success, amber running, corrupted red error
-  const dotColor = isRunning
+  // Theme colors — avocado success, amber running/streaming, corrupted red error
+  const dotColor = isRunning || isStreaming
     ? "var(--theme-primary)"
     : isError
     ? "var(--theme-error)"
     : "var(--theme-success)";
 
-  const iconColor = isRunning
+  const iconColor = isRunning || isStreaming
     ? "var(--theme-primary)"
     : isError
     ? "var(--theme-error)"
@@ -133,13 +137,18 @@ export const BashResult: ToolCallMessagePartComponent = ({
           )}
         </div>
         <span
-          className={`w-2 h-2 mt-[5px] rounded-full shrink-0 ${isRunning ? "animate-pulse-dot" : ""}`}
+          className={`w-2 h-2 mt-[5px] rounded-full shrink-0 ${isRunning || isStreaming ? "animate-pulse-dot" : ""}`}
           style={{ backgroundColor: dotColor }}
         />
       </div>
 
+      {/* Streaming ticker — visible while JSON deltas arrive */}
+      {isStreaming && (
+        <StreamingTicker text={argsText || ""} active={true} />
+      )}
+
       {/* Output — terminal style */}
-      {isRunning && (
+      {isRunning && !isStreaming && (
         <div className="px-3 py-2 border-t border-border bg-code-bg">
           <span className="text-muted/40 text-xs font-mono italic">
             Running...

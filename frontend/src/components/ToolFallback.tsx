@@ -2,10 +2,13 @@
  * ToolFallback — Collapsible UI for tool calls.
  *
  * Shows tool name, argument summary, and expandable input/output details.
+ * While JSON is streaming (argsText is non-empty but unparseable),
+ * shows a StreamingTicker with the raw fragments scrolling across.
  */
 
 import { useState } from "react";
 import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
+import { StreamingTicker } from "./tools/StreamingTicker";
 
 export const ToolFallback: ToolCallMessagePartComponent = ({
   toolName,
@@ -18,18 +21,24 @@ export const ToolFallback: ToolCallMessagePartComponent = ({
   const safeName = toolName || "Unknown Tool";
   const displayName = safeName.charAt(0).toUpperCase() + safeName.slice(1);
 
-  const isRunning = status?.type === "running";
+  // Try to parse — if it fails, JSON is still streaming in.
+  let args: Record<string, unknown> = {};
+  let jsonComplete = false;
+  try {
+    args = argsText ? JSON.parse(argsText) : {};
+    jsonComplete = true;
+  } catch {
+    // argsText is partial JSON — still streaming
+  }
+
+  const isStreaming = !jsonComplete && !!argsText;
+  const hasResult = result !== undefined && result !== null;
+  const isRunning = status?.type === "running" || (!hasResult && !isStreaming);
   const isError =
     status?.type === "incomplete" && status.reason === "error";
 
-  let args: Record<string, unknown> = {};
-  try {
-    args = argsText ? JSON.parse(argsText) : {};
-  } catch {
-    // argsText might not be valid JSON
-  }
-
   const argSummary = (() => {
+    if (!jsonComplete) return "";
     const entries = Object.entries(args);
     if (entries.length === 0) return "";
 
@@ -55,7 +64,9 @@ export const ToolFallback: ToolCallMessagePartComponent = ({
     return `${entries.length} args`;
   })();
 
-  const statusColor = isRunning
+  const statusColor = isStreaming
+    ? "bg-primary"
+    : isRunning && !hasResult
     ? "bg-primary"
     : isError
     ? "bg-error"
@@ -64,11 +75,15 @@ export const ToolFallback: ToolCallMessagePartComponent = ({
   return (
     <div data-testid="tool-call" className="rounded-lg border border-border bg-surface overflow-hidden">
       <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center gap-2 px-3 py-2.5 bg-transparent border-none cursor-pointer text-text font-mono text-[13px] text-left"
+        onClick={() => !isStreaming && setExpanded(!expanded)}
+        className={`w-full flex items-center gap-2 px-3 py-2.5 bg-transparent border-none text-text font-mono text-[13px] text-left ${
+          isStreaming ? "cursor-default" : "cursor-pointer"
+        }`}
       >
         <span
-          className={`w-2 h-2 rounded-full ${statusColor} ${isRunning ? "animate-pulse-dot" : ""}`}
+          className={`w-2 h-2 rounded-full ${statusColor} ${
+            isStreaming || (isRunning && !hasResult) ? "animate-pulse-dot" : ""
+          }`}
         />
         <span className="text-primary font-semibold">
           {displayName}
@@ -78,12 +93,19 @@ export const ToolFallback: ToolCallMessagePartComponent = ({
             {argSummary}
           </span>
         )}
-        <span className="text-muted text-[10px]">
-          {expanded ? "\u25BC" : "\u25B6"}
-        </span>
+        {!isStreaming && (
+          <span className="text-muted text-[10px]">
+            {expanded ? "\u25BC" : "\u25B6"}
+          </span>
+        )}
       </button>
 
-      {expanded && (
+      {/* Streaming ticker — visible while JSON is still arriving */}
+      {isStreaming && (
+        <StreamingTicker text={argsText || ""} active={true} />
+      )}
+
+      {expanded && jsonComplete && (
         <div className="border-t border-border p-3">
           <div className={result !== undefined ? "mb-3" : ""}>
             <div className="text-muted text-[11px] mb-1 font-mono">
