@@ -400,42 +400,39 @@ function Layout() {
           if (updated) break;
         }
 
-        // Fallback: text-stash reconciliation for events without an ID
-        // (e.g., claude echoes from --replay-user-messages).
+        // FIRST: check the pending echo queue — did WE send this?
+        // This must run BEFORE stash reconciliation because the stash will
+        // match interjection echoes and consume them, preventing the queue
+        // from ever seeing them.
+        const echoText = Array.isArray(umContent)
+          ? umContent
+              .filter((b: unknown) => typeof b === "object" && b !== null && (b as Record<string, unknown>).type === "text")
+              .map((b: unknown) => ((b as Record<string, unknown>).text as string) || "")
+              .join(" ")
+              .trim()
+          : "";
+
+        const echoMatch = echoText ? useWorkshopStore.getState().matchPendingEcho(echoText) : null;
+
+        if (echoMatch) {
+          if (echoMatch.isInterjection) {
+            // Interjection echo: flush buffer + new placeholder.
+            textBufferRef.current[eChatId]?.flush();
+            delete textBufferRef.current[eChatId];
+            const aid = actions.addRemoteAssistantPlaceholder(eChatId);
+            assistantIdMapRef.current[eChatId] = aid;
+          }
+          // Either way, it's our echo — drop it.
+          break;
+        }
+
+        // SECOND: text-stash reconciliation for events without an ID
+        // (enrobe echoes, claude echoes we didn't queue).
         const reconciled = actions.reconcileUserMessage(eChatId, umContent);
 
         if (!reconciled) {
-          // Extract the raw text from the echo for matching against our queue.
-          const echoText = Array.isArray(umContent)
-            ? umContent
-                .filter((b: unknown) => typeof b === "object" && b !== null && (b as Record<string, unknown>).type === "text")
-                .map((b: unknown) => ((b as Record<string, unknown>).text as string) || "")
-                .join(" ")
-                .trim()
-            : "";
-
-          // Check the pending echo queue — did WE send this message?
-          const echoMatch = echoText ? useWorkshopStore.getState().matchPendingEcho(echoText) : null;
-
-          if (echoMatch) {
-            // We sent this. The echo confirms claude received it.
-            if (echoMatch.isInterjection) {
-              // Interjection: flush the type-on buffer (pre-interjection text
-              // finishes rendering) and create a new assistant placeholder
-              // so post-interjection text goes to the right message.
-              textBufferRef.current[eChatId]?.flush();
-              delete textBufferRef.current[eChatId];
-              const aid = actions.addRemoteAssistantPlaceholder(eChatId);
-              assistantIdMapRef.current[eChatId] = aid;
-            }
-            // Non-interjection: drop — already rendered optimistically.
-            break;
-          }
-
-          // No match in our queue. Check stash as legacy fallback.
           const stash = useWorkshopStore.getState()._pendingSendText;
           if (stash === null && !umData.id) {
-            // Stash consumed, not in our queue = stale echo. Drop.
             break;
           }
 
