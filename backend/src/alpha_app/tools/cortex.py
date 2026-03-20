@@ -180,14 +180,12 @@ def create_cortex_server(
         # Build response: image content block + text summary
         parts = []
 
-        # The image as a viewable content block
+        # The image as a viewable content block (MCP spec format)
+        media_type = result.get("media_type", "image/jpeg")
         parts.append({
             "type": "image",
-            "source": {
-                "type": "base64",
-                "media_type": "image/png",
-                "data": result["image"],
-            },
+            "data": result["image"],
+            "mimeType": media_type,
         })
 
         # Text summary

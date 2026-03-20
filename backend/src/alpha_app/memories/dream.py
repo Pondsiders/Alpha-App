@@ -115,8 +115,24 @@ async def dream(
                 db_pool=db_pool,
             )
 
+        # Step 3: Thumbnail for the tool result — 384px JPEG fits in MCP
+        # Full-res stays in Garage (via vision pipeline). This is just for viewing.
+        from PIL import Image as _Image
+        import io as _io
+        img = _Image.open(_io.BytesIO(image_bytes))
+        if img.mode in ("RGBA", "P", "LA"):
+            img = img.convert("RGB")
+        max_edge = max(img.size)
+        if max_edge > 384:
+            scale = 384 / max_edge
+            img = img.resize((int(img.width * scale), int(img.height * scale)), _Image.LANCZOS)
+        thumb_buf = _io.BytesIO()
+        img.save(thumb_buf, format="JPEG", quality=80)
+        thumb_b64 = base64.b64encode(thumb_buf.getvalue()).decode()
+
         return {
-            "image": image_b64,
+            "image": thumb_b64,
+            "media_type": "image/jpeg",
             "prompt": prompt,
             "generation_time": gen_time,
             "memories": memories,
