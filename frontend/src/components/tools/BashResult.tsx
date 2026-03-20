@@ -14,7 +14,6 @@
 import { useState, useRef, useEffect } from "react";
 import { Terminal } from "lucide-react";
 import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
-import { StreamingTicker } from "./StreamingTicker";
 
 /** Max lines to show before truncating. */
 const TRUNCATE_AFTER = 15;
@@ -145,13 +144,8 @@ export const BashResult: ToolCallMessagePartComponent = ({
         />
       </div>
 
-      {/* Streaming ticker — visible while JSON deltas arrive */}
-      {isStreaming && (
-        <StreamingTicker text={argsText || ""} active={true} />
-      )}
-
       {/* Output — terminal style */}
-      {isRunning && !isStreaming && (
+      {(isRunning || isStreaming) && (
         <div className="px-3 py-2 border-t border-border bg-code-bg">
           <span className="text-muted/40 text-xs font-mono italic">
             Running...

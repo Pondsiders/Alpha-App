@@ -1,14 +1,22 @@
 /**
- * ToolFallback — Collapsible UI for tool calls.
+ * ToolFallback — Progressive disclosure UI for tool calls.
  *
- * Shows tool name, argument summary, and expandable input/output details.
- * While JSON is streaming (argsText is non-empty but unparseable),
- * shows a StreamingTicker with the raw fragments scrolling across.
+ * Four-state lifecycle:
+ *   1. Void     — tool-use-start fired, no JSON yet.
+ *                  Title bar: tool name + pulsing amber dot. Content: empty dark area.
+ *   2. Streaming — partial JSON arriving via tool-use-delta.
+ *                  Title bar: tool name + pulsing dot. Content: raw JSON as it accumulates.
+ *   3. Complete — JSON parseable, tool executing, no result yet.
+ *                  Title bar: tool name + arg summary + pulsing dot. Content: pretty-printed input.
+ *   4. Done     — result arrived.
+ *                  Title bar: tool name + arg summary + green dot. Content: input + output.
  */
 
 import { useState } from "react";
 import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
-import { StreamingTicker } from "./tools/StreamingTicker";
+
+/** Max lines of JSON to show before truncating. */
+const TRUNCATE_LINES = 12;
 
 export const ToolFallback: ToolCallMessagePartComponent = ({
   toolName,
@@ -16,7 +24,7 @@ export const ToolFallback: ToolCallMessagePartComponent = ({
   result,
   status,
 }) => {
-  const [expanded, setExpanded] = useState(false);
+  const [inputExpanded, setInputExpanded] = useState(false);
 
   const safeName = toolName || "Unknown Tool";
   const displayName = safeName.charAt(0).toUpperCase() + safeName.slice(1);
@@ -32,12 +40,23 @@ export const ToolFallback: ToolCallMessagePartComponent = ({
   }
 
   const hasResult = result !== undefined && result !== null;
-  // Streaming: JSON not yet complete AND no result yet (includes empty argsText on tool-use-start)
   const isStreaming = !jsonComplete && !hasResult;
   const isRunning = !hasResult && jsonComplete;
   const isError =
     status?.type === "incomplete" && status.reason === "error";
 
+  // Pretty-print input when parseable
+  const prettyInput = jsonComplete
+    ? JSON.stringify(args, null, 2)
+    : argsText || "";
+
+  const inputLines = prettyInput.split("\n");
+  const inputTruncated = !inputExpanded && inputLines.length > TRUNCATE_LINES;
+  const displayInput = inputTruncated
+    ? inputLines.slice(0, TRUNCATE_LINES).join("\n")
+    : prettyInput;
+
+  // Arg summary for the title bar (only when JSON is complete)
   const argSummary = (() => {
     if (!jsonComplete) return "";
     const entries = Object.entries(args);
@@ -65,25 +84,29 @@ export const ToolFallback: ToolCallMessagePartComponent = ({
     return `${entries.length} args`;
   })();
 
-  const statusColor = isStreaming
-    ? "bg-primary"
-    : isRunning && !hasResult
+  // Format result for display
+  const resultText = hasResult
+    ? typeof result === "string"
+      ? result
+      : JSON.stringify(result, null, 2)
+    : "";
+
+  // Status dot color
+  const dotColor = isStreaming || isRunning
     ? "bg-primary"
     : isError
     ? "bg-error"
     : "bg-success";
 
+  const showContent = isStreaming || isRunning || hasResult;
+
   return (
     <div data-testid="tool-call" className="rounded-lg border border-border bg-surface overflow-hidden">
-      <button
-        onClick={() => !isStreaming && setExpanded(!expanded)}
-        className={`w-full flex items-center gap-2 px-3 py-2.5 bg-transparent border-none text-text font-mono text-[13px] text-left ${
-          isStreaming ? "cursor-default" : "cursor-pointer"
-        }`}
-      >
+      {/* Title bar */}
+      <div className="flex items-center gap-2 px-3 py-2.5 font-mono text-[13px]">
         <span
-          className={`w-2 h-2 rounded-full ${statusColor} ${
-            isStreaming || (isRunning && !hasResult) ? "animate-pulse-dot" : ""
+          className={`w-2 h-2 rounded-full shrink-0 ${dotColor} ${
+            isStreaming || isRunning ? "animate-pulse-dot" : ""
           }`}
         />
         <span className="text-primary font-semibold">
@@ -94,38 +117,37 @@ export const ToolFallback: ToolCallMessagePartComponent = ({
             {argSummary}
           </span>
         )}
-        {!isStreaming && (
-          <span className="text-muted text-[10px]">
-            {expanded ? "\u25BC" : "\u25B6"}
-          </span>
-        )}
-      </button>
+      </div>
 
-      {/* Streaming ticker — visible while JSON is still arriving */}
-      {isStreaming && (
-        <StreamingTicker text={argsText || ""} active={true} />
-      )}
-
-      {expanded && jsonComplete && (
-        <div className="border-t border-border p-3">
-          <div className={result !== undefined ? "mb-3" : ""}>
-            <div className="text-muted text-[11px] mb-1 font-mono">
-              INPUT
+      {/* Content area — progressive disclosure */}
+      {showContent && (
+        <div className="border-t border-border">
+          {/* Input JSON */}
+          <div className="p-3">
+            <div className="text-muted text-[10px] mb-1 font-mono uppercase tracking-wider">
+              Input
             </div>
             <pre className="m-0 p-2 bg-code-bg rounded text-xs font-mono text-text overflow-auto max-h-[200px]">
-              {argsText || "{}"}
+              {displayInput || "\u00A0"}
             </pre>
+            {inputTruncated && (
+              <button
+                onClick={() => setInputExpanded(true)}
+                className="mt-1 text-[11px] text-muted hover:text-primary font-mono bg-transparent border-none cursor-pointer p-0"
+              >
+                ↓ Show all ({inputLines.length} lines)
+              </button>
+            )}
           </div>
 
-          {result !== undefined && (
-            <div>
-              <div className="text-muted text-[11px] mb-1 font-mono">
-                OUTPUT
+          {/* Output — only when result arrives */}
+          {hasResult && (
+            <div className="border-t border-border p-3">
+              <div className="text-muted text-[10px] mb-1 font-mono uppercase tracking-wider">
+                Output
               </div>
               <pre className="m-0 p-2 bg-code-bg rounded text-xs font-mono text-text overflow-auto max-h-[300px]">
-                {typeof result === "string"
-                  ? result
-                  : JSON.stringify(result, null, 2)}
+                {resultText}
               </pre>
             </div>
           )}
