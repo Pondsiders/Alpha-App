@@ -121,7 +121,7 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
                 overflows ? "cursor-pointer" : ""
               }`}
               style={
-                !expanded && overflows
+                !expanded
                   ? {
                       display: "-webkit-box",
                       WebkitLineClamp: LINE_CLAMP,
