@@ -712,10 +712,20 @@ function Layout() {
     return send(msg);
   }, [send]);
 
-  // ---- Hydrate sidebar on connect ----
+  // ---- Hydrate sidebar + rejoin active chat on (re)connect ----
+  // Uses a ref to track whether we've already joined this connection cycle,
+  // preventing double-sends on initial load (ChatPage also sends join-chat).
+  const lastConnectedRef = useRef(false);
   useEffect(() => {
-    if (connected) {
+    if (connected && !lastConnectedRef.current) {
+      lastConnectedRef.current = true;
       send({ type: "list-chats" });
+      const chatId = useWorkshopStore.getState().activeChatId;
+      if (chatId) {
+        send({ type: "join-chat", chatId });
+      }
+    } else if (!connected) {
+      lastConnectedRef.current = false;
     }
   }, [connected, send]);
 

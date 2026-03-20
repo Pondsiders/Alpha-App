@@ -179,10 +179,11 @@ class TopicRegistry:
         return self.scan()
 
     def list_topics(self) -> list[str]:
-        """Return sorted list of available topic names."""
-        # Re-scan to pick up newly created topics
-        if self._dir.is_dir():
-            self.scan()
+        """Return sorted list of available topic names.
+
+        Does NOT re-scan — use scan() or rescan() explicitly when needed.
+        Hot-reload happens in get_context() for individual topics.
+        """
         return sorted(self._topics.keys())
 
     def get_context(self, name: str) -> str | None:
@@ -207,6 +208,4 @@ class TopicRegistry:
 
     def has_topic(self, name: str) -> bool:
         """Check if a topic exists."""
-        if name not in self._topics:
-            self.scan()
         return name in self._topics

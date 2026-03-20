@@ -34,6 +34,7 @@ Server -> Client messages (broadcast — all connections):
 """
 
 import asyncio
+import logfire
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -87,10 +88,17 @@ async def websocket_chat(ws: WebSocket) -> None:
     streaming_tasks: dict[str, asyncio.Task] = {}
     turn_input_messages: dict[str, list] = {}
 
+    logfire.info("ws.connected", client=str(ws.client))
+
     try:
         while True:
             raw = await ws.receive_json()
             msg_type = raw.get("type")
+            logfire.trace(
+                "ws.recv: {msg_type}",
+                msg_type=msg_type,
+                chat_id=raw.get("chatId", ""),
+            )
 
             if msg_type == "create-chat":
                 await handle_create_chat(ws, connections, chats, on_chat_reap)
@@ -204,6 +212,9 @@ async def websocket_chat(ws: WebSocket) -> None:
                 # The "gimme the fucking chat" protocol.
                 # One payload: all messages + chat metadata including topics.
                 # Replaces replay for frontends that support it.
+                # ALSO: eager Claude warmup — if the chat is COLD and has a
+                # session to resume, start the subprocess now so it's warm
+                # by the time the user types.
                 chat_id = raw.get("chatId")
                 if not chat_id:
                     await ws.send_json({"type": "error", "data": "Missing chatId"})
@@ -213,6 +224,7 @@ async def websocket_chat(ws: WebSocket) -> None:
 
                 # Load or find the chat object
                 chat = chats.get(chat_id)
+                in_memory = chat is not None
                 if not chat:
                     chat = await load_chat(chat_id)
                     if chat:
@@ -221,6 +233,16 @@ async def websocket_chat(ws: WebSocket) -> None:
                         chats[chat_id] = chat
                 if chat:
                     chat._topic_registry = getattr(ws.app.state, "topic_registry", None)
+
+                logfire.debug(
+                    "join-chat: {chat_id} found={found} in_memory={in_memory} "
+                    "state={state} session={session}",
+                    chat_id=chat_id,
+                    found=chat is not None,
+                    in_memory=in_memory,
+                    state=chat.state.value if chat else "none",
+                    session=chat.session_uuid[:12] if chat and chat.session_uuid else "none",
+                )
 
                 # Load all messages from app.messages
                 messages = await load_messages(chat_id)
@@ -240,13 +262,76 @@ async def websocket_chat(ws: WebSocket) -> None:
                     },
                 })
 
+                # Eager warmup: if COLD with a session, resurrect now.
+                # The user is looking at this chat — warm the brain while
+                # they read and type. Reap timer handles the waste case.
+                warmup_eligible = (
+                    chat is not None
+                    and chat.state == ConversationState.COLD
+                    and chat.session_uuid is not None
+                )
+                logfire.debug(
+                    "join-chat: warmup_eligible={eligible} "
+                    "(chat={has_chat}, state={state}, session={has_session})",
+                    eligible=warmup_eligible,
+                    has_chat=chat is not None,
+                    state=chat.state.value if chat else "none",
+                    has_session=bool(chat.session_uuid) if chat else False,
+                )
+                if warmup_eligible:
+                    from alpha_app.tools import create_alpha_server
+
+                    logfire.info(
+                        "eager-warmup: resurrecting {chat_id} (session {session})",
+                        chat_id=chat_id,
+                        session=chat.session_uuid[:12],
+                    )
+
+                    def _clear() -> int:
+                        if chat._pending_intro:
+                            chat._pending_intro = None
+                            return 1
+                        return 0
+
+                    topic_registry = getattr(ws.app.state, "topic_registry", None)
+                    mcp_servers = {"alpha": create_alpha_server(
+                        chat=chat,
+                        clear_memorables=_clear,
+                        topic_registry=topic_registry,
+                        session_id=chat.id,
+                    )}
+
+                    try:
+                        await chat.resurrect(
+                            system_prompt=ws.app.state.system_prompt,
+                            mcp_servers=mcp_servers,
+                            compact_config=ws.app.state.compact_config,
+                        )
+                        logfire.info(
+                            "eager-warmup: {chat_id} is now {state}",
+                            chat_id=chat_id,
+                            state=chat.state.value,
+                        )
+                        await broadcast(connections, {
+                            "type": "chat-state",
+                            "chatId": chat_id,
+                            "data": chat.wire_state(),
+                        })
+                    except Exception as exc:
+                        logfire.warn(
+                            "eager-warmup: failed for {chat_id}: {error}",
+                            chat_id=chat_id,
+                            error=str(exc),
+                        )
+                        # Warmup is best-effort — don't crash join-chat
+
             else:
                 pass
 
     except WebSocketDisconnect:
-        pass
-    except Exception:
-        pass
+        logfire.debug("ws.disconnected", client=str(ws.client))
+    except Exception as exc:
+        logfire.warn("ws.error: {error}", error=str(exc))
     finally:
         # Deregister from the connection set
         connections.discard(ws)

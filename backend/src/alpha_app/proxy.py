@@ -543,6 +543,19 @@ class _Proxy:
         # Forward to upstream (Anthropic, or a test fixture if configured)
         url = f"{self._upstream_url}{path}"
 
+        # Trace every API call — shows what Claude Code does before first token.
+        model = body.get("model", "?") if body else "?"
+        max_tokens = body.get("max_tokens", "?") if body else "?"
+        msg_count = len(body.get("messages", [])) if body else 0
+        logfire.trace(
+            "proxy.forward: {method} {path} model={model} msgs={msgs} max_tokens={max_tokens}",
+            method=request.method,
+            path=path,
+            model=model,
+            msgs=msg_count,
+            max_tokens=max_tokens,
+        )
+
         if self._http_client is None:
             raise RuntimeError("HTTP client not initialized")
 
@@ -630,6 +643,16 @@ class _Proxy:
             )
             self._response_model = message.get("model")
             self._response_id = message.get("id")
+
+            logfire.debug(
+                "proxy: message_start input={input} cache_read={cache_read} "
+                "cache_create={cache_create} total={total} model={model}",
+                input=self._input_tokens,
+                cache_read=self._cache_read_tokens,
+                cache_create=self._cache_creation_tokens,
+                total=self._token_count,
+                model=self._response_model,
+            )
 
         elif event_type == "message_delta":
             usage = payload.get("usage", {})
