@@ -1,14 +1,17 @@
 /**
  * MemoryStore — Card UI for mcp__alpha__store tool calls.
  *
- * Feather icon left, "Store" header, memory text truncated to 2 lines
- * with ellipsis. Click to expand/collapse with Framer Motion height
- * animation. Distinguishes click from text selection.
+ * Feather icon, "Store" header, memory text with expand/collapse.
+ * Framer Motion animates the container height. That is all.
  */
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef } from "react";
 import { Feather } from "lucide-react";
+import { motion } from "framer-motion";
 import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
+
+/** Collapsed height in pixels — approximately 2 lines of 13px text. */
+const COLLAPSED_PX = 36;
 
 export const MemoryStore: ToolCallMessagePartComponent = ({
   argsText,
@@ -16,14 +19,10 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
   status,
 }) => {
   const [expanded, setExpanded] = useState(false);
-  const [overflows, setOverflows] = useState(false);
-  const [collapsedHeight, setCollapsedHeight] = useState<number | null>(null);
-  const [fullHeight, setFullHeight] = useState<number | null>(null);
-  const textRef = useRef<HTMLDivElement>(null);
-  const measureRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const clickStartRef = useRef<{ x: number; y: number } | null>(null);
 
-  // Parse memory text from args
+  // Parse memory text
   let memoryText = "";
   let jsonComplete = false;
   try {
@@ -34,7 +33,7 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
     memoryText = argsText || "";
   }
 
-  // State detection
+  // State
   const hasResult = result !== undefined && result !== null;
   const isStreaming = !jsonComplete && !hasResult;
   const isRunning = !hasResult && jsonComplete;
@@ -42,7 +41,18 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
     (status?.type === "incomplete" && status.reason === "error") ||
     (hasResult && typeof result === "string" && /error|fail/i.test(result));
 
-  // Parse result
+  // Get the real content height for the expanded state
+  const getContentHeight = () => {
+    if (!contentRef.current) return COLLAPSED_PX;
+    return contentRef.current.scrollHeight;
+  };
+
+  // Does it need truncation?
+  const needsTruncation = contentRef.current
+    ? contentRef.current.scrollHeight > COLLAPSED_PX + 4
+    : memoryText.length > 100; // rough guess before first render
+
+  // Result text
   const resultText = hasResult
     ? typeof result === "string"
       ? result
@@ -54,64 +64,33 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
       : JSON.stringify(result)
     : "";
 
-  // Measure collapsed and full heights once on mount / text change.
-  // A hidden measurer div (off-screen) gives us exact pixel values.
-  useEffect(() => {
-    const el = measureRef.current;
-    if (!el || !memoryText) return;
-
-    // Full height — no clamp
-    el.style.cssText = "position:absolute;visibility:hidden;width:" + (textRef.current?.offsetWidth || 300) + "px;white-space:pre-wrap;word-break:break-word;font-size:13px;line-height:1.375;";
-    el.textContent = memoryText;
-    const full = el.offsetHeight;
-
-    // Collapsed height — clamp to 2 lines
-    el.style.cssText += "display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;";
-    const collapsed = el.offsetHeight;
-
-    setFullHeight(full);
-    setCollapsedHeight(collapsed);
-    setOverflows(full > collapsed + 2);
-
-    el.style.cssText = "position:absolute;visibility:hidden;";
-    el.textContent = "";
-  }, [memoryText]);
-
-  // Click vs drag detection
+  // Click vs drag
   const handleMouseDown = (e: React.MouseEvent) => {
     clickStartRef.current = { x: e.clientX, y: e.clientY };
   };
   const handleMouseUp = (e: React.MouseEvent) => {
-    if (!overflows) return;
+    if (!needsTruncation) return;
     const start = clickStartRef.current;
     if (!start) return;
-    const dx = Math.abs(e.clientX - start.x);
-    const dy = Math.abs(e.clientY - start.y);
-    if (dx < 4 && dy < 4) {
+    if (Math.abs(e.clientX - start.x) < 4 && Math.abs(e.clientY - start.y) < 4) {
       setExpanded(!expanded);
     }
     clickStartRef.current = null;
   };
 
-  // Theme colors
+  // Colors
   const dotColor = isStreaming || isRunning
     ? "var(--theme-primary)"
-    : isError
-    ? "var(--theme-error)"
-    : "var(--theme-success)";
-
+    : isError ? "var(--theme-error)" : "var(--theme-success)";
   const iconColor = isStreaming || isRunning
     ? "var(--theme-primary)"
-    : isError
-    ? "var(--theme-error)"
-    : undefined;
+    : isError ? "var(--theme-error)" : undefined;
 
   return (
     <div
       data-testid="memory-store"
       className="w-full rounded-lg border border-border overflow-hidden"
     >
-      {/* Header */}
       <div className="flex items-start gap-2 px-3 py-2.5 bg-surface">
         <Feather
           size={14}
@@ -122,32 +101,20 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
           <div className="text-[12px] text-muted mb-0.5">Store</div>
 
           {memoryText && (
-            <>
-              {/* Hidden measurer — off-screen, used to calculate heights */}
-              <div ref={measureRef} style={{ position: "absolute", visibility: "hidden" }} />
-
-              {/* Visible text — animates between collapsedHeight and fullHeight */}
+            <motion.div
+              className={`overflow-hidden ${needsTruncation ? "cursor-pointer" : ""}`}
+              animate={{ height: expanded ? getContentHeight() : COLLAPSED_PX }}
+              transition={{ duration: 0.4, ease: [0.4, 0, 0.2, 1] }}
+              onMouseDown={needsTruncation ? handleMouseDown : undefined}
+              onMouseUp={needsTruncation ? handleMouseUp : undefined}
+            >
               <div
-                ref={textRef}
-                className={`text-[13px] text-muted/70 leading-snug break-words select-text overflow-hidden ${
-                  overflows ? "cursor-pointer" : ""
-                }`}
-                style={{
-                  height: expanded
-                    ? fullHeight != null ? `${fullHeight}px` : "auto"
-                    : collapsedHeight != null ? `${collapsedHeight}px` : "auto",
-                  transition: overflows ? "height 2500ms ease-in-out" : undefined,
-                  whiteSpace: "pre-wrap",
-                }}
-                onMouseDown={overflows ? handleMouseDown : undefined}
-                onMouseUp={overflows ? handleMouseUp : undefined}
+                ref={contentRef}
+                className="text-[13px] text-muted/70 leading-snug whitespace-pre-wrap break-words select-text"
               >
                 {memoryText}
-                {!expanded && overflows && (
-                  <span className="text-muted/40">...</span>
-                )}
               </div>
-            </>
+            </motion.div>
           )}
         </div>
         <span
@@ -158,7 +125,6 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
         />
       </div>
 
-      {/* Result */}
       {hasResult && (
         <div
           className={`px-3 py-2 border-t border-border bg-code-bg text-xs font-mono ${
@@ -169,7 +135,6 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
         </div>
       )}
 
-      {/* Error without result */}
       {isError && !hasResult && (
         <div className="px-3 py-2 border-t border-border bg-error/10 text-error text-xs font-mono font-bold">
           STORE FAILED
