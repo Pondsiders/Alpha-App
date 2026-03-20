@@ -128,7 +128,14 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
               }`}
               style={{
                 maxHeight: expanded ? EXPANDED_HEIGHT : COLLAPSED_HEIGHT,
-                transition: "max-height 250ms ease-out",
+                transition: "max-height 500ms ease-out",
+                ...(!expanded
+                  ? {
+                      display: "-webkit-box",
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: "vertical" as const,
+                    }
+                  : {}),
               }}
               onMouseDown={overflows ? handleMouseDown : undefined}
               onMouseUp={overflows ? handleMouseUp : undefined}
