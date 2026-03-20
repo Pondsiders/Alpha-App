@@ -6,6 +6,7 @@ flows through here. Dead connections are silently pruned.
 
 import asyncio
 
+import logfire
 from fastapi import WebSocket
 
 # Per-chat monotonic sequence counters.
@@ -55,6 +56,26 @@ async def broadcast(
     targets = [c for c in connections if c is not exclude]
     if not targets:
         return
+
+    # Trace every outbound WebSocket event for timing analysis.
+    # Uses logfire.debug to avoid noise at info level.
+    event_type = event.get("type", "?")
+    chat_id = event.get("chatId", "")
+    preview = ""
+    if event_type in ("text-delta", "thinking-delta"):
+        data = event.get("data", "")
+        preview = repr(data[:40]) if data else ""
+    elif event_type in ("tool-use-start", "tool-use-delta", "tool-call"):
+        data = event.get("data", {})
+        if isinstance(data, dict):
+            preview = data.get("toolName", "") or data.get("partialJson", "")[:40]
+    logfire.debug(
+        "ws.broadcast: {event_type}",
+        event_type=event_type,
+        chat_id=chat_id,
+        preview=preview,
+    )
+
     results = await asyncio.gather(
         *(c.send_json(event) for c in targets),
         return_exceptions=True,
