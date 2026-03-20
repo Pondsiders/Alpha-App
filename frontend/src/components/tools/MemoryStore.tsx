@@ -46,8 +46,11 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
     (status?.type === "incomplete" && status.reason === "error") ||
     (hasResult && typeof result === "string" && /error|fail/i.test(result));
 
-  // Detect if text overflows the line-clamp
+  // Detect if text overflows the line-clamp.
+  // Only check when collapsed — when expanded, line-clamp is off
+  // so scrollHeight == clientHeight, which would falsely reset overflows.
   useEffect(() => {
+    if (expanded) return;
     const el = textRef.current;
     if (!el) return;
     const check = () => setOverflows(el.scrollHeight > el.clientHeight + 2);
@@ -55,7 +58,7 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
     const observer = new ResizeObserver(check);
     observer.observe(el);
     return () => observer.disconnect();
-  }, [memoryText]);
+  }, [memoryText, expanded]);
 
   // Parse result
   const resultText = hasResult
