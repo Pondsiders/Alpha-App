@@ -31,9 +31,10 @@ export const ToolFallback: ToolCallMessagePartComponent = ({
     // argsText is partial JSON — still streaming
   }
 
-  const isStreaming = !jsonComplete && !!argsText;
   const hasResult = result !== undefined && result !== null;
-  const isRunning = status?.type === "running" || (!hasResult && !isStreaming);
+  // Streaming: JSON not yet complete AND no result yet (includes empty argsText on tool-use-start)
+  const isStreaming = !jsonComplete && !hasResult;
+  const isRunning = !hasResult && jsonComplete;
   const isError =
     status?.type === "incomplete" && status.reason === "error";
 

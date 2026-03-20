@@ -54,8 +54,6 @@ export function StreamingTicker({ text, active }: StreamingTickerProps) {
   // When text grows (new delta), don't reset cursor — it'll catch up naturally
   // via the interval. This creates the "streaming in" feel.
 
-  if (!text) return null;
-
   return (
     <div className="px-3 py-2 border-t border-border bg-code-bg overflow-hidden">
       <code
@@ -65,7 +63,7 @@ export function StreamingTicker({ text, active }: StreamingTickerProps) {
           opacity: active ? 0.5 : 0,
         }}
       >
-        {displayText}
+        {displayText || "\u00A0"}
         {active && <span className="animate-pulse-dot">_</span>}
       </code>
     </div>

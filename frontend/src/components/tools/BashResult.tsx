@@ -43,12 +43,15 @@ export const BashResult: ToolCallMessagePartComponent = ({
     // Partial JSON while streaming — ticker takes over
   }
 
-  const isStreaming = !jsonComplete && !!argsText;
+  // Streaming detection: we're streaming if either:
+  // (a) argsText is non-empty but unparseable (mid-JSON), OR
+  // (b) argsText is empty AND no result yet (tool-use-start just fired, awaiting first delta)
+  const hasResult = result !== undefined && result !== null;
+  const isStreaming = !jsonComplete && !hasResult;
 
   // Derive state from result, not from assistant-ui status.
   // We set isRunning=false globally for duplex, so status is unreliable.
-  const hasResult = result !== undefined && result !== null;
-  const isRunning = !hasResult && !isStreaming;
+  const isRunning = !hasResult && jsonComplete;
 
   // Resolve output text
   const outputText = (() => {
