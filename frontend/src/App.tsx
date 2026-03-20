@@ -405,19 +405,41 @@ function Layout() {
         const reconciled = actions.reconcileUserMessage(eChatId, umContent);
 
         if (!reconciled) {
-          // Check if this is a stale echo — if the stash is already null
-          // (cleared by ID-based reconciliation), this echo is redundant.
-          // Only create a new message for genuine remote/replay messages.
-          const stash = useWorkshopStore.getState()._pendingSendText;
-          if (stash === null && !umData.id) {
-            // Stash already consumed — this is a claude echo arriving late.
-            // Drop it silently to avoid duplicating the message.
+          // Extract the raw text from the echo for matching against our queue.
+          const echoText = Array.isArray(umContent)
+            ? umContent
+                .filter((b: unknown) => typeof b === "object" && b !== null && (b as Record<string, unknown>).type === "text")
+                .map((b: unknown) => ((b as Record<string, unknown>).text as string) || "")
+                .join(" ")
+                .trim()
+            : "";
+
+          // Check the pending echo queue — did WE send this message?
+          const echoMatch = echoText ? useWorkshopStore.getState().matchPendingEcho(echoText) : null;
+
+          if (echoMatch) {
+            // We sent this. The echo confirms claude received it.
+            if (echoMatch.isInterjection) {
+              // Interjection: flush the type-on buffer (pre-interjection text
+              // finishes rendering) and create a new assistant placeholder
+              // so post-interjection text goes to the right message.
+              textBufferRef.current[eChatId]?.flush();
+              delete textBufferRef.current[eChatId];
+              const aid = actions.addRemoteAssistantPlaceholder(eChatId);
+              assistantIdMapRef.current[eChatId] = aid;
+            }
+            // Non-interjection: drop — already rendered optimistically.
             break;
           }
 
-          // Genuine new message: interjection, replay, or remote.
-          // Use the server-provided ID so subsequent events for the same message
-          // (e.g., claude echo, enrichment updates) reconcile by ID instead of duplicating.
+          // No match in our queue. Check stash as legacy fallback.
+          const stash = useWorkshopStore.getState()._pendingSendText;
+          if (stash === null && !umData.id) {
+            // Stash consumed, not in our queue = stale echo. Drop.
+            break;
+          }
+
+          // Genuine new message: replay, remote, or other browser.
           actions.addRemoteUserMessage(eChatId, umContent, umData.id);
           const aid = actions.addRemoteAssistantPlaceholder(eChatId);
           assistantIdMapRef.current[eChatId] = aid;

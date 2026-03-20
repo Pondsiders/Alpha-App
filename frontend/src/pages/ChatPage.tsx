@@ -417,12 +417,19 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
       const activeChat = useWorkshopStore.getState().chats[chatId];
       const isBusy = activeChat?.state === "busy";
 
+      // Push to pending echo queue so we can match the claude echo later.
+      // Normal sends: echo gets dropped (already rendered optimistically).
+      // Interjections: echo triggers a new assistant placeholder (turn boundary).
+      if (text.trim()) {
+        useWorkshopStore.getState().pushPendingEcho(text.trim(), isBusy);
+      }
+
       if (!isBusy) {
         // Normal turn — create placeholder for assistant response
         const assistantId = addAssistantPlaceholder();
         assistantIdMapRef.current[chatId] = assistantId;
       }
-      // Interjection: no new placeholder — the existing assistant message keeps accumulating
+      // Interjection: no new placeholder here — created when the echo arrives
 
       // Send via WebSocket with chatId + messageId + armed topics
       const topicsToSend = Array.from(armedTopicsRef.current);

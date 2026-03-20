@@ -112,6 +112,13 @@ interface WorkshopState {
   // Set by addUserMessage, consumed by reconcileUserMessage.
   _pendingSendText: string | null;
 
+  // Pending echo queue — tracks messages we sent so we can match their
+  // claude echoes. Each entry records whether it was an interjection.
+  // When the echo arrives, we find-and-splice the matching entry:
+  //   isInterjection=true  → create new assistant placeholder (turn boundary)
+  //   isInterjection=false → drop (original prompt echo, already rendered)
+  _pendingEchos: Array<{ text: string; isInterjection: boolean }>;
+
   // Replay — when true, message list doesn't render (store mutates silently)
   isReplaying: boolean;
 }
@@ -170,6 +177,10 @@ interface WorkshopActions {
   setTokens: (count: number, limit: number) => void;
   updateChatTokens: (chatId: string, tokenCount: number, contextWindow: number) => void;
 
+  // Pending echo queue
+  pushPendingEcho: (text: string, isInterjection: boolean) => void;
+  matchPendingEcho: (echoText: string) => { isInterjection: boolean } | null;
+
   // Approach lights
   addApproachLight: (chatId: string, level: "yellow" | "red", text: string) => void;
 
@@ -202,6 +213,7 @@ const initialState: WorkshopState = {
   tokenLimit: 0,
   approachLights: {},
   _pendingSendText: null,
+  _pendingEchos: [],
   isReplaying: false,
 };
 
@@ -642,6 +654,26 @@ export const useWorkshopStore = create<WorkshopStore>()(
         }
         state.approachLights[chatId].push({ level, text });
       });
+    },
+
+    // -- Pending echo queue ---------------------------------------------------
+
+    pushPendingEcho: (text, isInterjection) => {
+      set((state) => {
+        state._pendingEchos.push({ text, isInterjection });
+      });
+    },
+
+    matchPendingEcho: (echoText) => {
+      const echos = get()._pendingEchos;
+      const idx = echos.findIndex((e) => e.text === echoText);
+      if (idx === -1) return null;
+      const match = echos[idx];
+      // Remove the matched entry
+      set((state) => {
+        state._pendingEchos.splice(idx, 1);
+      });
+      return { isInterjection: match.isInterjection };
     },
 
     // -- Reset ----------------------------------------------------------------
