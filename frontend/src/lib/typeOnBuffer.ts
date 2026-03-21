@@ -29,10 +29,10 @@ export class TypeOnBuffer {
 
   /**
    * Characters to drain per animation frame (~16ms at 60fps).
-   * At 2 chars/frame: ~120 chars/sec. Claude produces ~60 chars/sec,
-   * so the buffer slowly catches up after streaming ends.
+   * At 4 chars/frame: ~240 chars/sec at 60fps. Deliberately fast so
+   * we can tell if it's working — dial back to 2 once confirmed.
    */
-  charsPerFrame = 2;
+  charsPerFrame = 4;
 
   constructor(callback: (text: string) => void, onDrained?: () => void) {
     this.callback = callback;

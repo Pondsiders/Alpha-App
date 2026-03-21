@@ -21,6 +21,7 @@ import { EditResult } from "../components/tools/EditResult";
 import { WriteResult } from "../components/tools/WriteResult";
 import { GrepResult } from "../components/tools/GrepResult";
 import { TodoResult } from "../components/tools/TodoResult";
+// import { animated } from "../components/AnimatedTool"; // tabled — remount churn during streaming
 import { TopicBar } from "../components/TopicBar";
 import {
   ComposerAttachments,

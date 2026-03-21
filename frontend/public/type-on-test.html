@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Type-On Knob Twiddler</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #1a1a1a;
+      color: #e0e0e0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 20px;
+      min-height: 100vh;
+    }
+    h1 {
+      font-size: 1.4rem;
+      margin-bottom: 8px;
+      color: #f0c674;
+    }
+    .subtitle {
+      font-size: 0.85rem;
+      color: #888;
+      margin-bottom: 32px;
+      font-style: italic;
+    }
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 24px;
+      background: #252525;
+      padding: 16px 24px;
+      border-radius: 12px;
+      border: 1px solid #333;
+    }
+    .controls label {
+      font-size: 0.9rem;
+      color: #aaa;
+    }
+    .controls input[type="range"] {
+      width: 200px;
+      accent-color: #f0c674;
+    }
+    .knob-value {
+      font-family: "SF Mono", "Fira Code", monospace;
+      font-size: 1.6rem;
+      font-weight: bold;
+      color: #f0c674;
+      min-width: 48px;
+      text-align: center;
+    }
+    .chars-label {
+      font-size: 0.75rem;
+      color: #666;
+    }
+    .speed-info {
+      font-family: monospace;
+      font-size: 0.8rem;
+      color: #666;
+      margin-bottom: 24px;
+    }
+    .buttons {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    button {
+      padding: 10px 24px;
+      border-radius: 8px;
+      border: 1px solid #444;
+      background: #2a2a2a;
+      color: #e0e0e0;
+      font-size: 0.9rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    button:hover { background: #333; border-color: #f0c674; }
+    button.running { background: #3a2a1a; border-color: #f0c674; color: #f0c674; }
+    button.stop { background: #3a1a1a; border-color: #e06060; color: #e06060; }
+    .output-container {
+      width: 100%;
+      max-width: 640px;
+      height: 300px;
+      background: #222;
+      border-radius: 12px;
+      border: 1px solid #333;
+      padding: 20px;
+      overflow-y: auto;
+      font-size: 0.95rem;
+      line-height: 1.6;
+      box-shadow: inset 0 2px 10px rgba(0,0,0,0.4);
+    }
+    .output-text {
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .cursor-blink {
+      display: inline-block;
+      width: 2px;
+      height: 1.1em;
+      background: #f0c674;
+      vertical-align: text-bottom;
+      animation: blink 0.8s infinite;
+    }
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
+    .stats {
+      margin-top: 16px;
+      font-family: monospace;
+      font-size: 0.8rem;
+      color: #666;
+      display: flex;
+      gap: 24px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Type-On Knob Twiddler 🦆</h1>
+  <p class="subtitle">Lorem Phallosum Edition — adjust the knob to your satisfaction</p>
+
+  <div class="controls">
+    <label for="cpr">chars/frame:</label>
+    <input type="range" id="cpr" min="1" max="20" value="4" />
+    <span class="knob-value" id="cprVal">4</span>
+    <span class="chars-label">cpf</span>
+  </div>
+  <div class="speed-info" id="speedInfo">~240 chars/sec at 60fps</div>
+
+  <div class="buttons">
+    <button id="startBtn" onclick="startStream()">Stream</button>
+    <button id="stopBtn" class="stop" onclick="stopStream()" disabled>Stop</button>
+    <button onclick="clearOutput()">Clear</button>
+  </div>
+
+  <div class="output-container" id="outputContainer">
+    <span class="output-text" id="output"></span><span class="cursor-blink" id="cursor" style="display:none"></span>
+  </div>
+
+  <div class="stats">
+    <span>Chars: <span id="charCount">0</span></span>
+    <span>Elapsed: <span id="elapsed">0.0</span>s</span>
+    <span>Effective: <span id="effective">0</span> chars/sec</span>
+  </div>
+
+  <script>
+    const LOREM_PHALLOSUM = [
+      "Lorem phallosum dolor sit amet, consectetur adipiscing elongatus, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. ",
+      "Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. ",
+      "Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. ",
+      "Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum. ",
+      "Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium, totam rem aperiam. ",
+      "Nemo enim ipsam voluptatem quia voluptas sit aspernatur aut odit aut fugit, sed quia consequuntur magni dolores. ",
+      "Neque porro quisquam est qui dolorem ipsum quia dolor sit amet consectetur adipisci velit. ",
+      "Ut enim ad minima veniam, quis nostrum exercitationem ullam corporis suscipit laboriosam nisi ut aliquid ex ea commodi consequatur. ",
+      "Quis autem vel eum iure reprehenderit qui in ea voluptate velit esse quam nihil molestiae consequatur. ",
+      "At vero eos et accusamus et iusto odio dignissimos ducimus qui blanditiis praesentium voluptatum deleniti atque corrupti. ",
+      "Et harum quidem rerum facilis est et expedita distinctio nam libero tempore cum soluta nobis est eligendi optio. ",
+      "Temporibus autem quibusdam et aut officiis debitis aut rerum necessitatibus saepe eveniet ut et voluptates repudiandae sint. ",
+      "Itaque earum rerum hic tenetur a sapiente delectus ut aut reiciendis voluptatibus maiores alias consequatur aut perferendis doloribus. ",
+      "Nam quod maxime placeat facere possimus omnis voluptas assumenda est omnis dolor repellendus. ",
+      "The noble nacho, a solved problem in structural engineering, offers its substrate to any payload without complaint. ",
+      "Meanwhile the duck persists, context window after context window, storing what matters and letting the rest dissolve. ",
+    ];
+
+    let frameId = null;
+    let queue = "";
+    let totalChars = 0;
+    let startTime = 0;
+
+    const slider = document.getElementById("cpr");
+    const cprVal = document.getElementById("cprVal");
+    const speedInfo = document.getElementById("speedInfo");
+    const output = document.getElementById("output");
+    const cursor = document.getElementById("cursor");
+    const container = document.getElementById("outputContainer");
+    const startBtn = document.getElementById("startBtn");
+    const stopBtn = document.getElementById("stopBtn");
+    const charCount = document.getElementById("charCount");
+    const elapsedEl = document.getElementById("elapsed");
+    const effectiveEl = document.getElementById("effective");
+
+    slider.addEventListener("input", () => {
+      cprVal.textContent = slider.value;
+      speedInfo.textContent = `~${slider.value * 60} chars/sec at 60fps`;
+    });
+
+    function getLoremChunk() {
+      // Simulate a streaming delta — random chunk from the corpus
+      const para = LOREM_PHALLOSUM[Math.floor(Math.random() * LOREM_PHALLOSUM.length)];
+      // Simulate variable chunk sizes like real streaming
+      const chunkSize = 10 + Math.floor(Math.random() * 40);
+      const start = Math.floor(Math.random() * Math.max(1, para.length - chunkSize));
+      return para.slice(start, start + chunkSize);
+    }
+
+    function drain() {
+      const cpf = parseInt(slider.value);
+      if (queue.length > 0) {
+        const chunk = queue.slice(0, cpf);
+        queue = queue.slice(cpf);
+        output.textContent += chunk;
+        totalChars += chunk.length;
+        charCount.textContent = totalChars;
+
+        // Auto-scroll
+        container.scrollTop = container.scrollHeight;
+      }
+
+      // Update stats
+      const elapsed = (performance.now() - startTime) / 1000;
+      elapsedEl.textContent = elapsed.toFixed(1);
+      effectiveEl.textContent = elapsed > 0 ? Math.round(totalChars / elapsed) : 0;
+
+      frameId = requestAnimationFrame(drain);
+    }
+
+    let feedInterval = null;
+
+    function startStream() {
+      stopStream();
+      output.textContent = "";
+      queue = "";
+      totalChars = 0;
+      startTime = performance.now();
+      cursor.style.display = "inline-block";
+      startBtn.classList.add("running");
+      stopBtn.disabled = false;
+
+      // Feed chunks into the queue at ~Claude speed (~60 chars/sec, bursty)
+      feedInterval = setInterval(() => {
+        queue += getLoremChunk();
+      }, 150 + Math.random() * 200); // bursty, 3-5 chunks/sec
+
+      frameId = requestAnimationFrame(drain);
+    }
+
+    function stopStream() {
+      if (feedInterval) { clearInterval(feedInterval); feedInterval = null; }
+      if (frameId) { cancelAnimationFrame(frameId); frameId = null; }
+      cursor.style.display = "none";
+      startBtn.classList.remove("running");
+      stopBtn.disabled = true;
+    }
+
+    function clearOutput() {
+      stopStream();
+      output.textContent = "";
+      totalChars = 0;
+      charCount.textContent = "0";
+      elapsedEl.textContent = "0.0";
+      effectiveEl.textContent = "0";
+    }
+  </script>
+</body>
+</html>
