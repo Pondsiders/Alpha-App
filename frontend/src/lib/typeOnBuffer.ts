@@ -110,6 +110,11 @@ export class TypeOnBuffer {
     return this.queue.length > 0 || this.frameId !== null;
   }
 
+  /** True if finish() has been called and we're draining the tail. */
+  get isFinishing(): boolean {
+    return this._finishing;
+  }
+
   /** Current drain target. */
   get currentTarget(): DrainTarget {
     return this.target;

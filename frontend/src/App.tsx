@@ -279,6 +279,13 @@ function Layout() {
   // Thinking deltas bypass the buffer (collapsed behind a disclosure triangle anyway).
   const textBufferRef = useRef<Record<string, TypeOnBuffer>>({});
 
+  // Pending block queue — events that arrive while the type-on buffer is
+  // draining before a tool call. Instead of flushing text instantly when a
+  // tool arrives, we let the text drain naturally and queue the tool events.
+  // When onDrained fires, the queue is flushed in order. This creates the
+  // experience: text decelerates → tool card appears → wait → next text.
+  const pendingBlocksRef = useRef<Record<string, ServerEvent[]>>({});
+
   // Replay buffer — accumulates events per chatId until replay-done
   const replayBuffersRef = useRef<Record<string, ServerEvent[]>>({});
 
@@ -498,14 +505,7 @@ function Layout() {
               }
             },
             onDrained: () => {
-              // Sync to React — one store update for the entire streamed text.
-              // The streaming div still has content. Clearing it too early
-              // causes a flash (div empty, React hasn't painted yet).
-              // Solution: wait 50ms — long enough for React to commit and
-              // paint, short enough to be imperceptible. During those 50ms,
-              // both the streaming div and React's MarkdownText show the
-              // same text with the same CSS classes — visually identical,
-              // so the duplication is invisible.
+              // Sync accumulated text to React.
               const elToClear = targetEl;
               if (accumulated) {
                 actions.appendToAssistant(capturedAid, accumulated, capturedChatId);
@@ -517,6 +517,17 @@ function Layout() {
               targetEl = null;
               vitalsEl = null;
               delete textBufferRef.current[capturedChatId];
+
+              // Flush any pending blocks that were queued while the buffer
+              // was draining before a tool call. Re-dispatch them through
+              // the main event handler so they execute normally.
+              const pending = pendingBlocksRef.current[capturedChatId];
+              if (pending && pending.length > 0) {
+                delete pendingBlocksRef.current[capturedChatId];
+                for (const pendingEvent of pending) {
+                  onEvent(pendingEvent);
+                }
+              }
             },
             onVitals: (vitals: TypeOnVitals) => {
               if (!vitalsEl) {
@@ -556,9 +567,20 @@ function Layout() {
       }
 
       case "tool-use-start": {
-        // Card shell appears immediately — before any JSON arrives.
+        // If the type-on buffer is draining, DON'T flush — let the text
+        // finish its natural deceleration. Queue this event (and any
+        // subsequent tool events) until the buffer fires onDrained.
+        if (eChatId && textBufferRef.current[eChatId]?.isDraining) {
+          if (!pendingBlocksRef.current[eChatId]) {
+            pendingBlocksRef.current[eChatId] = [];
+          }
+          pendingBlocksRef.current[eChatId].push(event);
+          // Tell the buffer to finish — drain remaining text, then fire onDrained
+          textBufferRef.current[eChatId].finish();
+          break;
+        }
+        // No active buffer — render immediately.
         if (!eChatId) break;
-        textBufferRef.current[eChatId]?.flush();
         let tusAid = assistantIdMapRef.current[eChatId];
         if (!tusAid) {
           tusAid = actions.addRemoteAssistantPlaceholder(eChatId);
@@ -579,6 +601,12 @@ function Layout() {
       }
 
       case "tool-use-delta": {
+        // If pending blocks exist, queue this too — the tool card hasn't
+        // rendered yet, so deltas can't target it.
+        if (eChatId && pendingBlocksRef.current[eChatId]) {
+          pendingBlocksRef.current[eChatId].push(event);
+          break;
+        }
         // JSON fragment — feed the ticker.
         if (!eChatId) break;
         const tud = event.data as { index: number; partialJson: string };
@@ -591,6 +619,11 @@ function Layout() {
       }
 
       case "tool-call": {
+        // If pending blocks exist, queue this too.
+        if (eChatId && pendingBlocksRef.current[eChatId]) {
+          pendingBlocksRef.current[eChatId].push(event);
+          break;
+        }
         // Complete tool call — finalize the streaming placeholder.
         if (!eChatId) break;
         // Flush text buffer BEFORE rendering the tool call.
@@ -618,6 +651,11 @@ function Layout() {
       }
 
       case "tool-result": {
+        // If pending blocks exist, queue this too.
+        if (eChatId && pendingBlocksRef.current[eChatId]) {
+          pendingBlocksRef.current[eChatId].push(event);
+          break;
+        }
         if (!eChatId) break;
         const aid = assistantIdMapRef.current[eChatId];
         if (!aid) break;
