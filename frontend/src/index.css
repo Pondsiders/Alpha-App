@@ -175,6 +175,9 @@
  * Type-on debug vitals — gated by localStorage 'alpha-debug-typeon'.
  * Shows buffer depth, effective rate, sparkline during streaming.
  */
+.typeon-vitals:empty {
+  display: none;
+}
 .typeon-vitals {
   font-family: var(--font-mono);
   font-size: 11px;
