@@ -92,3 +92,95 @@
   font-feature-settings: "cv01", "cv02", "cv03", "cv04";
   font-size: 18px;
 }
+
+/**
+ * Shared markdown classes — used by both MarkdownText.tsx (React) and
+ * renderMarkdown.ts (raw innerHTML during streaming). One source of truth.
+ * All sizes in em so they scale with the parent's .chat-font size.
+ */
+
+/* Block elements */
+.md-p { margin-bottom: 1rem; }
+.md-p:last-child { margin-bottom: 0; }
+
+.md-h1 { margin-bottom: 0.75rem; font-weight: 700; font-size: 1.5em; }
+.md-h2 { margin-bottom: 0.5rem; font-weight: 700; font-size: 1.25em; }
+.md-h3 { margin-bottom: 0.5rem; font-weight: 700; font-size: 1.125em; }
+
+.md-ul { margin-bottom: 1rem; padding-left: 1.5rem; list-style-type: disc; }
+.md-ol { margin-bottom: 1rem; padding-left: 1.5rem; list-style-type: decimal; }
+.md-li { margin-bottom: 0.25rem; }
+
+.md-pre {
+  margin-bottom: 1rem;
+  padding: 1rem;
+  background: var(--theme-code-bg);
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  white-space: pre;
+  font-size: 0.85em;
+}
+
+.md-code-block {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.md-blockquote {
+  margin-bottom: 1rem;
+  padding-left: 1rem;
+  border-left: 4px solid var(--theme-primary);
+  font-style: italic;
+  color: var(--theme-muted);
+}
+
+.md-table-wrap { margin-bottom: 1rem; overflow-x: auto; }
+.md-table { min-width: 100%; border-collapse: collapse; }
+.md-thead { border-bottom: 1px solid var(--theme-muted); }
+.md-tr { border-bottom: 1px solid color-mix(in srgb, var(--theme-muted) 50%, transparent); }
+.md-th { padding: 0.5rem 0.75rem; text-align: left; font-weight: 600; }
+.md-td { padding: 0.5rem 0.75rem; }
+
+.md-hr {
+  margin: 1rem 0;
+  border: none;
+  border-top: 1px solid var(--theme-border);
+}
+
+/* Inline elements */
+.md-strong { font-weight: 700; }
+.md-em { font-style: italic; }
+
+.md-code-inline {
+  padding: 2px 6px;
+  background: var(--theme-user-bubble);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+}
+
+.md-a {
+  color: var(--theme-primary);
+  text-decoration: underline;
+  overflow-wrap: break-word;
+}
+
+.md-img {
+  max-width: 100%;
+  border-radius: 0.5rem;
+}
+
+/**
+ * Type-on debug vitals — gated by localStorage 'alpha-debug-typeon'.
+ * Shows buffer depth, effective rate, sparkline during streaming.
+ */
+.typeon-vitals {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--theme-muted);
+  opacity: 0.6;
+  padding: 4px 0;
+  user-select: none;
+  pointer-events: none;
+}

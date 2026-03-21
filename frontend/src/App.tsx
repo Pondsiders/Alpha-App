@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate, useParams, useNavigate } from "react-router-dom";
 import { useCallback, useEffect, useRef } from "react";
-import { TypeOnBuffer } from "@/lib/typeOnBuffer";
+import { TypeOnBuffer, type TypeOnVitals } from "@/lib/typeOnBuffer";
+import { renderMarkdown } from "@/lib/renderMarkdown";
 import ChatPage from "./pages/ChatPage";
 import DevContextMeter from "./pages/DevContextMeter";
 import DevStatusBar from "./pages/DevStatusBar";
@@ -465,15 +466,77 @@ function Layout() {
           aid = actions.addRemoteAssistantPlaceholder(eChatId);
           assistantIdMapRef.current[eChatId] = aid;
         }
-        // Create buffer on first delta for this chat
+        // Create buffer on first delta for this chat.
+        // The buffer bypasses React: it accumulates text locally and renders
+        // directly to a DOM element via innerHTML + marked. One Zustand update
+        // happens when the buffer drains empty (stream end) or is flushed
+        // (tool call, interrupt). "Uncontrolled during streaming, controlled at rest."
         if (!textBufferRef.current[eChatId]) {
           const capturedAid = aid;
           const capturedChatId = eChatId;
-          textBufferRef.current[eChatId] = new TypeOnBuffer(
-            (text) => actions.appendToAssistant(capturedAid, text, capturedChatId),
-          );
+          let accumulated = "";
+          let targetEl: HTMLElement | null = null;
+          let vitalsEl: Element | null = null;
+
+          textBufferRef.current[eChatId] = new TypeOnBuffer({
+            onDrain: (text, _target) => {
+              accumulated += text;
+
+              // Lazy-find the streaming target element
+              if (!targetEl) {
+                targetEl = document.querySelector(
+                  `[data-streaming-target="${capturedAid}"]`
+                );
+              }
+              if (targetEl) {
+                // trimStart: Claude sometimes starts responses with bare
+                // newlines (\n\n). These create phantom paragraph breaks
+                // in the rendered markdown. Trim them — the React handoff
+                // (appendToAssistant) receives the raw accumulated text,
+                // so settled rendering is unaffected.
+                targetEl.innerHTML = renderMarkdown(accumulated.trimStart());
+              }
+            },
+            onDrained: () => {
+              // Sync to React — one store update for the entire streamed text.
+              // The streaming div still has content. Clearing it too early
+              // causes a flash (div empty, React hasn't painted yet).
+              // Solution: wait 50ms — long enough for React to commit and
+              // paint, short enough to be imperceptible. During those 50ms,
+              // both the streaming div and React's MarkdownText show the
+              // same text with the same CSS classes — visually identical,
+              // so the duplication is invisible.
+              const elToClear = targetEl;
+              if (accumulated) {
+                actions.appendToAssistant(capturedAid, accumulated, capturedChatId);
+              }
+              setTimeout(() => {
+                if (elToClear) elToClear.innerHTML = "";
+              }, 50);
+              accumulated = "";
+              targetEl = null;
+              vitalsEl = null;
+              delete textBufferRef.current[capturedChatId];
+            },
+            onVitals: (vitals: TypeOnVitals) => {
+              if (!vitalsEl) {
+                vitalsEl = document.querySelector(
+                  `[data-streaming-vitals="${capturedAid}"]`
+                );
+              }
+              if (vitalsEl) {
+                vitalsEl.textContent =
+                  `${vitals.effectiveRate} c/s | buf: ${vitals.bufferDepth} | rate: ${vitals.currentRate} c/s | ${vitals.sparkline} | ${vitals.target}`;
+              }
+            },
+            // Adaptive drain: base 60 c/s + 0.5 * depth.
+            // At depth 100: 110 c/s. At depth 1000: 560 c/s. At depth 4000: 2060 c/s.
+            // Breathes with the source — fast when backlogged, gentle when caught up.
+            baseRate: 60,
+            chaseFactor: 0.5,
+          });
         }
-        textBufferRef.current[eChatId].push(event.data as string);
+        textBufferRef.current[eChatId].push(event.data as string, "text");
         break;
       }
 
@@ -592,15 +655,18 @@ function Layout() {
       }
 
       case "done": {
-        // DON'T flush — let the type-on buffer drain naturally.
+        // Signal the buffer that no more text is coming. If the queue
+        // still has text, it drains naturally and fires onDrained when
+        // empty. If already empty, onDrained fires immediately. Either
+        // way, onDrained syncs to the store and cleans up the buffer.
+        if (eChatId && textBufferRef.current[eChatId]) {
+          textBufferRef.current[eChatId].finish();
+        }
         // DON'T clear assistantIdMapRef — `done` fires after each internal
         // subprocess turn (tool call cycle), not just at the end of the whole
         // response. Clearing it here caused tool calls to split into a new
         // assistant message. The ref gets cleared when chat-state transitions
         // to idle (handled by the assistant-message or chat-state events).
-        if (eChatId) {
-          delete textBufferRef.current[eChatId];
-        }
         break;
       }
 

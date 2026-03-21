@@ -7,8 +7,9 @@ interface MarkdownTextProps {
 }
 
 /**
- * Markdown renderer for chat content. All font sizes use em units
- * so they scale with the parent's .chat-font size.
+ * Markdown renderer for chat content. Uses shared md-* CSS classes
+ * (defined in index.css) so the output matches renderMarkdown.ts
+ * exactly — no visual pop on the streaming→settled handoff.
  */
 export const MarkdownText: FC<MarkdownTextProps> = ({ text }) => {
   return (
@@ -17,83 +18,83 @@ export const MarkdownText: FC<MarkdownTextProps> = ({ text }) => {
       remarkPlugins={[remarkGfm]}
       components={{
         p: ({ children }) => (
-          <p className="mb-4 last:mb-0">{children}</p>
+          <p className="md-p">{children}</p>
         ),
         ul: ({ children }) => (
-          <ul className="mb-4 pl-6 list-disc">{children}</ul>
+          <ul className="md-ul">{children}</ul>
         ),
         ol: ({ children }) => (
-          <ol className="mb-4 pl-6 list-decimal">{children}</ol>
+          <ol className="md-ol">{children}</ol>
         ),
         li: ({ children }) => (
-          <li className="mb-1">{children}</li>
+          <li className="md-li">{children}</li>
         ),
         code: ({ children, className }) => {
           const isInline = !className && typeof children === 'string' && !children.includes('\n');
 
           if (isInline) {
             return (
-              <code className="px-1.5 py-0.5 bg-user-bubble rounded font-mono text-[0.85em]">
+              <code className="md-code-inline">
                 {children}
               </code>
             );
           }
 
           return (
-            <pre className="mb-4 p-4 bg-code-bg rounded-lg overflow-x-auto font-mono whitespace-pre text-[0.85em]">
-              <code className={className}>{children}</code>
+            <pre className="md-pre">
+              <code className={`md-code-block${className ? ` ${className}` : ""}`}>{children}</code>
             </pre>
           );
         },
         pre: ({ children }) => <>{children}</>,
         blockquote: ({ children }) => (
-          <blockquote className="mb-4 pl-4 border-l-4 border-primary italic text-muted">
+          <blockquote className="md-blockquote">
             {children}
           </blockquote>
         ),
         h1: ({ children }) => (
-          <h1 className="mb-3 font-bold text-[1.5em]">
+          <h1 className="md-h1">
             {children}
           </h1>
         ),
         h2: ({ children }) => (
-          <h2 className="mb-2 font-bold text-[1.25em]">
+          <h2 className="md-h2">
             {children}
           </h2>
         ),
         h3: ({ children }) => (
-          <h3 className="mb-2 font-bold text-[1.125em]">
+          <h3 className="md-h3">
             {children}
           </h3>
         ),
         a: ({ href, children }) => (
-          <a href={href} className="text-primary underline break-words">
+          <a href={href} className="md-a">
             {children}
           </a>
         ),
         strong: ({ children }) => (
-          <strong className="font-bold">{children}</strong>
+          <strong className="md-strong">{children}</strong>
         ),
         em: ({ children }) => (
-          <em className="italic">{children}</em>
+          <em className="md-em">{children}</em>
         ),
         table: ({ children }) => (
-          <div className="mb-4 overflow-x-auto">
-            <table className="min-w-full border-collapse">{children}</table>
+          <div className="md-table-wrap">
+            <table className="md-table">{children}</table>
           </div>
         ),
         thead: ({ children }) => (
-          <thead className="border-b border-muted">{children}</thead>
+          <thead className="md-thead">{children}</thead>
         ),
-        tbody: ({ children }) => <tbody>{children}</tbody>,
+        tbody: ({ children }) => <tbody className="md-tbody">{children}</tbody>,
         tr: ({ children }) => (
-          <tr className="border-b border-muted/50">{children}</tr>
+          <tr className="md-tr">{children}</tr>
         ),
         th: ({ children }) => (
-          <th className="px-3 py-2 text-left font-semibold">{children}</th>
+          <th className="md-th">{children}</th>
         ),
         td: ({ children }) => (
-          <td className="px-3 py-2">{children}</td>
+          <td className="md-td">{children}</td>
         ),
       }}
     >

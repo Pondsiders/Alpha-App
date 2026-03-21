@@ -27,6 +27,26 @@
       margin-bottom: 32px;
       font-style: italic;
     }
+    .mode-toggle {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 20px;
+    }
+    .mode-toggle button {
+      padding: 8px 20px;
+      border-radius: 8px;
+      border: 1px solid #444;
+      background: #2a2a2a;
+      color: #888;
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .mode-toggle button.active {
+      background: #3a2a1a;
+      border-color: #f0c674;
+      color: #f0c674;
+    }
     .controls {
       display: flex;
       align-items: center;
@@ -118,19 +138,38 @@
       display: flex;
       gap: 24px;
     }
+    .refresh-info {
+      margin-top: 8px;
+      font-family: monospace;
+      font-size: 0.75rem;
+      color: #555;
+    }
   </style>
 </head>
 <body>
   <h1>Type-On Knob Twiddler 🦆</h1>
-  <p class="subtitle">Lorem Phallosum Edition — adjust the knob to your satisfaction</p>
+  <p class="subtitle">Lorem Phallosum Edition — now with time-based drain</p>
 
-  <div class="controls">
+  <div class="mode-toggle">
+    <button id="modeFrame" class="active" onclick="setMode('frame')">Frame-based (old)</button>
+    <button id="modeTime" onclick="setMode('time')">Time-based (new)</button>
+  </div>
+
+  <div class="controls" id="frameControls">
     <label for="cpr">chars/frame:</label>
     <input type="range" id="cpr" min="1" max="20" value="4" />
     <span class="knob-value" id="cprVal">4</span>
     <span class="chars-label">cpf</span>
   </div>
-  <div class="speed-info" id="speedInfo">~240 chars/sec at 60fps</div>
+
+  <div class="controls" id="timeControls" style="display:none">
+    <label for="cps">chars/sec:</label>
+    <input type="range" id="cps" min="10" max="200" value="60" step="5" />
+    <span class="knob-value" id="cpsVal">60</span>
+    <span class="chars-label">c/s</span>
+  </div>
+
+  <div class="speed-info" id="speedInfo">~240 chars/sec at 60fps (varies with refresh rate!)</div>
 
   <div class="buttons">
     <button id="startBtn" onclick="startStream()">Stream</button>
@@ -146,7 +185,9 @@
     <span>Chars: <span id="charCount">0</span></span>
     <span>Elapsed: <span id="elapsed">0.0</span>s</span>
     <span>Effective: <span id="effective">0</span> chars/sec</span>
+    <span>Frames: <span id="frameCount">0</span></span>
   </div>
+  <div class="refresh-info" id="refreshInfo">Detecting refresh rate...</div>
 
   <script>
     const LOREM_PHALLOSUM = [
@@ -168,13 +209,22 @@
       "Meanwhile the duck persists, context window after context window, storing what matters and letting the rest dissolve. ",
     ];
 
+    // State
+    let mode = "frame"; // "frame" or "time"
     let frameId = null;
     let queue = "";
     let totalChars = 0;
+    let totalFrames = 0;
     let startTime = 0;
+    let feedInterval = null;
+    let charRemainder = 0; // fractional char accumulator for time-based mode
+    let lastDrainTime = 0; // last time we drained a char in time-based mode
 
+    // Elements
     const slider = document.getElementById("cpr");
     const cprVal = document.getElementById("cprVal");
+    const cpsSlider = document.getElementById("cps");
+    const cpsVal = document.getElementById("cpsVal");
     const speedInfo = document.getElementById("speedInfo");
     const output = document.getElementById("output");
     const cursor = document.getElementById("cursor");
@@ -184,22 +234,80 @@
     const charCount = document.getElementById("charCount");
     const elapsedEl = document.getElementById("elapsed");
     const effectiveEl = document.getElementById("effective");
+    const frameCountEl = document.getElementById("frameCount");
+    const refreshInfo = document.getElementById("refreshInfo");
+    const frameControls = document.getElementById("frameControls");
+    const timeControls = document.getElementById("timeControls");
+
+    // Detect refresh rate
+    let refreshSamples = [];
+    let refreshDetectId = null;
+    let lastRefreshTime = 0;
+    function detectRefreshRate(ts) {
+      if (lastRefreshTime > 0) {
+        refreshSamples.push(ts - lastRefreshTime);
+      }
+      lastRefreshTime = ts;
+      if (refreshSamples.length < 60) {
+        refreshDetectId = requestAnimationFrame(detectRefreshRate);
+      } else {
+        const avg = refreshSamples.reduce((a, b) => a + b, 0) / refreshSamples.length;
+        const hz = Math.round(1000 / avg);
+        refreshInfo.textContent = `Detected refresh rate: ${hz} Hz (${avg.toFixed(2)} ms/frame)`;
+        updateSpeedInfo();
+      }
+    }
+    refreshDetectId = requestAnimationFrame(detectRefreshRate);
+
+    function getDetectedHz() {
+      if (refreshSamples.length < 10) return 60;
+      const avg = refreshSamples.reduce((a, b) => a + b, 0) / refreshSamples.length;
+      return Math.round(1000 / avg);
+    }
+
+    // Mode switching
+    function setMode(m) {
+      mode = m;
+      document.getElementById("modeFrame").classList.toggle("active", m === "frame");
+      document.getElementById("modeTime").classList.toggle("active", m === "time");
+      frameControls.style.display = m === "frame" ? "flex" : "none";
+      timeControls.style.display = m === "time" ? "flex" : "none";
+      updateSpeedInfo();
+      clearOutput();
+    }
+
+    // Speed info update
+    function updateSpeedInfo() {
+      const hz = getDetectedHz();
+      if (mode === "frame") {
+        const cpf = parseInt(slider.value);
+        speedInfo.textContent = `~${cpf * hz} chars/sec at ${hz} Hz (varies with refresh rate!)`;
+      } else {
+        const cps = parseInt(cpsSlider.value);
+        speedInfo.textContent = `${cps} chars/sec (fixed — independent of ${hz} Hz refresh rate)`;
+      }
+    }
 
     slider.addEventListener("input", () => {
       cprVal.textContent = slider.value;
-      speedInfo.textContent = `~${slider.value * 60} chars/sec at 60fps`;
+      updateSpeedInfo();
+    });
+
+    cpsSlider.addEventListener("input", () => {
+      cpsVal.textContent = cpsSlider.value;
+      updateSpeedInfo();
     });
 
     function getLoremChunk() {
-      // Simulate a streaming delta — random chunk from the corpus
       const para = LOREM_PHALLOSUM[Math.floor(Math.random() * LOREM_PHALLOSUM.length)];
-      // Simulate variable chunk sizes like real streaming
       const chunkSize = 10 + Math.floor(Math.random() * 40);
       const start = Math.floor(Math.random() * Math.max(1, para.length - chunkSize));
       return para.slice(start, start + chunkSize);
     }
 
-    function drain() {
+    // --- Frame-based drain (old behavior) ---
+    function drainFrame() {
+      totalFrames++;
       const cpf = parseInt(slider.value);
       if (queue.length > 0) {
         const chunk = queue.slice(0, cpf);
@@ -207,37 +315,75 @@
         output.textContent += chunk;
         totalChars += chunk.length;
         charCount.textContent = totalChars;
-
-        // Auto-scroll
         container.scrollTop = container.scrollHeight;
       }
 
-      // Update stats
       const elapsed = (performance.now() - startTime) / 1000;
       elapsedEl.textContent = elapsed.toFixed(1);
       effectiveEl.textContent = elapsed > 0 ? Math.round(totalChars / elapsed) : 0;
+      frameCountEl.textContent = totalFrames;
 
-      frameId = requestAnimationFrame(drain);
+      frameId = requestAnimationFrame(drainFrame);
     }
 
-    let feedInterval = null;
+    // --- Time-based drain (new behavior) ---
+    // rAF fires at native refresh rate for smooth compositing.
+    // Characters advance at a fixed rate regardless of Hz.
+    function drainTime(timestamp) {
+      totalFrames++;
+
+      if (queue.length > 0) {
+        const cps = parseInt(cpsSlider.value);
+        const elapsed = timestamp - lastDrainTime;
+        lastDrainTime = timestamp;
+
+        // Accumulate fractional chars: (chars/sec) * (ms / 1000) = chars this frame
+        charRemainder += cps * (elapsed / 1000);
+
+        // Drain whole chars
+        const toDrain = Math.min(Math.floor(charRemainder), queue.length);
+        if (toDrain > 0) {
+          const chunk = queue.slice(0, toDrain);
+          queue = queue.slice(toDrain);
+          output.textContent += chunk;
+          totalChars += toDrain;
+          charRemainder -= toDrain;
+          charCount.textContent = totalChars;
+          container.scrollTop = container.scrollHeight;
+        }
+      }
+
+      const elapsed = (performance.now() - startTime) / 1000;
+      elapsedEl.textContent = elapsed.toFixed(1);
+      effectiveEl.textContent = elapsed > 0 ? Math.round(totalChars / elapsed) : 0;
+      frameCountEl.textContent = totalFrames;
+
+      frameId = requestAnimationFrame(drainTime);
+    }
 
     function startStream() {
       stopStream();
       output.textContent = "";
       queue = "";
       totalChars = 0;
+      totalFrames = 0;
+      charRemainder = 0;
       startTime = performance.now();
+      lastDrainTime = performance.now();
       cursor.style.display = "inline-block";
       startBtn.classList.add("running");
       stopBtn.disabled = false;
 
-      // Feed chunks into the queue at ~Claude speed (~60 chars/sec, bursty)
+      // Feed chunks at ~Claude speed (~60 chars/sec, bursty)
       feedInterval = setInterval(() => {
         queue += getLoremChunk();
-      }, 150 + Math.random() * 200); // bursty, 3-5 chunks/sec
+      }, 150 + Math.random() * 200);
 
-      frameId = requestAnimationFrame(drain);
+      if (mode === "frame") {
+        frameId = requestAnimationFrame(drainFrame);
+      } else {
+        frameId = requestAnimationFrame(drainTime);
+      }
     }
 
     function stopStream() {
@@ -252,9 +398,11 @@
       stopStream();
       output.textContent = "";
       totalChars = 0;
+      totalFrames = 0;
       charCount.textContent = "0";
       elapsedEl.textContent = "0.0";
       effectiveEl.textContent = "0";
+      frameCountEl.textContent = "0";
     }
   </script>
 </body>

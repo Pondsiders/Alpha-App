@@ -200,6 +200,23 @@ const AssistantMessage = () => {
           }}
         />
 
+        {/* Streaming target — raw DOM element for React bypass.
+            The TypeOnBuffer writes innerHTML here via renderMarkdown() during
+            streaming, bypassing Zustand and React reconciliation entirely.
+            When empty, this div has zero height (invisible). When streaming
+            ends, the buffer clears this and syncs text to the store — React
+            renders the real MarkdownText, same classes, no visual pop. */}
+        <div
+          data-streaming-target={message.id}
+          className="markdown-text"
+        />
+
+        {/* Debug vitals — only visible when localStorage alpha-debug-typeon is set */}
+        <div
+          data-streaming-vitals={message.id}
+          className="typeon-vitals"
+        />
+
         {/* Cursor — the "I'm working" cue.
             Always rendered (no layout shift), opacity toggles on busy state.
             Negative margin-top pulls it closer to the content above — the
