@@ -17,6 +17,8 @@ import {
 
 interface MemoryCardProps {
   memory: RecalledMemory;
+  /** Suppress shadows — for use inside inset containers like MemoryTray. */
+  flat?: boolean;
 }
 
 /** Format created_at as PSO-8601 (our bastard timezone format). */
@@ -64,7 +66,7 @@ function formatAge(isoString: string): string {
   }
 }
 
-export function MemoryCard({ memory }: MemoryCardProps) {
+export function MemoryCard({ memory, flat = false }: MemoryCardProps) {
   // Let CSS line-clamp handle truncation — no JS slicing needed.
   const preview = memory.content || "";
 
@@ -75,12 +77,12 @@ export function MemoryCard({ memory }: MemoryCardProps) {
     <HoverCard openDelay={300} closeDelay={100}>
       <HoverCardTrigger asChild>
         <motion.div
-          whileHover={{ y: -3, boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}
+          whileHover={flat ? { y: -2 } : { y: -3, boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}
           transition={{ type: "tween", duration: 0.15 }}
-          className="flex-shrink-0 px-3 py-2 rounded-lg border border-border bg-surface
+          className={`flex-shrink-0 px-3 py-2 rounded-lg border border-border bg-surface
                      max-w-[220px] min-w-[160px] cursor-default select-none
                      hover:border-primary/30 transition-colors duration-150
-                     shadow-[0_2px_8px_rgba(0,0,0,0.4)]"
+                     ${flat ? "" : "shadow-[0_2px_8px_rgba(0,0,0,0.4)]"}`}
         >
           <div className="flex items-center justify-between text-[11px] text-muted mb-0.5">
             <span className="font-mono">#{memory.id}</span>

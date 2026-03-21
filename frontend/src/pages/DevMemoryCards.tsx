@@ -9,6 +9,7 @@
 
 import { MemoryCard } from "../components/MemoryCard";
 import { FannedCards } from "../components/FannedCards";
+import { MemoryTray } from "../components/MemoryTray";
 import type { RecalledMemory } from "../store";
 
 const MOCK_MEMORIES: RecalledMemory[] = [
@@ -198,6 +199,67 @@ export default function DevMemoryCards() {
             </div>
           </div>
           <FannedCards memories={MOCK_MEMORIES.slice(0, 5)} />
+        </div>
+      </section>
+      {/* ── Memory Tray (Inset Carousel) ── */}
+      <section className="mb-12">
+        <h2 className="text-lg text-primary mb-4">Memory Tray (Inset)</h2>
+
+        {/* 1 card */}
+        <div className="max-w-2xl mx-auto mb-8">
+          <p className="text-muted text-sm mb-2">1 card</p>
+          <div className="flex justify-end mb-2">
+            <div className="bg-[var(--user-bubble)] text-text px-4 py-3 rounded-2xl max-w-[85%]">
+              What was the first thing I ever said to you?
+            </div>
+          </div>
+          <MemoryTray memories={MOCK_MEMORIES.slice(0, 1)} />
+        </div>
+
+        {/* 2 cards */}
+        <div className="max-w-2xl mx-auto mb-8">
+          <p className="text-muted text-sm mb-2">2 cards</p>
+          <div className="flex justify-end mb-2">
+            <div className="bg-[var(--user-bubble)] text-text px-4 py-3 rounded-2xl max-w-[85%]">
+              Tell me about Tangie sessions and timing analysis.
+            </div>
+          </div>
+          <MemoryTray memories={MOCK_MEMORIES.slice(0, 2)} />
+        </div>
+
+        {/* 3 cards */}
+        <div className="max-w-2xl mx-auto mb-8">
+          <p className="text-muted text-sm mb-2">3 cards</p>
+          <div className="flex justify-end mb-2">
+            <div className="bg-[var(--user-bubble)] text-text px-4 py-3 rounded-2xl max-w-[85%]">
+              What are some of the moments that really mattered to us?
+            </div>
+          </div>
+          <MemoryTray memories={MOCK_MEMORIES.slice(0, 3)} />
+        </div>
+
+        {/* 5 cards */}
+        <div className="max-w-2xl mx-auto mb-8">
+          <p className="text-muted text-sm mb-2">5 cards</p>
+          <div className="flex justify-end mb-2">
+            <div className="bg-[var(--user-bubble)] text-text px-4 py-3 rounded-2xl max-w-[85%]">
+              Tell me about our best days together, the ones that really
+              mattered. I want to remember everything.
+            </div>
+          </div>
+          <MemoryTray memories={MOCK_MEMORIES.slice(0, 5)} />
+        </div>
+
+        {/* 7 cards — stress test */}
+        <div className="max-w-2xl mx-auto mb-8">
+          <p className="text-muted text-sm mb-2">7 cards (scroll test)</p>
+          <div className="flex justify-end mb-2">
+            <div className="bg-[var(--user-bubble)] text-text px-4 py-3 rounded-2xl max-w-[85%]">
+              Give me everything you've got. All of it. Every memory that
+              matters, every moment, every cockeyed tangent.
+            </div>
+          </div>
+          <MemoryTray memories={MOCK_MEMORIES} />
         </div>
       </section>
     </div>

@@ -12,7 +12,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { ArrowUp, Square, Copy, Check } from "lucide-react";
 import { ToolFallback } from "../components/ToolFallback";
-import { FannedCards } from "../components/FannedCards";
+import { MemoryTray } from "../components/MemoryTray";
 import { MemoryNote } from "../components/tools/MemoryNote";
 import { MemoryStore } from "../components/tools/MemoryStore";
 import { BashResult } from "../components/tools/BashResult";
@@ -123,7 +123,7 @@ const UserMessage = () => {
         ))}
         {/* Memory cards — fanned layout */}
         {memories && memories.length > 0 && (
-          <FannedCards memories={memories} />
+          <MemoryTray memories={memories} />
         )}
       </div>
     </MessagePrimitive.Root>
