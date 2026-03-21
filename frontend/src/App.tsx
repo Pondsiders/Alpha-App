@@ -474,13 +474,10 @@ function Layout() {
           assistantIdMapRef.current[eChatId] = aid;
         }
         // Create buffer on first delta for this chat.
-        // SINGLE-DIV APPROACH: We hijack React's own MarkdownText wrapper div.
-        // 1. Add an empty text part → React renders MarkdownText with text=""
-        //    → an empty <div data-markdown-text> exists in the DOM.
-        // 2. During streaming, we write innerHTML to that div (bypassing React).
-        // 3. On done, we update the store with the full text → React re-renders
-        //    MarkdownText with the full text → React overwrites the div's children.
-        // One div, two owners, zero handoff flash.
+        // The buffer bypasses React: it accumulates text locally and renders
+        // directly to a DOM element via innerHTML + marked. One Zustand update
+        // happens when the buffer drains empty (stream end) or is flushed
+        // (tool call, interrupt). "Uncontrolled during streaming, controlled at rest."
         if (!textBufferRef.current[eChatId]) {
           const capturedAid = aid;
           const capturedChatId = eChatId;
@@ -488,41 +485,42 @@ function Layout() {
           let targetEl: HTMLElement | null = null;
           let vitalsEl: Element | null = null;
 
-          // Seed an empty text part so React renders the MarkdownText wrapper.
-          // This creates the div we'll write innerHTML to.
-          actions.appendToAssistant(capturedAid, "", capturedChatId);
-
           textBufferRef.current[eChatId] = new TypeOnBuffer({
             onDrain: (text, _target) => {
               accumulated += text;
 
-              // Find the MarkdownText wrapper — the LAST [data-markdown-text]
-              // in the DOM (the one being actively streamed to).
+              // Lazy-find the streaming target element
               if (!targetEl) {
-                const allTargets = document.querySelectorAll("[data-markdown-text]");
-                if (allTargets.length > 0) {
-                  targetEl = allTargets[allTargets.length - 1] as HTMLElement;
-                }
+                targetEl = document.querySelector(
+                  `[data-streaming-target="${capturedAid}"]`
+                );
               }
               if (targetEl) {
+                // trimStart: Claude sometimes starts responses with bare
+                // newlines (\n\n). These create phantom paragraph breaks
+                // in the rendered markdown. Trim them — the React handoff
+                // (appendToAssistant) receives the raw accumulated text,
+                // so settled rendering is unaffected.
                 targetEl.innerHTML = renderMarkdown(accumulated.trimStart());
               }
             },
             onDrained: () => {
-              // Sync accumulated text to React. appendToAssistant APPENDS
-              // to the existing text part (which is "" from our seed).
-              // React re-renders MarkdownText with the full text, which
-              // overwrites the div's children. No separate clear needed.
+              // Sync accumulated text to React.
+              const elToClear = targetEl;
               if (accumulated) {
                 actions.appendToAssistant(capturedAid, accumulated, capturedChatId);
               }
-
+              setTimeout(() => {
+                if (elToClear) elToClear.innerHTML = "";
+              }, 50);
               accumulated = "";
               targetEl = null;
               vitalsEl = null;
               delete textBufferRef.current[capturedChatId];
 
-              // Dispatch pending blocks (tool events queued during drain).
+              // Flush any pending blocks that were queued while the buffer
+              // was draining before a tool call. Re-dispatch them through
+              // the main event handler so they execute normally.
               const pending = pendingBlocksRef.current[capturedChatId];
               if (pending && pending.length > 0) {
                 delete pendingBlocksRef.current[capturedChatId];
