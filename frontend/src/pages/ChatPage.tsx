@@ -12,7 +12,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { ArrowUp, Square, Copy, Check } from "lucide-react";
 import { ToolFallback } from "../components/ToolFallback";
-import { MemoryCard } from "../components/MemoryCard";
+import { FannedCards } from "../components/FannedCards";
 import { MemoryNote } from "../components/tools/MemoryNote";
 import { MemoryStore } from "../components/tools/MemoryStore";
 import { BashResult } from "../components/tools/BashResult";
@@ -99,36 +99,33 @@ const UserMessage = () => {
   }
 
   return (
-    <MessagePrimitive.Root data-testid="user-message" className="flex flex-col items-end mb-4 gap-2">
-      {/* Text bubble — the hero */}
-      {textContent && (
-        <div className="px-4 py-3 bg-user-bubble rounded-2xl max-w-[75%] text-text break-words whitespace-pre-wrap">
-          {textContent}
-        </div>
-      )}
-      {/* Image bubble(s) — below text */}
-      {imageParts.map((img, i) => (
-        <div
-          key={i}
-          className="rounded-2xl overflow-hidden border border-border max-w-[50%]"
-        >
-          <img
-            src={img.image}
-            alt="Attached image"
-            className="w-full h-auto"
-          />
-        </div>
-      ))}
-      {/* Memory cards — horizontal scroll, right-aligned */}
-      {memories && memories.length > 0 && (
-        <div className="w-full flex justify-end">
-          <div className="flex gap-2 overflow-x-auto max-w-full py-1 scrollbar-thin">
-            {memories.map((mem) => (
-              <MemoryCard key={mem.id} memory={mem} />
-            ))}
+    <MessagePrimitive.Root data-testid="user-message" className="flex flex-col items-end mb-4">
+      {/* Constraining wrapper — all user message parts share the same max width */}
+      <div className="flex flex-col items-end gap-2 max-w-[75%]">
+        {/* Text bubble — the hero */}
+        {textContent && (
+          <div className="px-4 py-3 bg-user-bubble rounded-2xl text-text break-words whitespace-pre-wrap">
+            {textContent}
           </div>
-        </div>
-      )}
+        )}
+        {/* Image bubble(s) — below text */}
+        {imageParts.map((img, i) => (
+          <div
+            key={i}
+            className="rounded-2xl overflow-hidden border border-border max-w-[66%]"
+          >
+            <img
+              src={img.image}
+              alt="Attached image"
+              className="w-full h-auto"
+            />
+          </div>
+        ))}
+        {/* Memory cards — fanned layout */}
+        {memories && memories.length > 0 && (
+          <FannedCards memories={memories} />
+        )}
+      </div>
     </MessagePrimitive.Root>
   );
 };

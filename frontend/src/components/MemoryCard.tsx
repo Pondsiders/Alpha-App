@@ -6,6 +6,8 @@
  * and metadata.
  */
 
+import { motion } from "framer-motion";
+import { Calendar } from "lucide-react";
 import type { RecalledMemory } from "../store";
 import {
   HoverCard,
@@ -17,8 +19,27 @@ interface MemoryCardProps {
   memory: RecalledMemory;
 }
 
-/** Format created_at into a human-readable relative or absolute string. */
-function formatTimestamp(isoString: string): string {
+/** Format created_at as PSO-8601 (our bastard timezone format). */
+function formatPSO(isoString: string): string {
+  try {
+    const date = new Date(isoString);
+    // PSO-8601: "Fri Mar 20 2026, 3:11 PM"
+    return date.toLocaleString("en-US", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
+  } catch {
+    return isoString;
+  }
+}
+
+/** Format created_at into a human-readable relative age. */
+function formatAge(isoString: string): string {
   try {
     const date = new Date(isoString);
     const now = new Date();
@@ -36,14 +57,10 @@ function formatTimestamp(isoString: string): string {
       const months = Math.floor(diffDays / 30);
       return months === 1 ? "1 month ago" : `${months} months ago`;
     }
-    // Fall back to date string
-    return date.toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
+    const years = Math.floor(diffDays / 365);
+    return years === 1 ? "1 year ago" : `${years} years ago`;
   } catch {
-    return isoString;
+    return "";
   }
 }
 
@@ -51,15 +68,19 @@ export function MemoryCard({ memory }: MemoryCardProps) {
   // Let CSS line-clamp handle truncation — no JS slicing needed.
   const preview = memory.content || "";
 
-  const timestamp = formatTimestamp(memory.created_at);
+  const pso = formatPSO(memory.created_at);
+  const age = formatAge(memory.created_at);
 
   return (
     <HoverCard openDelay={300} closeDelay={100}>
       <HoverCardTrigger asChild>
-        <div
-          className="flex-shrink-0 px-3 py-2 rounded-lg border border-border bg-surface/50
+        <motion.div
+          whileHover={{ y: -3, boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}
+          transition={{ type: "tween", duration: 0.15 }}
+          className="flex-shrink-0 px-3 py-2 rounded-lg border border-border bg-surface
                      max-w-[220px] min-w-[160px] cursor-default select-none
-                     hover:border-primary/30 transition-colors duration-150"
+                     hover:border-primary/30 transition-colors duration-150
+                     shadow-[0_2px_8px_rgba(0,0,0,0.4)]"
         >
           <div className="flex items-center justify-between text-[11px] text-muted mb-0.5">
             <span className="font-mono">#{memory.id}</span>
@@ -70,7 +91,7 @@ export function MemoryCard({ memory }: MemoryCardProps) {
               {preview}
             </div>
           )}
-        </div>
+        </motion.div>
       </HoverCardTrigger>
       <HoverCardContent className="w-80" side="top" align="center">
         {/* Header — ID + score */}
@@ -88,10 +109,15 @@ export function MemoryCard({ memory }: MemoryCardProps) {
           {memory.content}
         </div>
 
-        {/* Footer — timestamp */}
-        <div className="mt-2 pt-2 border-t border-border text-[11px] text-muted flex items-center gap-1">
-          <span>📅</span>
-          <span>{timestamp}</span>
+        {/* Footer — PSO-8601 timestamp + relative age */}
+        <div className="mt-2 pt-2 border-t border-border text-[11px] text-muted">
+          <div className="flex items-center gap-1.5">
+            <Calendar size={11} className="shrink-0 text-muted/60" />
+            <span className="font-mono">{pso}</span>
+          </div>
+          {age && (
+            <div className="ml-[17px] text-muted/60">{age}</div>
+          )}
         </div>
       </HoverCardContent>
     </HoverCard>
