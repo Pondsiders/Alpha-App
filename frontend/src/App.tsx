@@ -473,11 +473,14 @@ function Layout() {
           aid = actions.addRemoteAssistantPlaceholder(eChatId);
           assistantIdMapRef.current[eChatId] = aid;
         }
-        // Create buffer on first delta for this chat.
-        // The buffer bypasses React: it accumulates text locally and renders
-        // directly to a DOM element via innerHTML + marked. One Zustand update
-        // happens when the buffer drains empty (stream end) or is flushed
-        // (tool call, interrupt). "Uncontrolled during streaming, controlled at rest."
+        // SINGLE-DIV with dangerouslySetInnerHTML.
+        // MarkdownText now uses dangerouslySetInnerHTML, so React treats
+        // its children as an opaque HTML string. During streaming, we write
+        // innerHTML directly — React doesn't track child nodes and won't
+        // crash. On settle, appendToAssistant updates the store → React
+        // re-renders → dangerouslySetInnerHTML compares old __html to new.
+        // Both are renderMarkdown(sameText) → identical. React does NOTHING.
+        // The handoff is invisible because there IS no handoff.
         if (!textBufferRef.current[eChatId]) {
           const capturedAid = aid;
           const capturedChatId = eChatId;
@@ -485,42 +488,42 @@ function Layout() {
           let targetEl: HTMLElement | null = null;
           let vitalsEl: Element | null = null;
 
+          // Seed an empty text part so React renders a MarkdownText div.
+          // dangerouslySetInnerHTML={{ __html: "" }} = empty div in the DOM.
+          // We'll write innerHTML to it during streaming.
+          actions.appendToAssistant(capturedAid, "", capturedChatId);
+
           textBufferRef.current[eChatId] = new TypeOnBuffer({
             onDrain: (text, _target) => {
               accumulated += text;
 
-              // Lazy-find the streaming target element
+              // Find MarkdownText's div — the last [data-markdown-text].
               if (!targetEl) {
-                targetEl = document.querySelector(
-                  `[data-streaming-target="${capturedAid}"]`
-                );
+                const allTargets = document.querySelectorAll("[data-markdown-text]");
+                if (allTargets.length > 0) {
+                  targetEl = allTargets[allTargets.length - 1] as HTMLElement;
+                }
               }
               if (targetEl) {
-                // trimStart: Claude sometimes starts responses with bare
-                // newlines (\n\n). These create phantom paragraph breaks
-                // in the rendered markdown. Trim them — the React handoff
-                // (appendToAssistant) receives the raw accumulated text,
-                // so settled rendering is unaffected.
                 targetEl.innerHTML = renderMarkdown(accumulated.trimStart());
               }
             },
             onDrained: () => {
-              // Sync accumulated text to React.
-              const elToClear = targetEl;
+              // Sync to React. appendToAssistant appends accumulated text
+              // to the existing empty part: "" + text = text.
+              // React re-renders MarkdownText with dangerouslySetInnerHTML.
+              // renderMarkdown(text) produces the SAME HTML string that's
+              // already in innerHTML. React compares, finds they match,
+              // does NOTHING. Zero DOM manipulation. Invisible handoff.
               if (accumulated) {
                 actions.appendToAssistant(capturedAid, accumulated, capturedChatId);
               }
-              setTimeout(() => {
-                if (elToClear) elToClear.innerHTML = "";
-              }, 50);
               accumulated = "";
               targetEl = null;
               vitalsEl = null;
               delete textBufferRef.current[capturedChatId];
 
-              // Flush any pending blocks that were queued while the buffer
-              // was draining before a tool call. Re-dispatch them through
-              // the main event handler so they execute normally.
+              // Flush pending blocks (tool events queued during drain).
               const pending = pendingBlocksRef.current[capturedChatId];
               if (pending && pending.length > 0) {
                 delete pendingBlocksRef.current[capturedChatId];
