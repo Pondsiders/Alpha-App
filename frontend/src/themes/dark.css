@@ -25,6 +25,32 @@
   --sidebar-ring: #d4a574;
 }
 
+/**
+ * EXPERIMENT: Fixed-height tool components inside ToolGroup.
+ * Eliminates all layout shift from tool content changes.
+ * Remove this rule to go back to natural heights.
+ */
+.tool-group-inner > * {
+  min-height: 120px;
+  max-height: 120px;
+  overflow: hidden;
+}
+
+/**
+ * Map-coloring: tool headers use chat background color (darkest)
+ * so they contrast against the ToolGroup surface (medium).
+ * Chat bg (#1c1c1c) → ToolGroup (#282828) → Tool header (#1c1c1c) → Tool output (#161616)
+ */
+.tool-group-inner .bg-surface {
+  background-color: var(--theme-background) !important;
+}
+
+/* Dim tool title text to match result text — tools are subsurface,
+   not competing with assistant message text for attention. */
+.tool-group-inner .text-text {
+  color: color-mix(in srgb, var(--theme-text) 70%, transparent) !important;
+}
+
 /* Quill-write animation — gentle bob and tilt, like a quill dipping into an inkwell */
 @keyframes quill-write {
   0%, 100% {

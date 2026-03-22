@@ -12,6 +12,7 @@
  */
 
 import { useState, useRef, useEffect } from "react";
+import { motion } from "framer-motion";
 import { Terminal } from "lucide-react";
 import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
 

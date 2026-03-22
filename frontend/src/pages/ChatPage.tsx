@@ -169,7 +169,7 @@ const ASSISTANT_PARTS_COMPONENTS = {
     by_name: {
       mcp__cortex__store: MemoryNote,
       mcp__alpha__store: MemoryStore,
-      Bash: animated(BashResult),
+      Bash: BashResult,
       Read: ReadResult,
       Edit: EditResult,
       Write: WriteResult,
