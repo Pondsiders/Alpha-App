@@ -40,7 +40,8 @@ import type {
   ThreadMessageLike,
   AppendMessage,
 } from "@assistant-ui/react";
-import { MarkdownText } from "../components/MarkdownText";
+import { MarkdownTextPrimitive } from "@assistant-ui/react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   useWorkshopStore,
   type Message,
@@ -147,6 +148,37 @@ const ThinkingBlock = ({ text, status }: { text: string; status: unknown }) => {
   );
 };
 
+// Stable component map — MUST be outside the component or in useMemo.
+// An inline object literal in JSX is recreated every render, which breaks
+// Parts' internal memoization and forces child unmount/remount.
+// Native assistant-ui markdown text with smooth streaming + GFM
+const NativeMarkdownText = () => (
+  <MarkdownTextPrimitive
+    remarkPlugins={[remarkGfm]}
+    className="markdown-text"
+    smooth
+  />
+);
+
+const ASSISTANT_PARTS_COMPONENTS = {
+  Text: NativeMarkdownText,
+  Reasoning: ThinkingBlock,
+  tools: {
+    by_name: {
+      mcp__cortex__store: MemoryNote,
+      mcp__alpha__store: MemoryStore,
+      Bash: BashResult,
+      Read: ReadResult,
+      Edit: EditResult,
+      Write: WriteResult,
+      Grep: GrepResult,
+      Glob: GrepResult,
+      TodoWrite: TodoResult,
+    },
+    Fallback: ToolFallback,
+  },
+};
+
 const AssistantMessage = () => {
   const message = useMessage();
   const [copied, setCopied] = useState(false);
@@ -179,32 +211,7 @@ const AssistantMessage = () => {
   return (
     <MessagePrimitive.Root data-testid="assistant-message" className="mb-6 pl-2 pr-12 group/assistant">
       <div className="text-text leading-relaxed flex flex-col gap-8">
-        <MessagePrimitive.Parts
-          components={{
-            Text: MarkdownText,
-            Reasoning: ThinkingBlock,
-            tools: {
-              by_name: {
-                mcp__cortex__store: MemoryNote,
-                mcp__alpha__store: MemoryStore,
-                Bash: BashResult,
-                Read: ReadResult,
-                Edit: EditResult,
-                Write: WriteResult,
-                Grep: GrepResult,
-                Glob: GrepResult,
-                TodoWrite: TodoResult,
-              },
-              Fallback: ToolFallback,
-            },
-          }}
-        />
-
-        {/* Debug vitals — only visible when localStorage alpha-debug-typeon is set */}
-        <div
-          data-streaming-vitals={message.id}
-          className="typeon-vitals"
-        />
+        <MessagePrimitive.Parts components={ASSISTANT_PARTS_COMPONENTS} />
 
         {/* Cursor — the "I'm working" cue.
             Always rendered (no layout shift), opacity toggles on busy state.

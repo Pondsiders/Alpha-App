@@ -94,24 +94,27 @@
 }
 
 /**
- * Shared markdown classes — used by both MarkdownText.tsx (React) and
- * renderMarkdown.ts (raw innerHTML during streaming). One source of truth.
+ * Markdown styles — scoped to .markdown-text container.
+ * react-markdown renders bare HTML elements; we style them here.
  * All sizes in em so they scale with the parent's .chat-font size.
  */
 
 /* Block elements */
-.md-p { margin-bottom: 1rem; }
-.md-p:last-child { margin-bottom: 0; }
+.markdown-text p { margin-bottom: 1rem; }
+.markdown-text p:last-child { margin-bottom: 0; }
 
-.md-h1 { margin-bottom: 0.75rem; font-weight: 700; font-size: 1.5em; }
-.md-h2 { margin-bottom: 0.5rem; font-weight: 700; font-size: 1.25em; }
-.md-h3 { margin-bottom: 0.5rem; font-weight: 700; font-size: 1.125em; }
+.markdown-text h1 { margin-bottom: 0.75rem; font-weight: 700; font-size: 1.5em; }
+.markdown-text h2 { margin-bottom: 0.5rem; font-weight: 700; font-size: 1.25em; }
+.markdown-text h3 { margin-bottom: 0.5rem; font-weight: 700; font-size: 1.125em; }
+.markdown-text h4,
+.markdown-text h5,
+.markdown-text h6 { margin-bottom: 0.5rem; font-weight: 700; font-size: 1.125em; }
 
-.md-ul { margin-bottom: 1rem; padding-left: 1.5rem; list-style-type: disc; }
-.md-ol { margin-bottom: 1rem; padding-left: 1.5rem; list-style-type: decimal; }
-.md-li { margin-bottom: 0.25rem; }
+.markdown-text ul { margin-bottom: 1rem; padding-left: 1.5rem; list-style-type: disc; }
+.markdown-text ol { margin-bottom: 1rem; padding-left: 1.5rem; list-style-type: decimal; }
+.markdown-text li { margin-bottom: 0.25rem; }
 
-.md-pre {
+.markdown-text pre {
   margin-bottom: 1rem;
   padding: 1rem;
   background: var(--theme-code-bg);
@@ -122,12 +125,12 @@
   font-size: 0.85em;
 }
 
-.md-code-block {
+.markdown-text pre code {
   font-family: inherit;
   font-size: inherit;
 }
 
-.md-blockquote {
+.markdown-text blockquote {
   margin-bottom: 1rem;
   padding-left: 1rem;
   border-left: 4px solid var(--theme-primary);
@@ -135,24 +138,23 @@
   color: var(--theme-muted);
 }
 
-.md-table-wrap { margin-bottom: 1rem; overflow-x: auto; }
-.md-table { min-width: 100%; border-collapse: collapse; }
-.md-thead { border-bottom: 1px solid var(--theme-muted); }
-.md-tr { border-bottom: 1px solid color-mix(in srgb, var(--theme-muted) 50%, transparent); }
-.md-th { padding: 0.5rem 0.75rem; text-align: left; font-weight: 600; }
-.md-td { padding: 0.5rem 0.75rem; }
+.markdown-text table { min-width: 100%; border-collapse: collapse; margin-bottom: 1rem; }
+.markdown-text thead { border-bottom: 1px solid var(--theme-muted); }
+.markdown-text tr { border-bottom: 1px solid color-mix(in srgb, var(--theme-muted) 50%, transparent); }
+.markdown-text th { padding: 0.5rem 0.75rem; text-align: left; font-weight: 600; }
+.markdown-text td { padding: 0.5rem 0.75rem; }
 
-.md-hr {
+.markdown-text hr {
   margin: 1rem 0;
   border: none;
   border-top: 1px solid var(--theme-border);
 }
 
 /* Inline elements */
-.md-strong { font-weight: 700; }
-.md-em { font-style: italic; }
+.markdown-text strong { font-weight: 700; }
+.markdown-text em { font-style: italic; }
 
-.md-code-inline {
+.markdown-text code:not(pre code) {
   padding: 2px 6px;
   background: var(--theme-user-bubble);
   border-radius: 4px;
@@ -160,30 +162,14 @@
   font-size: 0.85em;
 }
 
-.md-a {
+.markdown-text a {
   color: var(--theme-primary);
   text-decoration: underline;
   overflow-wrap: break-word;
 }
 
-.md-img {
+.markdown-text img {
   max-width: 100%;
   border-radius: 0.5rem;
 }
 
-/**
- * Type-on debug vitals — gated by localStorage 'alpha-debug-typeon'.
- * Shows buffer depth, effective rate, sparkline during streaming.
- */
-.typeon-vitals:empty {
-  display: none;
-}
-.typeon-vitals {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--theme-muted);
-  opacity: 0.6;
-  padding: 4px 0;
-  user-select: none;
-  pointer-events: none;
-}

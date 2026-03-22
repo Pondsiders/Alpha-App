@@ -1,7 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate, useParams, useNavigate } from "react-router-dom";
 import { useCallback, useEffect, useRef } from "react";
-import { TypeOnBuffer, type TypeOnVitals } from "@/lib/typeOnBuffer";
-import { renderMarkdown } from "@/lib/renderMarkdown";
 import ChatPage from "./pages/ChatPage";
 import DevContextMeter from "./pages/DevContextMeter";
 import DevStatusBar from "./pages/DevStatusBar";
@@ -274,18 +272,6 @@ function Layout() {
   // Shared assistant ID map — Layout reads, ChatPage writes
   const assistantIdMapRef = useRef<Record<string, string | null>>({});
 
-  // Type-on buffer — smooths out chunky text-delta streams.
-  // Keyed by chatId. Created per streaming session, flushed on done/interrupted.
-  // Thinking deltas bypass the buffer (collapsed behind a disclosure triangle anyway).
-  const textBufferRef = useRef<Record<string, TypeOnBuffer>>({});
-
-  // Pending block queue — events that arrive while the type-on buffer is
-  // draining before a tool call. Instead of flushing text instantly when a
-  // tool arrives, we let the text drain naturally and queue the tool events.
-  // When onDrained fires, the queue is flushed in order. This creates the
-  // experience: text decelerates → tool card appears → wait → next text.
-  const pendingBlocksRef = useRef<Record<string, ServerEvent[]>>({});
-
   // Replay buffer — accumulates events per chatId until replay-done
   const replayBuffersRef = useRef<Record<string, ServerEvent[]>>({});
 
@@ -435,9 +421,7 @@ function Layout() {
 
         if (echoMatch) {
           if (echoMatch.isInterjection) {
-            // Interjection echo: flush buffer + new placeholder.
-            textBufferRef.current[eChatId]?.flush();
-            delete textBufferRef.current[eChatId];
+            // Interjection echo: new placeholder for the new response.
             const aid = actions.addRemoteAssistantPlaceholder(eChatId);
             assistantIdMapRef.current[eChatId] = aid;
           }
@@ -464,8 +448,9 @@ function Layout() {
       }
 
       // -- Message streaming events --
-      // Text deltas go through a type-on buffer for smooth rendering.
-      // Thinking deltas render immediately (collapsed behind disclosure).
+      // Text deltas go straight to the store. assistant-ui's useSmooth
+      // handles display animation (character-by-character via rAF).
+      // No more TypeOnBuffer, no more DOM manipulation, no more flash.
       case "text-delta": {
         if (!eChatId) break;
         let aid = assistantIdMapRef.current[eChatId];
@@ -473,87 +458,7 @@ function Layout() {
           aid = actions.addRemoteAssistantPlaceholder(eChatId);
           assistantIdMapRef.current[eChatId] = aid;
         }
-        // SINGLE-DIV with dangerouslySetInnerHTML.
-        // MarkdownText now uses dangerouslySetInnerHTML, so React treats
-        // its children as an opaque HTML string. During streaming, we write
-        // innerHTML directly — React doesn't track child nodes and won't
-        // crash. On settle, appendToAssistant updates the store → React
-        // re-renders → dangerouslySetInnerHTML compares old __html to new.
-        // Both are renderMarkdown(sameText) → identical. React does NOTHING.
-        // The handoff is invisible because there IS no handoff.
-        if (!textBufferRef.current[eChatId]) {
-          const capturedAid = aid;
-          const capturedChatId = eChatId;
-          let accumulated = "";
-          let targetEl: HTMLElement | null = null;
-          let vitalsEl: Element | null = null;
-
-          // NO SEED. Hand-made div inserted on first drain, removed on done.
-          // appendToAssistant called AFTER pending blocks dispatch so the
-          // text part is created AFTER tool parts — no duplication.
-          textBufferRef.current[eChatId] = new TypeOnBuffer({
-            onDrain: (text, _target) => {
-              accumulated += text;
-              if (!targetEl) {
-                const container = document.querySelector(
-                  `[data-testid="assistant-message"]:last-of-type .flex.flex-col`
-                );
-                if (container) {
-                  targetEl = document.createElement("div");
-                  targetEl.className = "markdown-text";
-                  const vitals = container.querySelector("[data-streaming-vitals]");
-                  if (vitals) {
-                    container.insertBefore(targetEl, vitals);
-                  } else {
-                    container.appendChild(targetEl);
-                  }
-                }
-              }
-              if (targetEl) {
-                targetEl.innerHTML = renderMarkdown(accumulated.trimStart());
-              }
-            },
-            onDrained: () => {
-              // Remove our div, then sync text to store.
-              if (targetEl?.parentNode) {
-                targetEl.parentNode.removeChild(targetEl);
-              }
-              if (accumulated) {
-                actions.appendToAssistant(capturedAid, accumulated, capturedChatId);
-              }
-              accumulated = "";
-              targetEl = null;
-              vitalsEl = null;
-              delete textBufferRef.current[capturedChatId];
-
-              // Flush pending blocks (tool events queued during drain).
-              const pending = pendingBlocksRef.current[capturedChatId];
-              if (pending && pending.length > 0) {
-                delete pendingBlocksRef.current[capturedChatId];
-                for (const pendingEvent of pending) {
-                  onEvent(pendingEvent);
-                }
-              }
-            },
-            onVitals: (vitals: TypeOnVitals) => {
-              if (!vitalsEl) {
-                vitalsEl = document.querySelector(
-                  `[data-streaming-vitals="${capturedAid}"]`
-                );
-              }
-              if (vitalsEl) {
-                vitalsEl.textContent =
-                  `${vitals.effectiveRate} c/s | buf: ${vitals.bufferDepth} | rate: ${vitals.currentRate} c/s | ${vitals.sparkline} | ${vitals.target}`;
-              }
-            },
-            // Adaptive drain: base 60 c/s + 0.5 * depth.
-            // At depth 100: 110 c/s. At depth 1000: 560 c/s. At depth 4000: 2060 c/s.
-            // Breathes with the source — fast when backlogged, gentle when caught up.
-            baseRate: 60,
-            chaseFactor: 0.5,
-          });
-        }
-        textBufferRef.current[eChatId].push(event.data as string, "text");
+        actions.appendToAssistant(aid, event.data as string, eChatId);
         break;
       }
 
@@ -573,19 +478,6 @@ function Layout() {
       }
 
       case "tool-use-start": {
-        // If the type-on buffer is draining, DON'T flush — let the text
-        // finish its natural deceleration. Queue this event (and any
-        // subsequent tool events) until the buffer fires onDrained.
-        if (eChatId && textBufferRef.current[eChatId]?.isDraining) {
-          if (!pendingBlocksRef.current[eChatId]) {
-            pendingBlocksRef.current[eChatId] = [];
-          }
-          pendingBlocksRef.current[eChatId].push(event);
-          // Tell the buffer to finish — drain remaining text, then fire onDrained
-          textBufferRef.current[eChatId].finish();
-          break;
-        }
-        // No active buffer — render immediately.
         if (!eChatId) break;
         let tusAid = assistantIdMapRef.current[eChatId];
         if (!tusAid) {
@@ -607,13 +499,6 @@ function Layout() {
       }
 
       case "tool-use-delta": {
-        // If pending blocks exist, queue this too — the tool card hasn't
-        // rendered yet, so deltas can't target it.
-        if (eChatId && pendingBlocksRef.current[eChatId]) {
-          pendingBlocksRef.current[eChatId].push(event);
-          break;
-        }
-        // JSON fragment — feed the ticker.
         if (!eChatId) break;
         const tud = event.data as { index: number; partialJson: string };
         const toolCallId = toolIndexMapRef.current[eChatId]?.[tud.index];
@@ -625,17 +510,7 @@ function Layout() {
       }
 
       case "tool-call": {
-        // If pending blocks exist, queue this too.
-        if (eChatId && pendingBlocksRef.current[eChatId]) {
-          pendingBlocksRef.current[eChatId].push(event);
-          break;
-        }
-        // Complete tool call — finalize the streaming placeholder.
         if (!eChatId) break;
-        // Flush text buffer BEFORE rendering the tool call.
-        // Otherwise buffered text would drain AFTER the tool call renders,
-        // causing text to appear below the tool call instead of above it.
-        textBufferRef.current[eChatId]?.flush();
         let aid = assistantIdMapRef.current[eChatId];
         if (!aid) {
           aid = actions.addRemoteAssistantPlaceholder(eChatId);
@@ -657,11 +532,6 @@ function Layout() {
       }
 
       case "tool-result": {
-        // If pending blocks exist, queue this too.
-        if (eChatId && pendingBlocksRef.current[eChatId]) {
-          pendingBlocksRef.current[eChatId].push(event);
-          break;
-        }
         if (!eChatId) break;
         const aid = assistantIdMapRef.current[eChatId];
         if (!aid) break;
@@ -699,13 +569,6 @@ function Layout() {
       }
 
       case "done": {
-        // Signal the buffer that no more text is coming. If the queue
-        // still has text, it drains naturally and fires onDrained when
-        // empty. If already empty, onDrained fires immediately. Either
-        // way, onDrained syncs to the store and cleans up the buffer.
-        if (eChatId && textBufferRef.current[eChatId]) {
-          textBufferRef.current[eChatId].finish();
-        }
         // DON'T clear assistantIdMapRef — `done` fires after each internal
         // subprocess turn (tool call cycle), not just at the end of the whole
         // response. Clearing it here caused tool calls to split into a new
@@ -716,8 +579,6 @@ function Layout() {
 
       case "interrupted": {
         if (eChatId) {
-          textBufferRef.current[eChatId]?.flush();
-          delete textBufferRef.current[eChatId];
           delete toolIndexMapRef.current[eChatId];
           assistantIdMapRef.current[eChatId] = null;
         }
