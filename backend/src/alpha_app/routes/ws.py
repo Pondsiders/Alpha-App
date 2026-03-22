@@ -253,6 +253,12 @@ async def websocket_chat(ws: WebSocket) -> None:
                     "topics": {},
                 }
 
+                logfire.debug(
+                    "join-chat: metadata tokenCount={tc} contextWindow={cw}",
+                    tc=metadata.get("tokenCount"),
+                    cw=metadata.get("contextWindow"),
+                )
+
                 await ws.send_json({
                     "type": "chat-data",
                     "chatId": chat_id,
@@ -305,7 +311,6 @@ async def websocket_chat(ws: WebSocket) -> None:
                         await chat.resurrect(
                             system_prompt=ws.app.state.system_prompt,
                             mcp_servers=mcp_servers,
-                            compact_config=ws.app.state.compact_config,
                         )
                         logfire.info(
                             "eager-warmup: {chat_id} is now {state}",

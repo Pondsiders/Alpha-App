@@ -51,7 +51,6 @@ class MockClaude:
         system_prompt: str | None = None,
         mcp_config: str | None = None,
         permission_mode: str = "bypassPermissions",
-        compact_config=None,
         extra_args: list[str] | None = None,
         mcp_servers: dict | None = None,
         permission_handler=None,
@@ -61,7 +60,6 @@ class MockClaude:
         self.system_prompt = system_prompt
         self.mcp_config = mcp_config
         self.permission_mode = permission_mode
-        self.compact_config = compact_config
         self.extra_args = extra_args or []
         self._mcp_servers = mcp_servers or {}
         self._permission_handler = permission_handler

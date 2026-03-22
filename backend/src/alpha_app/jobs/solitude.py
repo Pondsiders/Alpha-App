@@ -193,7 +193,6 @@ async def run_first(app, **kwargs) -> str | None:
         await chat.wake(
             system_prompt=app.state.system_prompt,
             mcp_servers=mcp_servers,
-            compact_config=app.state.compact_config,
             disallowed_tools=DISALLOWED_INTERACTIVE,
         )
 
@@ -240,7 +239,6 @@ async def run_breath(app, **kwargs) -> str | None:
             await chat.resurrect(
                 system_prompt=app.state.system_prompt,
                 mcp_servers=mcp_servers,
-                compact_config=app.state.compact_config,
                 disallowed_tools=DISALLOWED_INTERACTIVE,
             )
 
@@ -281,7 +279,6 @@ async def run_last(app, **kwargs) -> str | None:
             await chat.resurrect(
                 system_prompt=app.state.system_prompt,
                 mcp_servers=mcp_servers,
-                compact_config=app.state.compact_config,
                 disallowed_tools=DISALLOWED_INTERACTIVE,
             )
 
@@ -325,14 +322,13 @@ async def _cli_run(args) -> None:
     import logfire as _logfire
     from alpha_app.db import init_pool, close_pool
     from alpha_app.memories import init_schema, close as close_cortex
-    from alpha_app.system_prompt import assemble_system_prompt, load_compact_config
+    from alpha_app.system_prompt import assemble_system_prompt
 
     _logfire.configure(service_name="alpha-app", scrubbing=False)
 
     class _FakeApp:
         class state:
             system_prompt = ""
-            compact_config = None
             solitude_chat = None
 
     await init_pool()
@@ -343,9 +339,6 @@ async def _cli_run(args) -> None:
 
     try:
         _FakeApp.state.system_prompt = await assemble_system_prompt()
-        _FakeApp.state.compact_config = await load_compact_config(
-            system_prompt=_FakeApp.state.system_prompt,
-        )
     except Exception:
         pass
 

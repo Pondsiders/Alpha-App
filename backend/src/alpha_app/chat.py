@@ -180,13 +180,17 @@ class Chat:
     @property
     def token_count(self) -> int:
         if self._claude:
-            return self._claude.token_count
+            live = self._claude.token_count
+            # Prefer cached value when subprocess hasn't sent any messages yet
+            # (e.g., during eager warmup — subprocess exists but token_count=0)
+            return live if live > 0 else self._cached_token_count
         return self._cached_token_count
 
     @property
     def context_window(self) -> int:
         if self._claude:
-            return self._claude.context_window
+            live = self._claude.context_window
+            return live if live > 0 else self._cached_context_window
         return self._cached_context_window
 
     @property
@@ -412,7 +416,6 @@ class Chat:
         self,
         system_prompt: str = "",
         mcp_servers: dict[str, Any] | None = None,
-        compact_config: Any | None = None,
         disallowed_tools: list[str] | None = None,
     ) -> None:
         """Start a fresh Claude subprocess. COLD -> STARTING -> READY."""
@@ -428,7 +431,6 @@ class Chat:
                 system_prompt=prompt or None,
                 permission_mode="bypassPermissions",
                 mcp_servers=mcp_servers,
-                compact_config=compact_config,
                 disallowed_tools=disallowed_tools,
             )
             await self._claude.start(None)  # Fresh start, no resume
@@ -447,7 +449,6 @@ class Chat:
         system_prompt: str = "",
         session_uuid: str | None = None,
         mcp_servers: dict[str, Any] | None = None,
-        compact_config: Any | None = None,
         disallowed_tools: list[str] | None = None,
     ) -> None:
         """Bring a COLD chat back to life via --resume. COLD -> STARTING -> READY."""
@@ -468,7 +469,6 @@ class Chat:
                 system_prompt=prompt or None,
                 permission_mode="bypassPermissions",
                 mcp_servers=mcp_servers,
-                compact_config=compact_config,
                 disallowed_tools=disallowed_tools,
             )
             await self._claude.start(uuid)

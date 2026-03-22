@@ -1,8 +1,7 @@
 """claude.py — The Claude class. One subprocess, four I/O channels.
 
 The only stateful object in the SDK. Wraps the claude binary over
-newline-delimited JSON stdio, with an HTTP proxy for compact rewriting
-and token counting.
+newline-delimited JSON stdio, with an HTTP proxy for token counting.
 
 Usage:
     claude = Claude(system_prompt="You are a frog.")
@@ -38,7 +37,7 @@ from mcp.types import (
     ReadResourceRequestParams,
 )
 
-from .proxy import CompactConfig, _Proxy
+from .proxy import _Proxy
 
 
 def _bundled_claude_path() -> str:
@@ -267,7 +266,7 @@ class Claude:
     Manages four I/O channels:
     - stdin/stdout: JSON message framing
     - stderr: background drain
-    - HTTP: localhost proxy for compact rewriting + token counting
+    - HTTP: localhost proxy for token counting
 
     Simple API: start(), send(), events(), stop().
     No queues, no routers, no sessions — just the subprocess.
@@ -279,7 +278,6 @@ class Claude:
         system_prompt: str | None = None,
         mcp_config: str | None = None,
         permission_mode: str = "bypassPermissions",
-        compact_config: CompactConfig | None = None,
         extra_args: list[str] | None = None,
         mcp_servers: dict[str, Any] | None = None,
         permission_handler: Callable[[dict], Awaitable[bool]] | None = None,
@@ -289,7 +287,6 @@ class Claude:
         self.system_prompt = system_prompt
         self.mcp_config = mcp_config
         self.permission_mode = permission_mode
-        self.compact_config = compact_config
         self.extra_args: list[str] = extra_args or []
         self._mcp_servers: dict[str, Any] = mcp_servers or {}
         self._permission_handler = permission_handler
@@ -402,7 +399,6 @@ class Claude:
         try:
             upstream_url = os.environ.get("ANTHROPIC_BASE_URL")
             self._proxy = _Proxy(
-                compact_config=self.compact_config,
                 upstream_url=upstream_url,
             )
             await self._proxy.start()

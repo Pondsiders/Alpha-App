@@ -21,7 +21,6 @@ from fastapi.staticfiles import StaticFiles
 
 from alpha_app import assemble_system_prompt
 from alpha_app.constants import JE_NE_SAIS_QUOI
-from alpha_app.system_prompt import load_compact_config
 from alpha_app.memories import init_schema as init_cortex_schema, close as close_cortex
 from alpha_app.chat import Chat, ConversationState
 from alpha_app.db import init_pool, close_pool
@@ -59,16 +58,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except (RuntimeError, FileNotFoundError):
         soul = ""
 
-    # Load compact config — uses the same soul for the summarizer's identity
-    try:
-        compact_config = await load_compact_config(system_prompt=soul)
-    except Exception:
-        compact_config = None  # Non-fatal — compaction degrades to Claude's default
-
     app.state.chats = {}  # dict[str, Chat]
     app.state.connections = set()  # set[WebSocket] — all live WS connections (the switch)
     app.state.system_prompt = soul  # Stored for resurrection
-    app.state.compact_config = compact_config  # Stored for Claude creation
     app.state.topic_registry = topic_registry  # Stored for MCP tool + enrobe
 
     # Scheduler — only when --with-scheduler is set (alpha-pi Docker, not Primer bare metal)

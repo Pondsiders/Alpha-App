@@ -10,9 +10,9 @@ This module handles #4. It is a private implementation detail of Claude.
 No other module should import this directly.
 
 The proxy sits between claude and Anthropic's API. It:
-- Rewrites compact requests (three-phase surgical intervention)
 - Sniffs usage data from streaming SSE events (message_start + message_delta)
 - Sniffs usage quota headers from responses
+- Captures raw requests for debugging (ALPHA_SDK_CAPTURE_REQUESTS)
 
 Usage extraction works by parsing the Anthropic SSE stream in-flight:
 - message_start: input tokens (with cache breakdown), model, response ID
@@ -20,9 +20,10 @@ Usage extraction works by parsing the Anthropic SSE stream in-flight:
 - Response headers: 5h and 7d quota utilization
 Zero extra API calls, zero extra latency.
 
-The compact rewriting logic is ported from v1.x compact_proxy.py.
-Detection signatures are constants (what claude sends).
-Replacement content comes from CompactConfig (what we inject).
+Compact prompt rewriting was removed on March 22, 2026. At 1M context
+tokens, compaction is vestigial — we never approach the limit in a day's
+work. The rewriting code lived here from v1.x through the monorepo era
+and is preserved in git history.
 """
 
 from __future__ import annotations
@@ -32,7 +33,6 @@ import contextlib
 import json
 import os
 import socket
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -69,228 +69,6 @@ SKIP_RESPONSE_HEADERS = {
 }
 
 
-# -- Compact detection signatures --------------------------------------------
-# These detect what claude sends. They're pinned to a specific Claude Code
-# version and will break on upgrade — that's intentional. We fix on upgrade.
-
-AUTO_COMPACT_SYSTEM_SIGNATURE = (
-    "You are a helpful AI assistant tasked with summarizing conversations"
-)
-
-COMPACT_INSTRUCTIONS_START = (
-    "Your task is to create a detailed summary of the conversation so far"
-)
-
-# The exact continuation instruction appended after compaction.
-CONTINUATION_INSTRUCTION_TAIL = (
-    "\nPlease continue the conversation from where we left off "
-    "without asking the user any further questions. Continue with "
-    "the last task that you were asked to work on."
-)
-
-
-# -- CompactConfig -----------------------------------------------------------
-
-
-@dataclass
-class CompactConfig:
-    """Replacement content for compact prompt rewriting.
-
-    Each field replaces a specific part of claude's default compact ceremony:
-    - system: replaces the generic summarizer identity
-    - prompt: replaces the "create a detailed summary" instructions
-    - continuation: replaces "continue without asking questions"
-    """
-
-    system: str
-    prompt: str
-    continuation: str
-
-
-# -- Pure rewrite functions --------------------------------------------------
-# These operate on dicts (the parsed API request body). No I/O, no state.
-# Fully unit-testable.
-
-
-def rewrite_compact(body: dict, config: CompactConfig) -> bool:
-    """Rewrite auto-compact prompts in an API request body.
-
-    Three phases:
-    1. Replace summarizer system prompt with config.system
-    2. Replace compact instructions with config.prompt
-    3. Replace continuation instruction with config.continuation
-
-    Returns True if any phase triggered.
-    Modifies body in place.
-    """
-    p1 = _replace_system_prompt(body, config.system)
-    p2 = _replace_compact_instructions(body, config.prompt)
-    p3 = _replace_continuation_instruction(body, config.continuation)
-    return p1 or p2 or p3
-
-
-def _has_summarizer_system(system) -> bool:
-    """Check if the system prompt contains the summarizer signature."""
-    if isinstance(system, str):
-        return AUTO_COMPACT_SYSTEM_SIGNATURE in system
-    if isinstance(system, list):
-        for block in system:
-            if isinstance(block, dict) and block.get("type") == "text":
-                if AUTO_COMPACT_SYSTEM_SIGNATURE in block.get("text", ""):
-                    return True
-    return False
-
-
-def _replace_system_prompt(body: dict, replacement: str) -> bool:
-    """Phase 1: Replace the summarizer system prompt.
-
-    Returns True if replacement was made.
-    """
-    system = body.get("system", [])
-    if not _has_summarizer_system(system):
-        return False
-
-    if isinstance(system, str):
-        body["system"] = [{"type": "text", "text": replacement}]
-        return True
-
-    if isinstance(system, list):
-        replaced = False
-        result = []
-        for block in system:
-            if (
-                not replaced
-                and isinstance(block, dict)
-                and block.get("type") == "text"
-                and AUTO_COMPACT_SYSTEM_SIGNATURE in block.get("text", "")
-            ):
-                result.append({"type": "text", "text": replacement})
-                replaced = True
-            else:
-                result.append(block)
-        body["system"] = result
-        return replaced
-
-    return False
-
-
-def _extract_additional_instructions(compact_text: str) -> str | None:
-    """Extract user-provided /compact arguments.
-
-    Claude Code appends /compact arguments as:
-        Additional Instructions:
-        <user text>
-
-        IMPORTANT: Do NOT use any tools...
-
-    Returns the user text if found, None otherwise.
-    """
-    marker = "Additional Instructions:\n"
-    idx = compact_text.find(marker)
-    if idx == -1:
-        return None
-
-    after = compact_text[idx + len(marker):]
-
-    # Trim at the final IMPORTANT line if present
-    important_idx = after.find("IMPORTANT: Do NOT use any tools")
-    if important_idx != -1:
-        after = after[:important_idx]
-
-    result = after.strip()
-    return result if result else None
-
-
-def _replace_compact_instructions(body: dict, replacement: str) -> bool:
-    """Phase 2: Replace compact instructions in the last user message.
-
-    Preserves any Additional Instructions (from /compact arguments)
-    by extracting them and appending to the replacement.
-
-    Returns True if replacement was made.
-    """
-    messages = body.get("messages", [])
-
-    for message in reversed(messages):
-        if message.get("role") != "user":
-            continue
-
-        content = message.get("content")
-
-        if isinstance(content, str):
-            if COMPACT_INSTRUCTIONS_START in content:
-                idx = content.find(COMPACT_INSTRUCTIONS_START)
-                original = content[:idx].rstrip()
-                additional = _extract_additional_instructions(content[idx:])
-                prompt = replacement
-                if additional:
-                    prompt += f"\n\n---\n\nAdditional instructions from the user:\n{additional}"
-                message["content"] = original + "\n\n" + prompt
-                return True
-            return False
-
-        if isinstance(content, list):
-            for block in content:
-                if not isinstance(block, dict) or block.get("type") != "text":
-                    continue
-                text = block.get("text", "")
-                if COMPACT_INSTRUCTIONS_START in text:
-                    idx = text.find(COMPACT_INSTRUCTIONS_START)
-                    original = text[:idx].rstrip()
-                    additional = _extract_additional_instructions(text[idx:])
-                    prompt = replacement
-                    if additional:
-                        prompt += f"\n\n---\n\nAdditional instructions from the user:\n{additional}"
-                    block["text"] = original + "\n\n" + prompt
-                    return True
-            return False
-
-        return False
-
-    return False
-
-
-def _replace_continuation_instruction(body: dict, replacement: str) -> bool:
-    """Phase 3: Replace the post-compact continuation instruction.
-
-    Returns True if replacement was made.
-    """
-    messages = body.get("messages", [])
-    any_replaced = False
-
-    def replace_in_text(text: str) -> tuple[str, bool]:
-        if text.endswith(CONTINUATION_INSTRUCTION_TAIL):
-            return (
-                text[: -len(CONTINUATION_INSTRUCTION_TAIL)] + "\n" + replacement,
-                True,
-            )
-        return text, False
-
-    for message in messages:
-        if message.get("role") != "user":
-            continue
-
-        content = message.get("content")
-
-        if isinstance(content, str):
-            new_content, replaced = replace_in_text(content)
-            if replaced:
-                message["content"] = new_content
-                any_replaced = True
-
-        elif isinstance(content, list):
-            for block in content:
-                if not isinstance(block, dict) or block.get("type") != "text":
-                    continue
-                text = block.get("text", "")
-                new_text, replaced = replace_in_text(text)
-                if replaced:
-                    block["text"] = new_text
-                    any_replaced = True
-
-    return any_replaced
-
-
 # -- Proxy server ------------------------------------------------------------
 
 
@@ -307,7 +85,7 @@ class _Proxy:
     Private to Engine — do not instantiate directly.
 
     Lifecycle:
-        proxy = _Proxy(compact_config=config)
+        proxy = _Proxy()
         port = await proxy.start()
         # set ANTHROPIC_BASE_URL=http://127.0.0.1:{port} in subprocess env
         ...
@@ -318,11 +96,9 @@ class _Proxy:
 
     def __init__(
         self,
-        compact_config: CompactConfig | None = None,
         context_window: int = DEFAULT_CONTEXT_WINDOW,
         upstream_url: str | None = None,
     ):
-        self._compact_config = compact_config
         self._context_window = context_window
         self._upstream_url = upstream_url or ANTHROPIC_API_URL
 
@@ -516,20 +292,9 @@ class _Proxy:
         except Exception:
             body = None
 
-        # Debug capture — before rewrite
+        # Debug capture
         if CAPTURE_REQUESTS and body is not None:
-            import copy
-            self._capture_request(path, copy.deepcopy(body), suffix="before")
-
-        # Rewrite compact prompts if config provided
-        compact_rewritten = False
-        if body is not None and self._compact_config is not None:
-            compact_rewritten = rewrite_compact(body, self._compact_config)
-            body_bytes = json.dumps(body).encode()
-
-        # Debug capture — after rewrite (compact_rewritten tracked for spans added later)
-        if CAPTURE_REQUESTS and body is not None:
-            self._capture_request(path, body, suffix="after")
+            self._capture_request(path, body)
 
         # Build forwarding headers
         headers = {}
