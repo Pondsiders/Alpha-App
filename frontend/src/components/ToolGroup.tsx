@@ -31,6 +31,15 @@ function findScrollParent(el: HTMLElement | null): HTMLElement | null {
   return null;
 }
 
+/** Only scroll if we're within ~150px of the bottom (user hasn't scrolled up). */
+function scrollToBottomIfNear(el: HTMLElement | null) {
+  if (!el) return;
+  const distFromBottom = el.scrollHeight - el.clientHeight - el.scrollTop;
+  if (distFromBottom < 150) {
+    el.scrollTop = el.scrollHeight - el.clientHeight;
+  }
+}
+
 export function ToolGroup({
   children,
 }: PropsWithChildren<{ startIndex: number; endIndex: number }>) {
@@ -53,11 +62,8 @@ export function ToolGroup({
         setHeight(h);
         isFirstMeasure.current = false;
 
-        // Chase scroll on every height change
-        const viewport = findScrollParent(outerRef.current);
-        if (viewport) {
-          viewport.scrollTop = viewport.scrollHeight - viewport.clientHeight;
-        }
+        // Chase scroll on height change — only if near bottom
+        scrollToBottomIfNear(findScrollParent(outerRef.current));
       }
     });
 
@@ -73,10 +79,7 @@ export function ToolGroup({
   // in the viewport, the top edge rises. Without this, the container
   // grows downward and then snaps up when the scroll catches up.
   const handleAnimationFrame = useCallback(() => {
-    const viewport = findScrollParent(outerRef.current);
-    if (viewport) {
-      viewport.scrollTop = viewport.scrollHeight - viewport.clientHeight;
-    }
+    scrollToBottomIfNear(findScrollParent(outerRef.current));
   }, []);
 
   return (

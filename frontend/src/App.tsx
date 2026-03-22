@@ -687,6 +687,22 @@ function Layout() {
           topics: md.topics,
         });
 
+        // Sync context meter from loaded metadata.
+        // Force-update the global meter directly — can't rely on
+        // updateChatTokens' activeChatId gate because setActiveChatId
+        // runs in a useEffect that may not have fired yet.
+        if (md.tokenCount !== undefined && md.contextWindow !== undefined) {
+          actions.updateChatTokens(eChatId, md.tokenCount, md.contextWindow);
+          // Also set the global meter directly in case activeChatId isn't set yet
+          useWorkshopStore.setState({
+            tokenCount: md.tokenCount,
+            tokenLimit: md.contextWindow,
+            contextPercent: md.contextWindow > 0
+              ? Math.round((md.tokenCount / md.contextWindow) * 1000) / 10
+              : 0,
+          });
+        }
+
         actions.setReplaying(false);
         break;
       }
