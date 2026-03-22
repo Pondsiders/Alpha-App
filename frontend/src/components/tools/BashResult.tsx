@@ -104,39 +104,41 @@ export const BashResult: ToolCallMessagePartComponent = ({
       data-testid="bash-result"
       className="w-full rounded-lg border border-border overflow-hidden"
     >
-      {/* Header — command + description */}
-      <div className="flex items-start gap-2 px-3 py-2.5 bg-surface">
+      {/* Header — command + description. Always present, min-height reserves space. */}
+      <div className="flex items-start gap-2 px-3 py-2.5 bg-surface min-h-[2.25rem]">
         <Terminal
           size={14}
           className="mt-[2px] shrink-0 text-muted/60"
           style={iconColor ? { color: iconColor } : undefined}
         />
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 min-h-[1lh]">
           {description && (
             <div className="text-[12px] text-muted mb-0.5">{description}</div>
           )}
-          {command.length > CMD_TRUNCATE && !cmdExpanded ? (
-            <code
-              className="text-[13px] text-text leading-snug cursor-pointer"
-              onClick={() => setCmdExpanded(true)}
-              title="Click to show full command"
-            >
-              {command.slice(0, CMD_TRUNCATE)}
-              <span className="text-muted">…</span>
-            </code>
-          ) : command.length > CMD_TRUNCATE ? (
-            <code
-              className="text-[13px] text-text break-all leading-snug cursor-pointer"
-              onClick={() => setCmdExpanded(false)}
-              title="Click to collapse"
-            >
-              {command}
-            </code>
-          ) : (
-            <code className="text-[13px] text-text break-all leading-snug">
-              {command}
-            </code>
-          )}
+          {command ? (
+            command.length > CMD_TRUNCATE && !cmdExpanded ? (
+              <code
+                className="text-[13px] text-text leading-snug cursor-pointer"
+                onClick={() => setCmdExpanded(true)}
+                title="Click to show full command"
+              >
+                {command.slice(0, CMD_TRUNCATE)}
+                <span className="text-muted">…</span>
+              </code>
+            ) : command.length > CMD_TRUNCATE ? (
+              <code
+                className="text-[13px] text-text break-all leading-snug cursor-pointer"
+                onClick={() => setCmdExpanded(false)}
+                title="Click to collapse"
+              >
+                {command}
+              </code>
+            ) : (
+              <code className="text-[13px] text-text break-all leading-snug">
+                {command}
+              </code>
+            )
+          ) : null}
         </div>
         <span
           className={`w-2 h-2 mt-[5px] rounded-full shrink-0 ${isRunning || isStreaming ? "animate-pulse-dot" : ""}`}
@@ -144,47 +146,50 @@ export const BashResult: ToolCallMessagePartComponent = ({
         />
       </div>
 
-      {/* Output — terminal style */}
-      {(isRunning || isStreaming) && (
-        <div className="px-3 py-2 border-t border-border bg-code-bg">
-          <span className="text-muted/40 text-xs font-mono italic">
-            Running...
-          </span>
-        </div>
-      )}
+      {/* Output — always rendered, min-height reserves one line of space.
+          Shows "Running..." while waiting, output text when available. */}
+      <div className="border-t border-border bg-code-bg min-h-[2rem]">
+        {(isRunning || isStreaming) && !outputText && (
+          <div className="px-3 py-2">
+            <span className="text-muted/40 text-xs font-mono italic">
+              Running...
+            </span>
+          </div>
+        )}
 
-      {outputText && (
-        <div className="border-t border-border bg-code-bg">
-          <pre
-            ref={outputRef}
-            className="m-0 px-3 py-2 text-xs font-mono overflow-auto leading-relaxed whitespace-pre-wrap break-words"
-            style={{
-              maxHeight: expanded ? "600px" : "320px",
-              color: isError ? "var(--theme-error)" : undefined,
-            }}
-          >
-            {displayText}
-          </pre>
+        {outputText && (
+          <>
+            <pre
+              ref={outputRef}
+              className="m-0 px-3 py-2 text-xs font-mono overflow-auto leading-relaxed whitespace-pre-wrap break-words"
+              style={{
+                maxHeight: expanded ? "600px" : "320px",
+                color: isError ? "var(--theme-error)" : undefined,
+              }}
+            >
+              {displayText}
+            </pre>
 
-          {/* Expand / collapse toggle */}
-          {isTruncated && (
-            <button
-              onClick={() => setExpanded(true)}
-              className="w-full px-3 py-1.5 text-xs text-primary bg-transparent border-none border-t border-border cursor-pointer hover:bg-surface/50 transition-colors font-mono"
-            >
-              ↓ {outputLines.length - TRUNCATE_AFTER} more lines
-            </button>
-          )}
-          {canCollapse && (
-            <button
-              onClick={() => setExpanded(false)}
-              className="w-full px-3 py-1.5 text-xs text-muted bg-transparent border-none border-t border-border cursor-pointer hover:bg-surface/50 transition-colors font-mono"
-            >
-              ↑ Collapse
-            </button>
-          )}
-        </div>
-      )}
+            {/* Expand / collapse toggle */}
+            {isTruncated && (
+              <button
+                onClick={() => setExpanded(true)}
+                className="w-full px-3 py-1.5 text-xs text-primary bg-transparent border-none border-t border-border cursor-pointer hover:bg-surface/50 transition-colors font-mono"
+              >
+                ↓ {outputLines.length - TRUNCATE_AFTER} more lines
+              </button>
+            )}
+            {canCollapse && (
+              <button
+                onClick={() => setExpanded(false)}
+                className="w-full px-3 py-1.5 text-xs text-muted bg-transparent border-none border-t border-border cursor-pointer hover:bg-surface/50 transition-colors font-mono"
+              >
+                ↑ Collapse
+              </button>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 };

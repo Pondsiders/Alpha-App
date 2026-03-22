@@ -21,7 +21,8 @@ import { EditResult } from "../components/tools/EditResult";
 import { WriteResult } from "../components/tools/WriteResult";
 import { GrepResult } from "../components/tools/GrepResult";
 import { TodoResult } from "../components/tools/TodoResult";
-// import { animated } from "../components/AnimatedTool"; // tabled — remount churn during streaming
+import { animated } from "../components/AnimatedTool";
+import { ToolGroup } from "../components/ToolGroup";
 import { TopicBar } from "../components/TopicBar";
 import {
   ComposerAttachments,
@@ -163,11 +164,12 @@ const NativeMarkdownText = () => (
 const ASSISTANT_PARTS_COMPONENTS = {
   Text: NativeMarkdownText,
   Reasoning: ThinkingBlock,
+  ToolGroup,
   tools: {
     by_name: {
       mcp__cortex__store: MemoryNote,
       mcp__alpha__store: MemoryStore,
-      Bash: BashResult,
+      Bash: animated(BashResult),
       Read: ReadResult,
       Edit: EditResult,
       Write: WriteResult,
