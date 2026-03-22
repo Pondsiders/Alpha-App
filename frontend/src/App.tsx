@@ -6,6 +6,7 @@ import DevStatusBar from "./pages/DevStatusBar";
 import DevTopics from "./pages/DevTopics";
 import DevMemoryStore from "./pages/DevMemoryStore";
 import DevMemoryCards from "./pages/DevMemoryCards";
+import DevTools from "./pages/DevTools";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
 import { useWebSocket, type ServerEvent, type ClientMessage } from "@/lib/useWebSocket";
@@ -810,6 +811,7 @@ function App() {
         <Route path="/dev/topics" element={<DevTopics />} />
         <Route path="/dev/memory-store" element={<DevMemoryStore />} />
         <Route path="/dev/memory-cards" element={<DevMemoryCards />} />
+        <Route path="/dev/tools" element={<DevTools />} />
       </Routes>
     </BrowserRouter>
   );

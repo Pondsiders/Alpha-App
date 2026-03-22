@@ -25,16 +25,6 @@
   --sidebar-ring: #d4a574;
 }
 
-/**
- * EXPERIMENT: Fixed-height tool components inside ToolGroup.
- * Eliminates all layout shift from tool content changes.
- * Remove this rule to go back to natural heights.
- */
-.tool-group-inner > * {
-  min-height: 120px;
-  max-height: 120px;
-  overflow: hidden;
-}
 
 /**
  * Map-coloring: tool headers use chat background color (darkest)

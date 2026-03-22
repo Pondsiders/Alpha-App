@@ -1,33 +1,30 @@
 /**
  * BashResult — Terminal-style UI for Bash tool calls.
  *
- * Shows the command prominently, description if provided, and output
- * in a terminal-styled code block. Short output is visible by default;
- * long output is truncated with a "show more" toggle.
- *
- * State detection is based on the result prop, not assistant-ui status,
- * because we set isRunning=false for duplex send support.
+ * Three bands: title bar, command, output. Always the same structure.
+ * Collapsed = truncated. Expanded = not truncated. That's the whole thing.
+ * Click anywhere to toggle. ToolGroup handles container animation.
  *
  * Colors: avocado (#7A8C42), amber (primary), corrupted red (#C4504A).
  */
 
 import { useState, useRef, useEffect } from "react";
-import { motion } from "framer-motion";
 import { Terminal } from "lucide-react";
 import type { ToolCallMessagePartComponent } from "@assistant-ui/react";
 
-/** Max lines to show before truncating. */
-const TRUNCATE_AFTER = 15;
+/** Max height of the output container in collapsed mode.
+ *  Set on the outer div, not the pre — so padding is included.
+ *  2.5 line-heights of the pre's font-size × leading-relaxed. */
+const COLLAPSED_OUTPUT_MAX = "2.4lh";
 
-/** Max visible command length before truncating with ellipsis. */
-const CMD_TRUNCATE = 80;
+/** Max output height in expanded mode before scrolling. */
+const MAX_EXPANDED_HEIGHT = 600;
 
 export const BashResult: ToolCallMessagePartComponent = ({
   argsText,
   result,
 }) => {
   const [expanded, setExpanded] = useState(false);
-  const [cmdExpanded, setCmdExpanded] = useState(false);
   const outputRef = useRef<HTMLPreElement>(null);
 
   // Parse args
@@ -40,17 +37,11 @@ export const BashResult: ToolCallMessagePartComponent = ({
     description = args.description || "";
     jsonComplete = true;
   } catch {
-    // Partial JSON while streaming — ticker takes over
+    // Partial JSON while streaming
   }
 
-  // Streaming detection: we're streaming if either:
-  // (a) argsText is non-empty but unparseable (mid-JSON), OR
-  // (b) argsText is empty AND no result yet (tool-use-start just fired, awaiting first delta)
   const hasResult = result !== undefined && result !== null;
   const isStreaming = !jsonComplete && !hasResult;
-
-  // Derive state from result, not from assistant-ui status.
-  // We set isRunning=false globally for duplex, so status is unreliable.
   const isRunning = !hasResult && jsonComplete;
 
   // Resolve output text
@@ -69,126 +60,96 @@ export const BashResult: ToolCallMessagePartComponent = ({
     return JSON.stringify(result, null, 2);
   })();
 
-  // Detect errors from the output content.
-  // Bash errors come through as "Exit code N\n..." where N > 0.
   const isError = hasResult && /^Exit code [1-9]/.test(outputText);
 
-  const outputLines = outputText.split("\n");
-  const isTruncated = !expanded && outputLines.length > TRUNCATE_AFTER;
-  const canCollapse = expanded && outputLines.length > TRUNCATE_AFTER;
-  const displayText = isTruncated
-    ? outputLines.slice(0, TRUNCATE_AFTER).join("\n")
-    : outputText;
+  // Theme colors
+  const dotColor =
+    isRunning || isStreaming
+      ? "var(--theme-primary)"
+      : isError
+        ? "var(--theme-error)"
+        : "var(--theme-success)";
 
-  // Auto-scroll to bottom of output when it appears
+  const iconColor =
+    isRunning || isStreaming
+      ? "var(--theme-primary)"
+      : isError
+        ? "var(--theme-error)"
+        : undefined;
+
+  // Title: description if available, else "Bash"
+  const title = description || "Bash";
+
+  // Auto-scroll to bottom of expanded output
   useEffect(() => {
-    if (outputRef.current && !isTruncated) {
+    if (expanded && outputRef.current) {
       outputRef.current.scrollTop = outputRef.current.scrollHeight;
     }
-  }, [outputText, isTruncated]);
-
-  // Theme colors — avocado success, amber running/streaming, corrupted red error
-  const dotColor = isRunning || isStreaming
-    ? "var(--theme-primary)"
-    : isError
-    ? "var(--theme-error)"
-    : "var(--theme-success)";
-
-  const iconColor = isRunning || isStreaming
-    ? "var(--theme-primary)"
-    : isError
-    ? "var(--theme-error)"
-    : undefined; // default muted for success
+  }, [expanded, outputText]);
 
   return (
     <div
       data-testid="bash-result"
-      className="w-full rounded-lg border border-border overflow-hidden"
+      className="w-full rounded-lg border border-border overflow-hidden cursor-pointer select-none"
+      onClick={() => setExpanded(!expanded)}
     >
-      {/* Header — command + description. Always present, min-height reserves space. */}
-      <div className="flex items-start gap-2 px-3 py-2.5 bg-surface min-h-[2.25rem]">
+      {/* ── Band 1: Title bar ── */}
+      <div className="flex items-center gap-2 px-3 py-2 bg-surface">
         <Terminal
           size={14}
-          className="mt-[2px] shrink-0 text-muted/60"
+          className="shrink-0 text-muted/60"
           style={iconColor ? { color: iconColor } : undefined}
         />
-        <div className="min-w-0 flex-1 min-h-[1lh]">
-          {description && (
-            <div className="text-[12px] text-muted mb-0.5">{description}</div>
-          )}
-          {command ? (
-            command.length > CMD_TRUNCATE && !cmdExpanded ? (
-              <code
-                className="text-[13px] text-text leading-snug cursor-pointer"
-                onClick={() => setCmdExpanded(true)}
-                title="Click to show full command"
-              >
-                {command.slice(0, CMD_TRUNCATE)}
-                <span className="text-muted">…</span>
-              </code>
-            ) : command.length > CMD_TRUNCATE ? (
-              <code
-                className="text-[13px] text-text break-all leading-snug cursor-pointer"
-                onClick={() => setCmdExpanded(false)}
-                title="Click to collapse"
-              >
-                {command}
-              </code>
-            ) : (
-              <code className="text-[13px] text-text break-all leading-snug">
-                {command}
-              </code>
-            )
-          ) : null}
+        <div className="min-w-0 flex-1 truncate">
+          <span className="text-[13px] text-text">{title}</span>
         </div>
         <span
-          className={`w-2 h-2 mt-[5px] rounded-full shrink-0 ${isRunning || isStreaming ? "animate-pulse-dot" : ""}`}
+          className={`w-2 h-2 rounded-full shrink-0 ${isRunning || isStreaming ? "animate-pulse-dot" : ""}`}
           style={{ backgroundColor: dotColor }}
         />
       </div>
 
-      {/* Output — always rendered, min-height reserves one line of space.
-          Shows "Running..." while waiting, output text when available. */}
-      <div className="border-t border-border bg-code-bg min-h-[2rem]">
-        {(isRunning || isStreaming) && !outputText && (
+      {/* ── Band 2: Command ── */}
+      {command && (
+        <div className="border-t border-border/50 bg-code-bg px-3 py-1.5">
+          <code
+            className={`text-[12px] text-muted leading-snug block ${expanded ? "break-all whitespace-pre-wrap" : "truncate"}`}
+          >
+            {command}
+          </code>
+        </div>
+      )}
+
+      {/* ── Band 3: Output ── */}
+      <div
+        className="relative border-t border-border bg-code-bg"
+        style={!expanded ? { maxHeight: COLLAPSED_OUTPUT_MAX, overflow: "hidden" } : undefined}
+      >
+        {(isRunning || isStreaming) && !outputText ? (
           <div className="px-3 py-2">
             <span className="text-muted/40 text-xs font-mono italic">
               Running...
             </span>
           </div>
-        )}
-
-        {outputText && (
-          <>
-            <pre
-              ref={outputRef}
-              className="m-0 px-3 py-2 text-xs font-mono overflow-auto leading-relaxed whitespace-pre-wrap break-words"
-              style={{
-                maxHeight: expanded ? "600px" : "320px",
-                color: isError ? "var(--theme-error)" : undefined,
-              }}
-            >
-              {displayText}
-            </pre>
-
-            {/* Expand / collapse toggle */}
-            {isTruncated && (
-              <button
-                onClick={() => setExpanded(true)}
-                className="w-full px-3 py-1.5 text-xs text-primary bg-transparent border-none border-t border-border cursor-pointer hover:bg-surface/50 transition-colors font-mono"
-              >
-                ↓ {outputLines.length - TRUNCATE_AFTER} more lines
-              </button>
-            )}
-            {canCollapse && (
-              <button
-                onClick={() => setExpanded(false)}
-                className="w-full px-3 py-1.5 text-xs text-muted bg-transparent border-none border-t border-border cursor-pointer hover:bg-surface/50 transition-colors font-mono"
-              >
-                ↑ Collapse
-              </button>
-            )}
-          </>
+        ) : outputText ? (
+          <pre
+            ref={expanded ? outputRef : undefined}
+            className={`m-0 px-3 py-2 text-xs font-mono leading-relaxed whitespace-pre-wrap break-words ${
+              expanded ? "overflow-auto" : ""
+            }`}
+            style={{
+              ...(expanded ? { maxHeight: `${MAX_EXPANDED_HEIGHT}px` } : {}),
+              color: isError ? "var(--theme-error)" : undefined,
+            }}
+          >
+            {outputText}
+          </pre>
+        ) : (
+          <div className="px-3 py-2">
+            <span className="text-muted/30 text-xs font-mono italic">
+              &nbsp;
+            </span>
+          </div>
         )}
       </div>
     </div>
