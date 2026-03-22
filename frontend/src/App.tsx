@@ -488,20 +488,25 @@ function Layout() {
           let targetEl: HTMLElement | null = null;
           let vitalsEl: Element | null = null;
 
-          // Seed an empty text part so React renders a MarkdownText div.
-          // dangerouslySetInnerHTML={{ __html: "" }} = empty div in the DOM.
-          // We'll write innerHTML to it during streaming.
-          actions.appendToAssistant(capturedAid, "", capturedChatId);
-
+          // NO SEED. Hand-made div inserted on first drain, removed on done.
+          // appendToAssistant called AFTER pending blocks dispatch so the
+          // text part is created AFTER tool parts — no duplication.
           textBufferRef.current[eChatId] = new TypeOnBuffer({
             onDrain: (text, _target) => {
               accumulated += text;
-
-              // Find MarkdownText's div — the last [data-markdown-text].
               if (!targetEl) {
-                const allTargets = document.querySelectorAll("[data-markdown-text]");
-                if (allTargets.length > 0) {
-                  targetEl = allTargets[allTargets.length - 1] as HTMLElement;
+                const container = document.querySelector(
+                  `[data-testid="assistant-message"]:last-of-type .flex.flex-col`
+                );
+                if (container) {
+                  targetEl = document.createElement("div");
+                  targetEl.className = "markdown-text";
+                  const vitals = container.querySelector("[data-streaming-vitals]");
+                  if (vitals) {
+                    container.insertBefore(targetEl, vitals);
+                  } else {
+                    container.appendChild(targetEl);
+                  }
                 }
               }
               if (targetEl) {
@@ -509,12 +514,10 @@ function Layout() {
               }
             },
             onDrained: () => {
-              // Sync to React. appendToAssistant appends accumulated text
-              // to the existing empty part: "" + text = text.
-              // React re-renders MarkdownText with dangerouslySetInnerHTML.
-              // renderMarkdown(text) produces the SAME HTML string that's
-              // already in innerHTML. React compares, finds they match,
-              // does NOTHING. Zero DOM manipulation. Invisible handoff.
+              // Remove our div, then sync text to store.
+              if (targetEl?.parentNode) {
+                targetEl.parentNode.removeChild(targetEl);
+              }
               if (accumulated) {
                 actions.appendToAssistant(capturedAid, accumulated, capturedChatId);
               }
