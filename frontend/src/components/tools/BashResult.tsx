@@ -111,7 +111,7 @@ export const BashResult: ToolCallMessagePartComponent = ({
 
       {/* ── Band 2: Command ── */}
       {command && (
-        <div className="border-t border-border/50 bg-code-bg px-3 py-1.5">
+        <div className="border-t border-border/50 bg-code-bg px-3 py-1.5 overflow-hidden">
           <code
             className={`text-[12px] text-muted leading-snug block ${expanded ? "break-all whitespace-pre-wrap" : "truncate"}`}
           >

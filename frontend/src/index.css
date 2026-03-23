@@ -93,6 +93,11 @@
   font-size: 18px;
 }
 
+/* Mobile: dial font down — you hold the phone closer to your face. */
+@media (max-width: 768px) {
+  .chat-font { font-size: 14px; }
+}
+
 /**
  * Markdown styles — scoped to .markdown-text container.
  * react-markdown renders bare HTML elements; we style them here.

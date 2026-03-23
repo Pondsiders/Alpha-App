@@ -531,7 +531,7 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
           </div>
         ) : (
           <ThreadPrimitive.Root className="flex-1 flex flex-col overflow-hidden chat-font">
-            <ThreadPrimitive.Viewport className="flex-1 flex flex-col overflow-y-scroll p-6">
+            <ThreadPrimitive.Viewport className="flex-1 flex flex-col overflow-y-scroll overflow-x-hidden p-6">
               <div className="max-w-3xl mx-auto w-full flex-1">
                 {messages.length === 0 && !isRunning && (
                   <div className="flex-1 flex items-center justify-center h-full">
