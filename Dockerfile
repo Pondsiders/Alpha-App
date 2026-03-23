@@ -45,11 +45,22 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 # Install uv for fast dependency resolution
 RUN pip install --no-cache-dir uv
 
+# Node.js — needed for gws (Google Workspace CLI)
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y nodejs \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Google Workspace CLI — calendar and email access
+RUN npm install -g @googleworkspace/cli
+
 WORKDIR /app
 
 # Install app dependencies
 COPY backend/ /app/backend/
 RUN cd /app/backend && uv pip install --system .
+
+# Bluesky CLI — Alpha's own project, installed from GitHub
+RUN uv pip install --system git+https://github.com/alphafornow/bluesky-cli.git
 
 # Copy built frontend from stage 1
 COPY --from=frontend-build /build/dist/ /app/frontend/dist/

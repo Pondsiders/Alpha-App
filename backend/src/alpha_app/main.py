@@ -187,8 +187,25 @@ def run() -> None:
     if not _DOCKER_DIST.is_dir():
         _rebuild_frontend_if_stale(_LOCAL_DIST.parent)
 
-    ssl_certfile = os.getenv("SSL_CERTFILE")
-    ssl_keyfile = os.getenv("SSL_KEYFILE")
+    # SSL cert resolution.
+    # Docker (CONTAINER=1): use SSL_CERTFILE/SSL_KEYFILE from env.
+    # Bare metal: derive from hostname → Tailscale cert in /Pondside.
+    if os.getenv("CONTAINER"):
+        ssl_certfile = os.getenv("SSL_CERTFILE")
+        ssl_keyfile = os.getenv("SSL_KEYFILE")
+    else:
+        import socket
+        hostname = socket.gethostname()
+        cert_dir = Path("/Pondside/Basement/Files/certs")
+        cert = cert_dir / f"{hostname}.tail8bd569.ts.net.crt"
+        key = cert_dir / f"{hostname}.tail8bd569.ts.net.key"
+        if cert.is_file() and key.is_file():
+            ssl_certfile = str(cert)
+            ssl_keyfile = str(key)
+        else:
+            ssl_certfile = None
+            ssl_keyfile = None
+
     uvicorn.run(
         app,
         host="0.0.0.0",

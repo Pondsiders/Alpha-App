@@ -12,11 +12,12 @@ services:
       - "18010:18010"
     env_file: .env
     environment:
-      - HOST_HOSTNAME=${HOSTNAME}
+      - CONTAINER=1
       - TZ=America/Los_Angeles
     dns:
       - 100.100.100.100
     volumes:
       - /Pondside:/Pondside
       - /Pondside/Basement/Files/certs:/certs:ro
+      - ~/.config/gws:/home/alpha/.config/gws
     restart: unless-stopped
