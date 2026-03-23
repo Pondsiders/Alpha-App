@@ -774,6 +774,33 @@ function Layout() {
   );
   const { send, connected } = useWebSocket({ onEvent, onConnectionChange });
 
+  // ---- Disconnection toast ----
+  // Show a persistent toast after 1s of disconnection; dismiss on reconnect.
+  const disconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!connected) {
+      disconnectTimerRef.current = setTimeout(() => {
+        toast.error("Connection lost", {
+          id: "ws-disconnected",
+          description: "Trying to reconnect…",
+          duration: Infinity,
+        });
+      }, 1000);
+    } else {
+      if (disconnectTimerRef.current) {
+        clearTimeout(disconnectTimerRef.current);
+        disconnectTimerRef.current = null;
+      }
+      toast.dismiss("ws-disconnected");
+    }
+    return () => {
+      if (disconnectTimerRef.current) {
+        clearTimeout(disconnectTimerRef.current);
+        disconnectTimerRef.current = null;
+      }
+    };
+  }, [connected]);
+
   // Intercept replay/join-chat sends to initialize buffer + show loading state
   const wrappedSend = useCallback((msg: ClientMessage) => {
     if (msg.type === "replay" && msg.chatId) {
