@@ -19,6 +19,7 @@ The orientation assembly handles None gracefully.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import socket
 from pathlib import Path
@@ -270,21 +271,145 @@ async def fetch_weather() -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Events (Redis)
+# Events (gws CLI)
 # ---------------------------------------------------------------------------
 
-async def fetch_events() -> str | None:
-    """Fetch calendar events from Redis.
+# Kylee: today only.  Jeffery: today through next 7 days.
+_KYLEE_CALENDAR = "kyleepena@gmail.com"
+_JEFFERY_CALENDAR = "primary"
 
-    Returns RAW event text (no ## Events header — that's added by
-    assemble_orientation). Returns None if no events or Redis down.
+
+async def _gws_events(calendar_id: str, days: int) -> list[dict]:
+    """Fetch events from a single calendar via gws CLI.
+
+    Returns a list of event dicts from the Google Calendar API JSON response.
+    """
+    now = pendulum.now("America/Los_Angeles")
+    time_min = now.start_of("day").to_iso8601_string()
+    time_max = now.start_of("day").add(days=days).to_iso8601_string()
+
+    proc = await asyncio.create_subprocess_exec(
+        "gws", "calendar", "events", "list",
+        "--format", "json",
+        "--params", json.dumps({
+            "calendarId": calendar_id,
+            "timeMin": time_min,
+            "timeMax": time_max,
+            "singleEvents": True,
+            "orderBy": "startTime",
+        }),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+
+    if proc.returncode != 0 or not stdout:
+        return []
+
+    data = json.loads(stdout.decode())
+    return data.get("items", [])
+
+
+def _format_event(item: dict, who: str, show_date: bool = False) -> str:
+    """Format a single event dict into a readable line."""
+    start = item.get("start", {})
+    summary = item.get("summary", "Untitled")
+    start_str = start.get("dateTime", start.get("date", ""))
+
+    if "T" in start_str:
+        try:
+            dt = pendulum.parse(start_str)
+            if show_date:
+                time_display = dt.format("ddd MMM D, h:mm A")
+            else:
+                time_display = dt.format("h:mm A")
+        except Exception:
+            time_display = start_str
+    else:
+        if show_date:
+            try:
+                dt = pendulum.parse(start_str)
+                time_display = dt.format("ddd MMM D") + ", all day"
+            except Exception:
+                time_display = "all day"
+        else:
+            time_display = "all day"
+
+    return f"- {who}: {summary} ({time_display})"
+
+
+async def fetch_events() -> str | None:
+    """Fetch calendar events via gws CLI.
+
+    Kylee: today only.  Jeffery: today through next 7 days.
+    Grouped into "Today" and "Coming Up" sections.
+
+    Returns formatted markdown text (no ## Events header — that's added by
+    assemble_orientation). Returns None if gws fails or no events.
     """
     try:
-        r = await _get_redis()
-        try:
-            return await r.get("hud:calendar")
-        finally:
-            await r.aclose()
+            # Kylee: through this Saturday.  Jeffery: through next Saturday.
+        now = pendulum.now("America/Los_Angeles")
+        days_to_sat = (5 - now.day_of_week) % 7 or 7  # days until Saturday
+        kylee_days = days_to_sat + 1       # through end of this Saturday
+        jeffery_days = days_to_sat + 8     # through end of next Saturday
+
+        kylee_items, jeffery_items = await asyncio.gather(
+            _gws_events(_KYLEE_CALENDAR, days=kylee_days),
+            _gws_events(_JEFFERY_CALENDAR, days=jeffery_days),
+        )
+
+        now = pendulum.now("America/Los_Angeles")
+        today_date = now.date()
+        tomorrow_date = now.add(days=1).date()
+
+        today_lines: list[str] = []
+        tomorrow_lines: list[str] = []
+        future_lines: list[str] = []
+
+        # Classify all events into today / tomorrow / future
+        all_events = [
+            (item, "Kylee") for item in kylee_items
+        ] + [
+            (item, "Jeffery") for item in jeffery_items
+        ]
+
+        for item, who in all_events:
+            start = item.get("start", {})
+            if "date" in start and "dateTime" not in start:
+                event_date = pendulum.parse(start["date"]).date()
+            else:
+                try:
+                    event_date = pendulum.parse(
+                        start.get("dateTime", "")
+                    ).in_tz("America/Los_Angeles").date()
+                except Exception:
+                    event_date = today_date
+
+            if event_date == today_date:
+                today_lines.append(_format_event(item, who))
+            elif event_date == tomorrow_date:
+                tomorrow_lines.append(_format_event(item, who))
+            else:
+                future_lines.append(
+                    _format_event(item, who, show_date=True)
+                )
+
+        if not today_lines and not tomorrow_lines and not future_lines:
+            return None
+
+        sections: list[str] = []
+        if today_lines:
+            sections.append("### Today\n\n" + "\n".join(today_lines))
+        else:
+            sections.append("### Today\n\nNothing on the calendar.")
+        if tomorrow_lines:
+            sections.append("### Tomorrow\n\n" + "\n".join(tomorrow_lines))
+        if future_lines:
+            sections.append("### Coming Up\n\n" + "\n".join(future_lines))
+
+        return "\n\n".join(sections)
+
     except Exception:
         return None
 
