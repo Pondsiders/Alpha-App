@@ -30,6 +30,7 @@ export interface ServerEvent {
     | "user-message"
     | "assistant-message"
     | "error"
+    | "exception"
     | "done"
     | "interrupted"
     | "replay-done"

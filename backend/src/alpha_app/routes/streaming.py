@@ -97,6 +97,12 @@ async def stream_chat_events(connections: set, chat: Chat, span=None) -> Assista
     last_token_count = chat.token_count
     interjection_count = 0
 
+    # Snapshot the pre-turn token count for truncation detection.
+    # On a fresh resurrection, this is the cached value from before
+    # the restart. After the first API response, the proxy updates
+    # to the (possibly truncated) new count.
+    pre_turn_token_count = chat._cached_token_count
+
     # Reset output token accumulator for this turn. The proxy accumulates
     # with += across all API calls; only we know when a new turn begins.
     chat.reset_output_tokens()
@@ -244,6 +250,44 @@ async def stream_chat_events(connections: set, chat: Chat, span=None) -> Assista
 
             elif isinstance(event, ResultEvent):
                 await persist_chat(chat)
+
+                # -- Context truncation detection --
+                # Compare current token count to what we had before this turn.
+                # A large drop (>50K) means --resume silently truncated the
+                # conversation. Emit an exception event and clear seen cache
+                # so recall fires fresh on the next turn.
+                _TRUNCATION_THRESHOLD = 50_000
+                current_tokens = chat.total_input_tokens
+                if (
+                    pre_turn_token_count > 0
+                    and current_tokens > 0
+                    and (pre_turn_token_count - current_tokens) > _TRUNCATION_THRESHOLD
+                ):
+                    tokens_lost = pre_turn_token_count - current_tokens
+                    logfire.warn(
+                        "context truncation detected: lost {tokens_lost} tokens",
+                        tokens_lost=tokens_lost,
+                        previous_tokens=pre_turn_token_count,
+                        current_tokens=current_tokens,
+                        chat_id=chat_id,
+                    )
+                    from alpha_app.memories.recall import clear_seen
+                    clear_seen(chat_id)
+                    try:
+                        await broadcast(connections, {
+                            "type": "exception",
+                            "chatId": chat_id,
+                            "data": {
+                                "exceptionType": "context-loss-detected",
+                                "metadata": {
+                                    "previousTokens": pre_turn_token_count,
+                                    "currentTokens": current_tokens,
+                                    "tokensLost": tokens_lost,
+                                },
+                            },
+                        })
+                    except Exception:
+                        pass
 
                 # Snapshot token counts and metadata onto the message
                 msg.input_tokens = chat.total_input_tokens

@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate, useParams, useNavigate } from "react-router-dom";
 import { useCallback, useEffect, useRef } from "react";
+import { toast } from "sonner";
 import ChatPage from "./pages/ChatPage";
 import DevContextMeter from "./pages/DevContextMeter";
 import DevStatusBar from "./pages/DevStatusBar";
@@ -8,6 +9,7 @@ import DevMemoryStore from "./pages/DevMemoryStore";
 import DevMemoryCards from "./pages/DevMemoryCards";
 import DevTools from "./pages/DevTools";
 import { SidebarProvider } from "@/components/ui/sidebar";
+import { Toaster } from "@/components/ui/sonner";
 import { AppSidebar } from "@/components/AppSidebar";
 import { useWebSocket, type ServerEvent, type ClientMessage } from "@/lib/useWebSocket";
 import {
@@ -569,6 +571,28 @@ function Layout() {
         break;
       }
 
+      case "exception": {
+        const ex = event.data as {
+          exceptionType: string;
+          metadata?: Record<string, unknown>;
+        };
+        console.warn("[Alpha WS] Exception:", ex.exceptionType, ex.metadata);
+
+        if (ex.exceptionType === "context-loss-detected") {
+          const meta = ex.metadata as {
+            previousTokens: number;
+            currentTokens: number;
+            tokensLost: number;
+          };
+          const lostK = Math.round(meta.tokensLost / 1000);
+          toast.error("Context truncated", {
+            description: `~${lostK}K tokens of conversation lost on resume.`,
+            duration: 10000,
+          });
+        }
+        break;
+      }
+
       case "done": {
         // DON'T clear assistantIdMapRef — `done` fires after each internal
         // subprocess turn (tool call cycle), not just at the end of the whole
@@ -829,6 +853,7 @@ function App() {
         <Route path="/dev/memory-cards" element={<DevMemoryCards />} />
         <Route path="/dev/tools" element={<DevTools />} />
       </Routes>
+      <Toaster position="top-center" richColors />
     </BrowserRouter>
   );
 }
