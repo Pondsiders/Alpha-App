@@ -289,6 +289,34 @@ async def stream_chat_events(connections: set, chat: Chat, span=None) -> Assista
                     except Exception:
                         pass
 
+                # -- API error detection --
+                # Check if the proxy recorded an API error this turn.
+                # Claude Code may retry internally, but we still want
+                # the frontend to know an error happened.
+                api_error = chat.pop_api_error()
+                if api_error:
+                    status = api_error.get("status", 0)
+                    logfire.warn(
+                        "API error {status} during turn",
+                        status=status,
+                        error_body=api_error.get("body", ""),
+                        chat_id=chat_id,
+                    )
+                    try:
+                        await broadcast(connections, {
+                            "type": "exception",
+                            "chatId": chat_id,
+                            "data": {
+                                "exceptionType": "api-error",
+                                "metadata": {
+                                    "status": status,
+                                    "body": api_error.get("body", "")[:200],
+                                },
+                            },
+                        })
+                    except Exception:
+                        pass
+
                 # Snapshot token counts and metadata onto the message
                 msg.input_tokens = chat.total_input_tokens
                 msg.output_tokens = chat.output_tokens

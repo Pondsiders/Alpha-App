@@ -239,6 +239,12 @@ class Chat:
     def usage_7d(self) -> float | None:
         return self._claude.usage_7d if self._claude else None
 
+    def pop_api_error(self) -> dict | None:
+        """Return and clear the last API error from the proxy, if any."""
+        if self._claude and self._claude._proxy:
+            return self._claude._proxy.pop_api_error()
+        return None
+
     def to_data(self) -> dict:
         """Serialize chat metadata as a JSONB-ready dict."""
         from alpha_app.memories.recall import get_seen_ids

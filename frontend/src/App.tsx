@@ -589,6 +589,20 @@ function Layout() {
             description: `~${lostK}K tokens of conversation lost on resume.`,
             duration: 10000,
           });
+        } else if (ex.exceptionType === "api-error") {
+          const meta = ex.metadata as { status: number; body?: string };
+          const statusMessages: Record<number, string> = {
+            429: "Rate limited",
+            529: "API overloaded",
+            500: "Internal server error",
+            502: "Bad gateway",
+            503: "Service unavailable",
+          };
+          const title = statusMessages[meta.status] || `API error ${meta.status}`;
+          toast.error(title, {
+            description: meta.body?.slice(0, 120) || `HTTP ${meta.status}`,
+            duration: 8000,
+          });
         }
         break;
       }

@@ -120,6 +120,9 @@ class _Proxy:
 
         self._warned_no_api_key = False
 
+        # Last API error — set on 4xx/5xx, cleared by consumer
+        self._last_api_error: dict | None = None
+
         # Usage quota state (from Anthropic response headers)
         self._usage_7d: float | None = None
         self._usage_5h: float | None = None
@@ -178,6 +181,12 @@ class _Proxy:
     @property
     def cache_read_tokens(self) -> int:
         return self._cache_read_tokens
+
+    def pop_api_error(self) -> dict | None:
+        """Return and clear the last API error, if any."""
+        err = self._last_api_error
+        self._last_api_error = None
+        return err
 
     @property
     def output_tokens(self) -> int:
@@ -330,9 +339,18 @@ class _Proxy:
             # Sniff usage headers
             self._sniff_usage_headers(response.headers)
 
-            # Error responses: buffer and pass through
+            # Error responses: record for exception system, then pass through
             if response.status_code >= 400:
                 error_body = await response.aread()
+                # Store for consumer (streaming.py) to emit as exception
+                try:
+                    error_text = error_body.decode("utf-8", errors="replace")[:500]
+                except Exception:
+                    error_text = "(undecodable)"
+                self._last_api_error = {
+                    "status": response.status_code,
+                    "body": error_text,
+                }
                 resp = web.Response(status=response.status_code, body=error_body)
                 for key, value in response.headers.items():
                     if key.lower() not in SKIP_RESPONSE_HEADERS:
