@@ -117,40 +117,15 @@ USER_MESSAGE_NORMAL = "I still wanna think it through."
 def first_turn_blocks() -> list[dict]:
     """The expected content blocks for the first turn of a context window.
 
-    Block order (human-optimized, Mar 15 2026):
-        capsules → letter → today → here → context files → context index →
-        events → todos → timestamp → user message → memories
+    Orientation moved to system prompt (Mar 23 2026). First turn is now
+    identical to normal turns except _needs_orientation flag gets cleared.
+
+    Block order: timestamp → user message → memories
     """
     blocks = []
 
     def _add(text: str) -> None:
         blocks.append({"type": "text", "text": text})
-
-    # Capsules (passed through as-is, already have ## headers)
-    _add(CAPSULE_YESTERDAY)
-    _add(CAPSULE_LAST_NIGHT)
-
-    # Letter (passed through as-is)
-    _add(LETTER)
-
-    # Today so far (passed through as-is)
-    _add(TODAY_SO_FAR)
-
-    # Here (passed through as-is)
-    _add(HERE)
-
-    # Context files (## Context: {label} header added by orientation)
-    for cf in CONTEXT_FILES:
-        _add(f"## Context: {cf['label']}\n\n{cf['content']}")
-
-    # Context available index (passed through as-is)
-    _add(CONTEXT_AVAILABLE)
-
-    # Events (## Events header added by orientation)
-    _add(f"## Events\n\n{EVENTS}")
-
-    # Todos (## Todos header added by orientation)
-    _add(f"## Todos\n\n{TODOS}")
 
     # Timestamp (before user message)
     _add(TIMESTAMP_FIRST)

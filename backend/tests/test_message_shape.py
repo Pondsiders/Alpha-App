@@ -86,32 +86,19 @@ class TestFirstTurnShape:
 
     @pytest.fixture
     def enrobe_first_turn(self):
-        """Run enrobe for a first-turn message with deterministic mocks."""
+        """Run enrobe for a first-turn message with deterministic mocks.
+
+        Orientation now lives in system prompt, not enrobe. First turn
+        is timestamp + user message + memories only.
+        """
         async def _run():
             chat = ChatStub(needs_orientation=True)
             content = [{"type": "text", "text": USER_MESSAGE_FIRST}]
-
-            # Mock orientation sources — returns kwargs for assemble_orientation
-            mock_orientation = AsyncMock(return_value={
-                "yesterday": CAPSULE_YESTERDAY,
-                "last_night": CAPSULE_LAST_NIGHT,
-                "letter": LETTER,
-                "today_so_far": TODAY_SO_FAR,
-                "here": HERE,
-                "context_files": CONTEXT_FILES,
-                "context_available": CONTEXT_AVAILABLE,
-                "events": EVENTS,
-                "todos": TODOS,
-            })
 
             with (
                 patch(
                     "alpha_app.routes.enrobe._format_timestamp",
                     return_value="Wed Mar 11 2026, 12:25 PM",
-                ),
-                patch(
-                    "alpha_app.routes.enrobe.fetch_all_orientation",
-                    mock_orientation,
                 ),
                 patch(
                     "alpha_app.routes.enrobe.recall_memories_rich",
@@ -125,7 +112,7 @@ class TestFirstTurnShape:
         return _run
 
     async def test_block_count(self, enrobe_first_turn):
-        """First turn should produce exactly 18 content blocks."""
+        """First turn: timestamp + user message + memories."""
         result, _ = await enrobe_first_turn()
         expected = first_turn_blocks()
         assert len(result.content) == len(expected), (

@@ -10,8 +10,8 @@ FIXTURES = Path(__file__).parent / "fixtures" / "jnsq"
 
 
 async def test_full_assembly():
-    """Soul + bill of rights, byte-for-byte against golden reference."""
-    result = await assemble_system_prompt(identity_dir=FIXTURES)
+    """Soul + bill of rights, byte-for-byte against golden reference (no orientation)."""
+    result = await assemble_system_prompt(identity_dir=FIXTURES, include_orientation=False)
     expected = (FIXTURES / "expected_full.txt").read_text()
     assert result == expected
 
@@ -24,7 +24,7 @@ async def test_no_bill_of_rights(tmp_path):
     soul = (FIXTURES / "prompts" / "system" / "soul.md").read_text()
     (prompts / "soul.md").write_text(soul)
 
-    result = await assemble_system_prompt(identity_dir=tmp_path)
+    result = await assemble_system_prompt(identity_dir=tmp_path, include_orientation=False)
     expected = (FIXTURES / "expected_no_bill.txt").read_text()
     assert result == expected
 

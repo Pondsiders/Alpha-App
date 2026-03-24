@@ -76,19 +76,17 @@ class TestEnrobeOrientation:
         """A simple user message content block list."""
         return [{"type": "text", "text": "Hello, world!"}]
 
-    async def test_orientation_injected_when_flag_true(self, user_content):
-        """When _needs_orientation is True, orientation blocks appear in output."""
+    async def test_orientation_no_longer_in_enrobe(self, user_content):
+        """Orientation now lives in system prompt, not in enrobe output."""
         chat = ChatStub(needs_orientation=True)
 
-        with patch("alpha_app.routes.enrobe.fetch_all_orientation", _mock_orientation()):
-            result = await enrobe(user_content, chat=chat)
+        result = await enrobe(user_content, chat=chat)
 
-        # Should have: orientation (at least 1 block) + timestamp + user content
-        assert len(result.content) >= 3
-
-        # The orientation block should contain "## Here"
+        # Should have: timestamp + user content only (2 blocks)
+        # No orientation — it's in the system prompt now
+        assert len(result.content) == 2
         texts = [b["text"] for b in result.content]
-        assert any("## Here" in t for t in texts)
+        assert not any("## Here" in t for t in texts)
 
     async def test_no_orientation_when_flag_false(self, user_content):
         """When _needs_orientation is False, no orientation blocks appear."""
@@ -103,13 +101,12 @@ class TestEnrobeOrientation:
         texts = [b["text"] for b in result.content]
         assert not any("## Here" in t for t in texts)
 
-    async def test_flag_cleared_after_orientation(self, user_content):
-        """The _needs_orientation flag is set to False after enrobe injects orientation."""
+    async def test_flag_cleared_after_enrobe(self, user_content):
+        """The _needs_orientation flag is cleared by enrobe even though orientation is in system prompt."""
         chat = ChatStub(needs_orientation=True)
         assert chat._needs_orientation is True
 
-        with patch("alpha_app.routes.enrobe.fetch_all_orientation", _mock_orientation()):
-            await enrobe(user_content, chat=chat)
+        await enrobe(user_content, chat=chat)
 
         assert chat._needs_orientation is False
 
@@ -121,67 +118,28 @@ class TestEnrobeOrientation:
 
         assert chat._needs_orientation is False
 
-    async def test_block_order_orientation_timestamp_user(self, user_content):
-        """Order: orientation first, then timestamp, then user content."""
+    async def test_block_order_timestamp_then_user(self, user_content):
+        """Order: timestamp, then user content. No orientation (it's in system prompt now)."""
         chat = ChatStub(needs_orientation=True)
 
-        with patch("alpha_app.routes.enrobe.fetch_all_orientation", _mock_orientation()):
-            result = await enrobe(user_content, chat=chat)
+        result = await enrobe(user_content, chat=chat)
 
         blocks = result.content
 
-        # First block is orientation (here)
-        assert "## Here" in blocks[0]["text"]
+        # First block is the timestamp
+        assert blocks[0]["text"].startswith("[Sent ")
+        assert blocks[0]["text"].endswith("]")
 
-        # Second-to-last block is the timestamp
-        assert blocks[-2]["text"].startswith("[Sent ")
-        assert blocks[-2]["text"].endswith("]")
-
-        # Last block is always the user content
-        assert blocks[-1]["text"] == "Hello, world!"
-
-    async def test_orientation_blocks_are_proper_content_dicts(self, user_content):
-        """Orientation blocks must be {"type": "text", "text": "..."} dicts."""
-        chat = ChatStub(needs_orientation=True)
-
-        with patch("alpha_app.routes.enrobe.fetch_all_orientation", _mock_orientation()):
-            result = await enrobe(user_content, chat=chat)
-
-        # Check all blocks (orientation, timestamp, user content) are proper dicts
-        for block in result.content:
-            assert isinstance(block, dict)
-            assert set(block.keys()) == {"type", "text"}
-            assert block["type"] == "text"
-            assert isinstance(block["text"], str)
-            assert len(block["text"]) > 0
-
-    async def test_second_call_has_no_orientation(self, user_content):
-        """After the first enrobe clears the flag, the second call has no orientation."""
-        chat = ChatStub(needs_orientation=True)
-
-        with patch("alpha_app.routes.enrobe.fetch_all_orientation", _mock_orientation()):
-            first_result = await enrobe(user_content, chat=chat)
-
-        # First call has orientation
-        assert len(first_result.content) >= 3
-
-        # Second call — flag is now False
-        second_result = await enrobe(user_content, chat=chat)
-
-        # Second call has no orientation
-        assert len(second_result.content) == 2
-        texts = [b["text"] for b in second_result.content]
-        assert not any("## Here" in t for t in texts)
+        # Second block is the user content
+        assert blocks[1]["text"] == "Hello, world!"
 
     async def test_timestamp_always_present(self, user_content):
-        """Timestamp block is always present, just before user content."""
+        """Timestamp block is always present, before user content."""
         for needs_orientation in (True, False):
             chat = ChatStub(needs_orientation=needs_orientation)
 
-            with patch("alpha_app.routes.enrobe.fetch_all_orientation", _mock_orientation()):
-                result = await enrobe(user_content, chat=chat)
+            result = await enrobe(user_content, chat=chat)
 
-            # Second-to-last block is always the timestamp
             assert result.content[-2]["text"].startswith("[Sent ")
             assert result.content[-2]["type"] == "text"
 
@@ -189,40 +147,9 @@ class TestEnrobeOrientation:
         """enrobe returns an EnrobeResult with content and events."""
         chat = ChatStub(needs_orientation=True)
 
-        with patch("alpha_app.routes.enrobe.fetch_all_orientation", _mock_orientation()):
-            result = await enrobe(user_content, chat=chat)
+        result = await enrobe(user_content, chat=chat)
 
         assert isinstance(result, EnrobeResult)
         assert isinstance(result.content, list)
         assert isinstance(result.events, list)
-        # Should have at least one progressive user-message event (timestamp snapshot)
         assert any(e["type"] == "user-message" for e in result.events)
-
-    async def test_full_orientation_with_all_sources(self, user_content):
-        """When all sources are present, all orientation blocks appear in order."""
-        chat = ChatStub(needs_orientation=True)
-
-        mock = _mock_orientation(
-            yesterday="## Friday, February 27, 2026\n\nBig day.",
-            last_night="## Friday night\n\nQuiet.",
-            letter="## Letter from last night\n\nHey.",
-            today_so_far="## Today so far\n\nGood morning.",
-            events="**Tomorrow**\n\u2022 3:30 PM: Meeting",
-            todos="*Pondside*\n\u2022 Build things",
-        )
-
-        with patch("alpha_app.routes.enrobe.fetch_all_orientation", mock):
-            result = await enrobe(user_content, chat=chat)
-
-        texts = [b["text"] for b in result.content]
-
-        # Capsules come before here (new block order)
-        here_idx = next(i for i, t in enumerate(texts) if "## Here" in t)
-        yesterday_idx = next(i for i, t in enumerate(texts) if "February 27" in t)
-        assert yesterday_idx < here_idx
-
-        # Events and todos at the end (before timestamp + user)
-        events_idx = next(i for i, t in enumerate(texts) if "## Events" in t)
-        todos_idx = next(i for i, t in enumerate(texts) if "## Todos" in t)
-        assert events_idx < todos_idx
-        assert todos_idx < len(texts) - 2  # Before timestamp + user

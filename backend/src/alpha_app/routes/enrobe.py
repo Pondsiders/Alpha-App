@@ -33,9 +33,7 @@ from alpha_app.db import get_pool
 from alpha_app.images import process_image_blocks
 from alpha_app.memories.recall import recall_memories_rich
 from alpha_app.memories.vision import process_image
-from alpha_app.models import Capsule, Orientation, RecalledMemory, UserMessage
-from alpha_app.orientation import assemble_orientation
-from alpha_app.sources import fetch_all_orientation
+from alpha_app.models import RecalledMemory, UserMessage
 
 if TYPE_CHECKING:
     from alpha_app.chat import Chat
@@ -128,16 +126,10 @@ async def enrobe(
             "data": msg.to_wire(),
         }
 
-    # 1. Orientation — injected on first message of a new/resumed context window
+    # 1. Orientation — now lives in the system prompt (survives --resume
+    #    truncation). The _needs_orientation flag is cleared on first message
+    #    so downstream code doesn't think we're still waiting.
     if chat._needs_orientation:
-        orientation_data = await fetch_all_orientation()
-        context_blocks = assemble_orientation(**orientation_data)
-        capsules = _build_capsules(orientation_data)
-        msg.orientation = Orientation(
-            here=orientation_data.get("here", ""),
-            capsules=capsules,
-            context_blocks=context_blocks,
-        )
         chat._needs_orientation = False
 
     # 2. Intro memorables from previous turn
