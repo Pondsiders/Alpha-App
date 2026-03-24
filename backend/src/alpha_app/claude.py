@@ -297,6 +297,7 @@ class Claude:
         self._stderr_task: asyncio.Task | None = None
         self._proxy: _Proxy | None = None
         self._session_id: str | None = None
+        self._system_prompt_file: Path | None = None  # Temp file for large system prompts
 
     @property
     def state(self) -> ClaudeState:
@@ -839,7 +840,14 @@ class Claude:
         ]
 
         if self.system_prompt is not None:
-            cmd.extend(["--system-prompt", self.system_prompt])
+            # Write system prompt to a temp file to avoid argv size limits.
+            # A 50K-token orientation can exceed Linux's MAX_ARG_STRLEN.
+            import tempfile
+            fd, path = tempfile.mkstemp(suffix=".md", prefix="alpha-sysprompt-")
+            with os.fdopen(fd, "w") as f:
+                f.write(self.system_prompt)
+            self._system_prompt_file = Path(path)
+            cmd.extend(["--system-prompt-file", path])
 
         mcp_config = self._build_mcp_config()
         if mcp_config:
@@ -951,3 +959,7 @@ class Claude:
         if self._proxy:
             await self._proxy.stop()
             self._proxy = None
+
+        if self._system_prompt_file and self._system_prompt_file.exists():
+            self._system_prompt_file.unlink(missing_ok=True)
+            self._system_prompt_file = None
