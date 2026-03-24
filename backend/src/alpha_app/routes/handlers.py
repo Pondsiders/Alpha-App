@@ -18,6 +18,7 @@ async def handle_create_chat(
     connections: set,
     chats: dict[str, Chat],
     on_reap,
+    on_broadcast=None,
 ) -> None:
     """Handle create-chat: born COLD, persist, broadcast to all."""
     try:
@@ -25,6 +26,7 @@ async def handle_create_chat(
         chat = Chat(id=chat_id)
         chat._system_prompt = ws.app.state.system_prompt
         chat.on_reap = on_reap
+        chat.on_broadcast = on_broadcast
         chat._topic_registry = getattr(ws.app.state, "topic_registry", None)
         chats[chat_id] = chat
 
