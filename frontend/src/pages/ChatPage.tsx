@@ -530,8 +530,13 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
             </p>
           </div>
         ) : (
-          <ThreadPrimitive.Root className="flex-1 flex flex-col overflow-hidden chat-font">
-            <ThreadPrimitive.Viewport className="flex-1 flex flex-col overflow-y-scroll overflow-x-hidden p-6">
+          <ThreadPrimitive.Root className="flex-1 flex flex-col overflow-hidden chat-font relative">
+            <ThreadPrimitive.Viewport
+              className="flex-1 flex flex-col overflow-y-scroll overflow-x-hidden p-6"
+              autoScroll
+              scrollToBottomOnInitialize
+              scrollToBottomOnThreadSwitch
+            >
               <div className="max-w-3xl mx-auto w-full flex-1">
                 {messages.length === 0 && !isRunning && (
                   <div className="flex-1 flex items-center justify-center h-full">
@@ -558,6 +563,17 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
 
               <div aria-hidden="true" className="h-4" />
             </ThreadPrimitive.Viewport>
+
+            {/* Scroll-to-bottom — hidden when at bottom (disabled), visible when scrolled up */}
+            <ThreadPrimitive.ScrollToBottom
+              className="absolute bottom-2 left-1/2 -translate-x-1/2 z-10
+                         rounded-full bg-surface/80 backdrop-blur border border-border/50
+                         px-3 py-1.5 text-xs text-muted hover:text-foreground
+                         shadow-md transition-all cursor-pointer
+                         disabled:hidden"
+            >
+              ↓ Scroll to bottom
+            </ThreadPrimitive.ScrollToBottom>
           </ThreadPrimitive.Root>
         )}
 
