@@ -91,7 +91,7 @@ HTTP proxy for Claude's API channel. Sniffs SSE streams for token usage data and
 Middleware that resizes and JPEG-compresses base64 image blocks before they reach Claude. Images over 1 megapixel are scaled down; PNGs are re-encoded as JPEG at quality 85. URL-based images pass through untouched.
 
 ### Cortex MCP Tools (`backend/src/alpha_app/tools/cortex.py`)
-In-process FastMCP server for memory operations (store/search/recent/get). Uses Ollama for 768-dim embeddings, Postgres with pgvector for hybrid search (exact match + full-text + semantic). Soft-delete via `forgotten` flag. Schema in `alpha_app/memories/db.py`.
+In-process FastMCP server for memory operations (store/search/recent/get). Uses Ollama for 2560-dim embeddings (qwen3-embedding:4b), Postgres with pgvector for hybrid search (exact match + full-text + semantic). Soft-delete via `forgotten` flag. Schema in `alpha_app/memories/db.py`.
 
 ### Database (`backend/src/alpha_app/db.py`)
 asyncpg pool (min 2, max 10 connections). Schema `app.chats` stores chat metadata as JSONB, upserted on each turn. JSONB codec registered per-connection for automatic dict serialization. Connection pools in both `db.py` and `memories/db.py` are lazily initialized.
@@ -132,7 +132,7 @@ Zustand store with Immer middleware, multi-chat aware. `chats` map + `activeChat
 ## Hardcoded Constants (`backend/src/alpha_app/constants.py`)
 
 - Claude model: `claude-opus-4-6[1m]` (1M context window)
-- Ollama embed model: `nomic-embed-text` (768-dim)
-- Ollama chat model: `gemma3:12b-it-qat` (used by Intro suggest pipeline)
+- Ollama embed model: `qwen3-embedding:4b` (2560-dim)
+- Ollama chat model: `qwen3.5:4b` (used by recall/suggest pipeline)
 - Claude subprocess CWD: `/Pondside`
 - Identity docs: `/Pondside/Alpha-Home/Alpha`

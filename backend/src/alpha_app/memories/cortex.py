@@ -7,6 +7,8 @@ Higher-level functions (recall, suggest) build on these.
 Ported from alpha_sdk v0.x.
 """
 
+import logfire
+
 from datetime import datetime
 from typing import Any
 
@@ -165,6 +167,17 @@ async def search_by_embedding(
             min_score=min_score,
         )
 
+        # Semantic-level observability: what did the search find?
+        if results:
+            top = results[0]
+            logfire.debug(
+                "recall.search_hit: #{id} score={score:.3f} {preview}",
+                id=top["id"],
+                score=top.get("score", 0),
+                preview=top["content"][:80],
+                n_results=len(results),
+            )
+
         memories = []
         for item in results:
             metadata = item.get("metadata", {})
@@ -180,7 +193,12 @@ async def search_by_embedding(
 
         return memories
 
-    except Exception:
+    except Exception as e:
+        logfire.error(
+            "recall.search_by_embedding_failed: {error}",
+            error=str(e),
+            error_type=type(e).__name__,
+        )
         return []
 
 

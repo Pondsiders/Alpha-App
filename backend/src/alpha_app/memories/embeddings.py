@@ -1,10 +1,10 @@
 """Ollama embeddings client for Cortex.
 
-Uses nomic-embed-text with proper task prefixes:
-- search_document: for storing memories
-- search_query: for searching memories
+Uses qwen3-embedding:4b (2560d) with task-aware prefixes:
+- Documents: plain text (no prefix)
+- Queries: "Instruct: ... \\nQuery: {text}" prefix
 
-Ported from alpha_sdk v0.x.
+Ported from alpha_sdk v0.x. Migrated from nomic-embed-text March 2026.
 """
 
 import httpx
@@ -18,20 +18,26 @@ class EmbeddingError(Exception):
     pass
 
 
+QUERY_INSTRUCTION = (
+    "Instruct: Given a memory search query, retrieve the most relevant "
+    "memory entries that match the query\nQuery: "
+)
+
+
 async def embed_document(content: str) -> list[float]:
     """Generate embedding for a document (for storage).
 
-    Uses the 'search_document:' task prefix as required by nomic-embed-text.
+    Qwen 3 Embedding: documents use plain text, no prefix.
     """
-    return await _embed(f"search_document: {content}", operation="document", text=content)
+    return await _embed(content, operation="document", text=content)
 
 
 async def embed_query(query: str) -> list[float]:
     """Generate embedding for a query (for search).
 
-    Uses the 'search_query:' task prefix as required by nomic-embed-text.
+    Qwen 3 Embedding: queries use an instruction prefix.
     """
-    return await _embed(f"search_query: {query}", operation="query", text=query)
+    return await _embed(f"{QUERY_INSTRUCTION}{query}", operation="query", text=query)
 
 
 async def embed_queries_batch(queries: list[str]) -> list[list[float]]:
@@ -48,8 +54,8 @@ async def embed_queries_batch(queries: list[str]) -> list[list[float]]:
     if not OLLAMA_URL:
         raise EmbeddingError("OLLAMA_URL not set")
 
-    # Add the nomic search_query prefix to each query
-    prefixed = [f"search_query: {q}" for q in queries]
+    # Add Qwen instruction prefix to each query
+    prefixed = [f"{QUERY_INSTRUCTION}{q}" for q in queries]
 
     with logfire.span(
         "embed.batch_queries",

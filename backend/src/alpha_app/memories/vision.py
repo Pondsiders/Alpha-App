@@ -206,7 +206,7 @@ async def _store_image_memory(
         try:
             row = await pool.fetchrow(
                 """
-                INSERT INTO cortex.memories (content, embedding, metadata)
+                INSERT INTO cortex.memories (content, embedding_qwen, metadata)
                 VALUES ($1, $2::vector, $3::jsonb)
                 RETURNING id
                 """,
@@ -238,11 +238,11 @@ async def _search_memories(
             rows = await pool.fetch(
                 """
                 SELECT id, content,
-                       1 - (embedding <=> $1::vector) AS score,
+                       1 - (embedding_qwen::halfvec(2560) <=> $1::halfvec(2560)) AS score,
                        metadata->>'created_at' AS created_at
                 FROM cortex.memories
-                WHERE NOT forgotten
-                ORDER BY embedding <=> $1::vector
+                WHERE NOT forgotten AND embedding_qwen IS NOT NULL
+                ORDER BY embedding_qwen::halfvec(2560) <=> $1::halfvec(2560)
                 LIMIT $2
                 """,
                 vec_str,

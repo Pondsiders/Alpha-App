@@ -69,7 +69,7 @@ async def broadcast(
         data = event.get("data", {})
         if isinstance(data, dict):
             preview = data.get("toolName", "") or data.get("partialJson", "")[:40]
-    logfire.debug(
+    logfire.trace(
         "ws.broadcast: {event_type}",
         event_type=event_type,
         chat_id=chat_id,

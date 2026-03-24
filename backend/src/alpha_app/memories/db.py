@@ -65,6 +65,7 @@ async def init_schema() -> None:
                 id SERIAL PRIMARY KEY,
                 content TEXT NOT NULL,
                 embedding vector(768),
+                embedding_qwen vector(2560),
                 metadata JSONB NOT NULL DEFAULT '{}',
                 forgotten BOOLEAN NOT NULL DEFAULT FALSE,
                 content_tsv tsvector GENERATED ALWAYS AS (
@@ -112,7 +113,7 @@ async def store_memory(
     async with pool.acquire() as conn:
         memory_id = await conn.fetchval(
             """
-            INSERT INTO cortex.memories (content, embedding, metadata)
+            INSERT INTO cortex.memories (content, embedding_qwen, metadata)
             VALUES ($1, $2, $3)
             RETURNING id
             """,
@@ -209,11 +210,11 @@ async def search_memories(
                             ts_rank(content_tsv, plainto_tsquery('english', ${param_idx})),
                             0
                         ) as fts_score,
-                        -- Cosine similarity is already 0-1 for normalized vectors
-                        1 - (embedding <=> ${param_idx + 2}::vector) as sem_score
+                        -- Cosine similarity; halfvec cast uses HNSW index
+                        1 - (embedding_qwen::halfvec(2560) <=> ${param_idx + 2}::halfvec(2560)) as sem_score
                     FROM cortex.memories
                     WHERE {where_clause}
-                      AND embedding IS NOT NULL
+                      AND embedding_qwen IS NOT NULL
                 )
                 SELECT
                     id,
@@ -257,7 +258,7 @@ async def search_memories_by_embedding(
     pool = await get_pool()
 
     async with pool.acquire() as conn:
-        conditions = ["NOT forgotten", "embedding IS NOT NULL"]
+        conditions = ["NOT forgotten", "embedding_qwen IS NOT NULL"]
         params: list = []
         param_idx = 1
 
@@ -279,11 +280,11 @@ async def search_memories_by_embedding(
                 id,
                 content,
                 metadata,
-                1 - (embedding <=> ${param_idx}::vector) as score
+                1 - (embedding_qwen::halfvec(2560) <=> ${param_idx}::halfvec(2560)) as score
             FROM cortex.memories
             WHERE {where_clause}
             {min_score_clause}
-            ORDER BY score DESC
+            ORDER BY embedding_qwen::halfvec(2560) <=> ${param_idx}::halfvec(2560)
             LIMIT ${param_idx + 1 if min_score is None else param_idx + 2}
         """
         params.append(embedding_json)
@@ -296,7 +297,7 @@ async def search_memories_by_embedding(
                         id,
                         content,
                         metadata,
-                        1 - (embedding <=> ${param_idx}::vector) as score
+                        1 - (embedding_qwen::halfvec(2560) <=> ${param_idx}::halfvec(2560)) as score
                     FROM cortex.memories
                     WHERE {where_clause}
                 )
