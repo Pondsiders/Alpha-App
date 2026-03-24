@@ -71,7 +71,8 @@ class ClaudeState(Enum):
 
     IDLE = auto()      # Not started
     STARTING = auto()  # Subprocess spawned, init handshake in progress
-    READY = auto()     # Init complete, accepting messages
+    RUNNING = auto()   # Init complete, drain running, accepting messages
+    READY = RUNNING    # Backward compat alias — will be removed
     STOPPED = auto()   # Shut down (graceful or error)
 
 
@@ -282,6 +283,8 @@ class Claude:
         mcp_servers: dict[str, Any] | None = None,
         permission_handler: Callable[[dict], Awaitable[bool]] | None = None,
         disallowed_tools: list[str] | None = None,
+        on_event: Callable[["Event"], Awaitable[None]] | None = None,
+        use_proxy: bool = True,
     ):
         self.model = model
         self.system_prompt = system_prompt
@@ -291,10 +294,13 @@ class Claude:
         self._mcp_servers: dict[str, Any] = mcp_servers or {}
         self._permission_handler = permission_handler
         self._disallowed_tools: list[str] = disallowed_tools or []
+        self._on_event = on_event
+        self._use_proxy = use_proxy
 
         self._state = ClaudeState.IDLE
         self._proc: asyncio.subprocess.Process | None = None
         self._stderr_task: asyncio.Task | None = None
+        self._stdout_task: asyncio.Task | None = None
         self._proxy: _Proxy | None = None
         self._session_id: str | None = None
         self._system_prompt_file: Path | None = None  # Temp file for large system prompts
@@ -398,16 +404,21 @@ class Claude:
         self._session_id = session_id
 
         try:
-            upstream_url = os.environ.get("ANTHROPIC_BASE_URL")
-            self._proxy = _Proxy(
-                upstream_url=upstream_url,
-            )
-            await self._proxy.start()
+            if self._use_proxy:
+                upstream_url = os.environ.get("ANTHROPIC_BASE_URL")
+                self._proxy = _Proxy(upstream_url=upstream_url)
+                await self._proxy.start()
 
             self._proc = await self._spawn()
             self._stderr_task = asyncio.create_task(self._drain_stderr())
             await self._init_handshake()
-            self._state = ClaudeState.READY
+            self._state = ClaudeState.RUNNING
+
+            # Start continuous stdout drain AFTER the init handshake.
+            # From this point on, _drain_stdout owns the stdout pipe.
+            # events() is dead — all events flow through on_event callback.
+            if self._on_event:
+                self._stdout_task = asyncio.create_task(self._drain_stdout())
         except Exception:
             self._state = ClaudeState.STOPPED
             await self._cleanup()
@@ -416,23 +427,80 @@ class Claude:
     async def send(self, content: list[dict]) -> None:
         """Send a user message to claude.
 
+        Always works after start(). Claude Code handles internal queueing —
+        messages sent while it's busy get processed in order.
+
         Args:
             content: Messages API content blocks.
         """
-        if self._state != ClaudeState.READY:
+        if self._state not in (ClaudeState.RUNNING, ClaudeState.READY):
             raise RuntimeError(f"Cannot send in state {self._state}")
 
         await self._send_json(self._format_user_message(content))
 
-    async def events(self) -> AsyncIterator[Event]:
-        """Yield events from claude's response stream.
+    async def _drain_stdout(self) -> None:
+        """Continuously read stdout, handle control requests, emit events.
 
-        Reads until a ResultEvent (end of turn). Control requests
-        are handled internally: MCP messages are dispatched to
-        in-process servers, permission requests go to the consumer's
-        handler. Consumers never see control requests.
+        Runs as a background task for the lifetime of the subprocess.
+        This is the ONLY reader of stdout — all events flow through
+        the on_event callback. No queue, no consumer, no events() generator.
         """
-        if self._state != ClaudeState.READY:
+        try:
+            while True:
+                raw = await self._read_json()
+
+                if raw is None:
+                    # Subprocess exited
+                    self._state = ClaudeState.STOPPED
+                    if self._on_event:
+                        await self._on_event(
+                            ErrorEvent(raw={}, message="claude process exited unexpectedly")
+                        )
+                    return
+
+                event = self._parse_event(raw)
+
+                # Trace every stdout event for Logfire observability.
+                logfire.trace(
+                    "claude.stdout: {msg_type}",
+                    msg_type=raw.get("type", "?"),
+                    raw_json=raw,
+                )
+
+                # Control requests are internal — handle and don't emit.
+                if isinstance(event, _ControlRequestEvent):
+                    await self._handle_control_request(event)
+                    continue
+
+                # Capture session ID from first ResultEvent.
+                if isinstance(event, ResultEvent) and not self._session_id:
+                    if event.session_id:
+                        self._session_id = event.session_id
+
+                # Fire the callback — this is where events reach Chat and
+                # ultimately the WebSocket handler.
+                if self._on_event:
+                    await self._on_event(event)
+
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            logfire.error("claude.drain_crashed: {error}", error=str(e))
+            self._state = ClaudeState.STOPPED
+
+    async def events(self) -> AsyncIterator[Event]:
+        """DEPRECATED: Use the on_event callback instead.
+
+        Kept temporarily for backward compatibility during migration.
+        Only works when on_event is NOT set (old pull-based mode).
+        """
+        if self._on_event:
+            raise RuntimeError(
+                "Cannot use events() when on_event callback is set. "
+                "Events flow through the callback, not the generator."
+            )
+
+        if self._state not in (ClaudeState.RUNNING, ClaudeState.READY):
             raise RuntimeError(f"Cannot read events in state {self._state}")
 
         while True:
@@ -445,14 +513,10 @@ class Claude:
 
             event = self._parse_event(raw)
 
-            # Trace every event from the subprocess — the valve controls
-            # whether this reaches Logfire (min_log_level in configure()).
-            # The full raw dict goes as an attribute so you can inspect it.
             logfire.trace(
-                "claude.event: {event_type}",
-                event_type=type(event).__name__,
-                raw_type=raw.get("type", ""),
-                event=raw,
+                "claude.stdout: {msg_type}",
+                msg_type=raw.get("type", "?"),
+                raw_json=raw,
             )
 
             if isinstance(event, _ControlRequestEvent):
@@ -871,6 +935,10 @@ class Claude:
         env["CLAUDE_CONFIG_DIR"] = str(CLAUDE_CONFIG_DIR)
         if self._proxy and self._proxy.port:
             env["ANTHROPIC_BASE_URL"] = self._proxy.base_url
+        elif not self._use_proxy:
+            # Remove inherited ANTHROPIC_BASE_URL so the subprocess
+            # talks directly to Anthropic, not through a parent's proxy.
+            env.pop("ANTHROPIC_BASE_URL", None)
 
         return await asyncio.create_subprocess_exec(
             *cmd,
@@ -909,6 +977,11 @@ class Claude:
     async def _send_json(self, obj: dict) -> None:
         """Send a JSON object to claude's stdin."""
         assert self._proc and self._proc.stdin
+        logfire.trace(
+            "claude.stdin: {msg_type}",
+            msg_type=obj.get("type", "?"),
+            raw_json=obj,
+        )
         self._proc.stdin.write((json.dumps(obj) + "\n").encode())
         await self._proc.stdin.drain()
 
@@ -953,6 +1026,13 @@ class Claude:
             self._stderr_task.cancel()
             try:
                 await self._stderr_task
+            except asyncio.CancelledError:
+                pass
+
+        if self._stdout_task and not self._stdout_task.done():
+            self._stdout_task.cancel()
+            try:
+                await self._stdout_task
             except asyncio.CancelledError:
                 pass
 
