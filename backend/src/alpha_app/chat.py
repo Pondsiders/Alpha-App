@@ -15,22 +15,30 @@ See KERNEL.md for the full design.
 """
 
 import asyncio
+import json
 import os
 import secrets
 import time
+import uuid
 from collections.abc import Awaitable, Callable
 from enum import Enum
 from typing import Any, AsyncIterator
 
-from alpha_app import Claude, Event, ResultEvent
+import logfire
+
+from alpha_app import (
+    AssistantEvent, Claude, ErrorEvent, Event, ResultEvent,
+    StreamEvent, SystemEvent, UserEvent,
+)
 
 from alpha_app.constants import CLAUDE_MODEL as MODEL, CONTEXT_WINDOW
+from alpha_app.models import AssistantMessage, UserMessage
 
 # Mock mode — swap Claude for MockClaude in tests.
 _MOCK_CLAUDE = os.environ.get("_ALPHA_MOCK_CLAUDE", "").strip() == "1"
 
 
-def _make_claude(**kwargs) -> "Claude":
+def _make_claude(**kwargs) -> Claude:
     """Factory for Claude instances. Returns MockClaude when _ALPHA_MOCK_CLAUDE=1."""
     if _MOCK_CLAUDE:
         from alpha_app.mock_claude import MockClaude
@@ -124,6 +132,15 @@ class Chat:
         self._system_prompt: str = ""  # Stored for resurrection
         self._reap_task: asyncio.Task | None = None
 
+        # -- Smart Chat: the canonical conversation --
+        self.messages: list[UserMessage | AssistantMessage] = []
+        self._current_assistant: AssistantMessage | None = None
+
+        # Broadcast callback — set by whoever owns us (ws.py).
+        # Signature: async (event_dict) -> None
+        # Called for every WebSocket event to broadcast.
+        self.on_broadcast: Callable[[dict], Awaitable[None]] | None = None
+
         # Cached token state — survives subprocess death
         self._cached_token_count: int = 0
         self._cached_context_window: int = CONTEXT_WINDOW
@@ -174,6 +191,55 @@ class Chat:
             mark_seen(chat_id, seen_ids)
 
         return chat
+
+    async def load_messages(self) -> None:
+        """Load messages from app.messages into self.messages.
+
+        Called after from_db() to hydrate the conversation. Messages are
+        the source of truth for "gimme the fucking chat" on reconnect.
+        """
+        from alpha_app.db import get_pool
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT role, data FROM app.messages WHERE chat_id = $1 ORDER BY ordinal",
+                self.id,
+            )
+        self.messages = []
+        for row in rows:
+            data = row["data"] if isinstance(row["data"], dict) else json.loads(row["data"])
+            if row["role"] == "user":
+                self.messages.append(UserMessage(
+                    id=data.get("id", ""),
+                    content=data.get("content", []),
+                    source=data.get("source", "human"),
+                    timestamp=data.get("timestamp"),
+                ))
+            elif row["role"] == "assistant":
+                self.messages.append(AssistantMessage(
+                    id=data.get("id", ""),
+                    parts=data.get("parts", []),
+                    input_tokens=data.get("input_tokens", 0),
+                    output_tokens=data.get("output_tokens", 0),
+                    cache_creation_tokens=data.get("cache_creation_tokens", 0),
+                    cache_read_tokens=data.get("cache_read_tokens", 0),
+                    context_window=data.get("context_window", 0),
+                    model=data.get("model"),
+                    stop_reason=data.get("stop_reason"),
+                    cost_usd=data.get("cost_usd", 0.0),
+                    duration_ms=data.get("duration_ms", 0.0),
+                    inference_count=data.get("inference_count", 0),
+                ))
+
+    def messages_to_wire(self) -> list[dict]:
+        """Serialize messages for the 'gimme the fucking chat' payload."""
+        result = []
+        for msg in self.messages:
+            if isinstance(msg, UserMessage):
+                result.append({"role": "user", "data": msg.to_wire()})
+            elif isinstance(msg, AssistantMessage):
+                result.append({"role": "assistant", "data": msg.to_wire()})
+        return result
 
     # -- Token state properties -----------------------------------------------
 
@@ -290,6 +356,227 @@ class Chat:
         """Set trace context so proxy spans nest under the consumer's trace."""
         if self._claude:
             self._claude.set_trace_context(ctx)
+
+    # -- Smart Chat: event callback -------------------------------------------
+
+    async def _on_claude_event(self, event: Event) -> None:
+        """Handle an event from Claude's continuous stdout drain.
+
+        This replaces stream_chat_events(). Every event from Claude flows
+        through here. The method classifies the event, broadcasts the
+        appropriate WebSocket message, and accumulates the AssistantMessage.
+
+        Called by the Claude._drain_stdout background task.
+        """
+        chat_id = self.id
+
+        async def _broadcast(evt: dict) -> None:
+            if self.on_broadcast:
+                await self.on_broadcast(evt)
+
+        if isinstance(event, StreamEvent):
+            # -- Streaming deltas: broadcast live, accumulate into message --
+            if event.delta_type == "text_delta":
+                text = event.delta_text
+                if text:
+                    await _broadcast({
+                        "type": "text-delta", "chatId": chat_id, "data": text,
+                    })
+                    self._ensure_assistant()
+                    if self._current_assistant.parts and self._current_assistant.parts[-1]["type"] == "text":
+                        self._current_assistant.parts[-1]["text"] += text
+                    else:
+                        self._current_assistant.parts.append({"type": "text", "text": text})
+
+            elif event.delta_type == "thinking_delta":
+                text = event.delta_text
+                if text:
+                    await _broadcast({
+                        "type": "thinking-delta", "chatId": chat_id, "data": text,
+                    })
+                    self._ensure_assistant()
+                    if self._current_assistant.parts and self._current_assistant.parts[-1]["type"] == "thinking":
+                        self._current_assistant.parts[-1]["thinking"] += text
+                    else:
+                        self._current_assistant.parts.append({"type": "thinking", "thinking": text})
+
+            elif event.delta_type == "input_json_delta":
+                partial = event.delta_partial_json
+                if partial:
+                    await _broadcast({
+                        "type": "tool-use-delta",
+                        "chatId": chat_id,
+                        "data": {"index": event.index, "partialJson": partial},
+                    })
+
+            elif event.event_type == "content_block_start" and event.block_type == "tool_use":
+                await _broadcast({
+                    "type": "tool-use-start",
+                    "chatId": chat_id,
+                    "data": {
+                        "toolCallId": event.block_id,
+                        "toolName": event.block_name,
+                        "index": event.index,
+                    },
+                })
+
+        elif isinstance(event, AssistantEvent):
+            # -- Complete content blocks from Claude --
+            for block in event.content:
+                if block.get("type") == "tool_use":
+                    tool_data = {
+                        "toolCallId": block.get("id", ""),
+                        "toolName": block.get("name", ""),
+                        "args": block.get("input", {}),
+                        "argsText": json.dumps(block.get("input", {})),
+                    }
+                    await _broadcast({
+                        "type": "tool-call",
+                        "chatId": chat_id,
+                        "data": tool_data,
+                    })
+                    self._ensure_assistant()
+                    self._current_assistant.parts.append({"type": "tool-call", **tool_data})
+
+        elif isinstance(event, UserEvent):
+            # -- User echoes: tool results and message echoes --
+            for block in event.content:
+                if block.get("type") == "tool_result":
+                    tool_use_id = block.get("tool_use_id", "")
+                    content = block.get("content", "")
+                    if isinstance(content, list):
+                        result_text = "\n".join(
+                            b.get("text", "") for b in content if b.get("type") == "text"
+                        )
+                    else:
+                        result_text = str(content)
+
+                    await _broadcast({
+                        "type": "tool-result",
+                        "chatId": chat_id,
+                        "data": {
+                            "toolCallId": tool_use_id,
+                            "result": result_text,
+                            "isError": block.get("is_error", False),
+                        },
+                    })
+
+                    # Update the tool-call part in the accumulator
+                    if self._current_assistant:
+                        for part in self._current_assistant.parts:
+                            if part.get("type") == "tool-call" and part.get("toolCallId") == tool_use_id:
+                                part["result"] = result_text
+                                part["isError"] = block.get("is_error", False)
+                                break
+
+        elif isinstance(event, ResultEvent):
+            # -- Turn complete: finalize, persist, reset --
+            if event.session_id:
+                self.session_uuid = event.session_id
+
+            # Finalize the assistant message
+            if self._current_assistant and self._current_assistant.parts:
+                msg = self._current_assistant
+                msg.input_tokens = self.total_input_tokens
+                msg.output_tokens = self.output_tokens
+                msg.cache_creation_tokens = self.cache_creation_tokens
+                msg.cache_read_tokens = self.cache_read_tokens
+                msg.context_window = self.context_window
+                msg.model = self.response_model
+                msg.stop_reason = self.stop_reason
+                msg.cost_usd = event.cost_usd
+                msg.duration_ms = event.duration_ms
+                msg.inference_count = event.num_turns
+
+                self.messages.append(msg)
+
+                # Broadcast the coalesced assistant-message
+                await _broadcast({
+                    "type": "assistant-message",
+                    "chatId": chat_id,
+                    "data": msg.to_wire(),
+                })
+
+                # Persist to app.messages
+                try:
+                    from alpha_app.db import store_message, next_message_ordinal, persist_chat
+                    ordinal = await next_message_ordinal(chat_id)
+                    await store_message(chat_id, ordinal, "assistant", msg.to_db())
+                    await persist_chat(self)
+                except Exception as e:
+                    logfire.error("persist failed: {error}", error=str(e))
+
+            self._current_assistant = None
+
+            # State transitions
+            self.state = ConversationState.READY
+            self.suggest = SuggestState.ARMED
+            self._start_reap_timer()
+
+            # Broadcast updated state
+            await _broadcast({
+                "type": "chat-state",
+                "chatId": chat_id,
+                "data": self.wire_state(),
+            })
+
+            # Context truncation detection
+            _TRUNCATION_THRESHOLD = 50_000
+            current_tokens = self.total_input_tokens
+            if (
+                self._cached_token_count > 0
+                and current_tokens > 0
+                and (self._cached_token_count - current_tokens) > _TRUNCATION_THRESHOLD
+            ):
+                from alpha_app.memories.recall import clear_seen
+                clear_seen(chat_id)
+                await _broadcast({
+                    "type": "exception",
+                    "chatId": chat_id,
+                    "data": {
+                        "exceptionType": "context-loss-detected",
+                        "metadata": {
+                            "previousTokens": self._cached_token_count,
+                            "currentTokens": current_tokens,
+                            "tokensLost": self._cached_token_count - current_tokens,
+                        },
+                    },
+                })
+
+            # API error detection
+            api_error = self.pop_api_error()
+            if api_error:
+                await _broadcast({
+                    "type": "exception",
+                    "chatId": chat_id,
+                    "data": {
+                        "exceptionType": "api-error",
+                        "metadata": {
+                            "status": api_error.get("status", 0),
+                            "body": api_error.get("body", "")[:200],
+                        },
+                    },
+                })
+
+        elif isinstance(event, SystemEvent):
+            if event.subtype == "compact_boundary":
+                self._needs_orientation = True
+                self._injected_topics = set()
+                from alpha_app.memories.recall import clear_seen
+                clear_seen(chat_id)
+                logfire.info("compact_boundary detected", chat_id=chat_id)
+
+        elif isinstance(event, ErrorEvent):
+            await _broadcast({
+                "type": "error", "chatId": chat_id, "data": event.message,
+            })
+
+    def _ensure_assistant(self) -> None:
+        """Lazily create the current assistant message accumulator."""
+        if self._current_assistant is None:
+            self._current_assistant = AssistantMessage(
+                id=f"msg-{uuid.uuid4().hex[:12]}"
+            )
 
     # -- Approach light -------------------------------------------------------
 
@@ -438,6 +725,7 @@ class Chat:
                 permission_mode="bypassPermissions",
                 mcp_servers=mcp_servers,
                 disallowed_tools=disallowed_tools,
+                on_event=self._on_claude_event if self.on_broadcast else None,
             )
             await self._claude.start(None)  # Fresh start, no resume
 
@@ -461,8 +749,8 @@ class Chat:
         if self.state != ConversationState.COLD:
             raise RuntimeError(f"Can only resurrect COLD chats, not {self.state.value}")
 
-        uuid = session_uuid or self.session_uuid
-        if not uuid:
+        _uuid = session_uuid or self.session_uuid
+        if not _uuid:
             raise RuntimeError(f"Chat {self.id}: cannot resurrect without a session UUID")
 
         prompt = system_prompt or self._system_prompt
@@ -476,8 +764,9 @@ class Chat:
                 permission_mode="bypassPermissions",
                 mcp_servers=mcp_servers,
                 disallowed_tools=disallowed_tools,
+                on_event=self._on_claude_event if self.on_broadcast else None,
             )
-            await self._claude.start(uuid)
+            await self._claude.start(_uuid)
 
             self.state = ConversationState.READY
             self._crossed_yellow = False
