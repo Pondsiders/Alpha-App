@@ -19,6 +19,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 from dataclasses import dataclass, field
@@ -38,6 +39,128 @@ from mcp.types import (
 )
 
 from .proxy import _Proxy
+
+# -- Subprocess I/O tracing ---------------------------------------------------
+# Two-tier gate for Logfire trace-level logging of Claude stdin/stdout.
+#   ALPHA_TRACE_CLAUDE_STDIO=1        → log all stdin/stdout events
+#   ALPHA_TRACE_CLAUDE_STDIO_STREAMING=1 → also log stream_event deltas (noisy)
+# Both require LOGFIRE_MIN_LEVEL=trace to actually reach the dashboard.
+# Read lazily (not at import time) so load_dotenv has a chance to run first.
+
+
+def _trace_stdio_enabled() -> bool:
+    return os.environ.get("ALPHA_TRACE_CLAUDE_STDIO", "").strip() == "1"
+
+
+def _trace_streaming_enabled() -> bool:
+    return os.environ.get("ALPHA_TRACE_CLAUDE_STDIO_STREAMING", "").strip() == "1"
+
+
+def _preview_content(content: list[dict], max_len: int = 60) -> str:
+    """Extract a short text preview from Messages API content blocks."""
+    texts = []
+    for block in content:
+        if block.get("type") == "text":
+            texts.append(block.get("text", ""))
+        elif block.get("type") == "tool_use":
+            texts.append(f"[tool:{block.get('name', '?')}]")
+        elif block.get("type") == "tool_result":
+            texts.append(f"[result:{block.get('tool_use_id', '?')[:8]}]")
+        elif block.get("type") == "image":
+            texts.append("[image]")
+    combined = " ".join(texts).strip()
+    if len(combined) > max_len:
+        return combined[:max_len] + "…"
+    return combined or "(empty)"
+
+
+def _trace_stdin(raw: dict) -> None:
+    """Log a stdin event with a human-readable span name."""
+    if not _trace_stdio_enabled():
+        return
+
+    msg_type = raw.get("type", "?")
+
+    if msg_type == "user":
+        content = raw.get("message", {}).get("content", [])
+        if isinstance(content, str):
+            content = [{"type": "text", "text": content}]
+        preview = _preview_content(content)
+        logfire.trace("claude.stdin: human {preview}", preview=preview, raw_json=raw)
+
+    elif msg_type == "control_request":
+        subtype = raw.get("request", {}).get("subtype", "?")
+        logfire.trace("claude.stdin: control {subtype}", subtype=subtype, raw_json=raw)
+
+    elif msg_type == "control_response":
+        subtype = raw.get("response", {}).get("subtype", "?")
+        logfire.trace("claude.stdin: response {subtype}", subtype=subtype, raw_json=raw)
+
+    else:
+        logfire.trace("claude.stdin: {msg_type}", msg_type=msg_type, raw_json=raw)
+
+
+def _trace_stdout(raw: dict) -> None:
+    """Log a stdout event with a human-readable span name."""
+    if not _trace_stdio_enabled():
+        return
+
+    msg_type = raw.get("type", "?")
+
+    if msg_type == "stream_event":
+        if not _trace_streaming_enabled():
+            return
+        inner = raw.get("event", {})
+        event_type = inner.get("type", "?")
+        delta_type = inner.get("delta", {}).get("type", "")
+        text = inner.get("delta", {}).get("text", "") or inner.get("delta", {}).get("thinking", "")
+        preview = (text[:40] + "…") if len(text) > 40 else text
+        logfire.trace(
+            "claude.stdout: stream {event_type} {delta_type} {preview}",
+            event_type=event_type, delta_type=delta_type, preview=preview,
+            raw_json=raw,
+        )
+
+    elif msg_type == "assistant":
+        content = raw.get("message", {}).get("content", [])
+        preview = _preview_content(content)
+        logfire.trace("claude.stdout: assistant {preview}", preview=preview, raw_json=raw)
+
+    elif msg_type == "user":
+        content = raw.get("message", {}).get("content", [])
+        if isinstance(content, str):
+            content = [{"type": "text", "text": content}]
+        preview = _preview_content(content)
+        logfire.trace("claude.stdout: user-echo {preview}", preview=preview, raw_json=raw)
+
+    elif msg_type == "result":
+        session = raw.get("session_id", "?")[:8]
+        cost = raw.get("total_cost_usd", 0)
+        turns = raw.get("num_turns", 0)
+        is_error = raw.get("is_error", False)
+        logfire.trace(
+            "claude.stdout: result session={session} cost=${cost:.4f} turns={turns} error={is_error}",
+            session=session, cost=cost, turns=turns, is_error=is_error,
+            raw_json=raw,
+        )
+
+    elif msg_type == "system":
+        subtype = raw.get("subtype", "?")
+        logfire.trace("claude.stdout: system {subtype}", subtype=subtype, raw_json=raw)
+
+    elif msg_type == "control_request":
+        subtype = raw.get("request", {}).get("subtype", "?")
+        tool = raw.get("request", {}).get("tool_name", "")
+        label = f"{subtype}:{tool}" if tool else subtype
+        logfire.trace("claude.stdout: control {label}", label=label, raw_json=raw)
+
+    elif msg_type == "control_response":
+        # Init response — show model name
+        model = raw.get("response", {}).get("model", "?")
+        logfire.trace("claude.stdout: init model={model}", model=model, raw_json=raw)
+
+    else:
+        logfire.trace("claude.stdout: {msg_type}", msg_type=msg_type, raw_json=raw)
 
 
 def _bundled_claude_path() -> str:
@@ -304,6 +427,7 @@ class Claude:
         self._proxy: _Proxy | None = None
         self._session_id: str | None = None
         self._system_prompt_file: Path | None = None  # Temp file for large system prompts
+        self._trace_context: dict | None = None  # Turn span context for stdout traces
 
     @property
     def state(self) -> ClaudeState:
@@ -382,10 +506,12 @@ class Claude:
             self._proxy.reset_output_tokens()
 
     def set_trace_context(self, ctx: dict | None) -> None:
-        """Set trace context so proxy spans nest under the consumer's trace.
+        """Set trace context so proxy and stdout traces nest under the turn span.
 
         Call with logfire.get_context() before each turn.
+        Clear (call with None) when the turn span closes.
         """
+        self._trace_context = ctx
         if self._proxy:
             self._proxy.set_trace_context(ctx)
 
@@ -460,12 +586,16 @@ class Claude:
 
                 event = self._parse_event(raw)
 
-                # Trace every stdout event for Logfire observability.
-                logfire.trace(
-                    "claude.stdout: {msg_type}",
-                    msg_type=raw.get("type", "?"),
-                    raw_json=raw,
+                # Attach the turn's trace context so stdout traces nest
+                # under alpha.turn in Logfire. Between turns, _trace_context
+                # is None and traces float as top-level events (correct).
+                ctx = (
+                    logfire.attach_context(self._trace_context)
+                    if self._trace_context
+                    else contextlib.nullcontext()
                 )
+                with ctx:
+                    _trace_stdout(raw)
 
                 # Control requests are internal — handle and don't emit.
                 if isinstance(event, _ControlRequestEvent):
@@ -512,12 +642,7 @@ class Claude:
                 return
 
             event = self._parse_event(raw)
-
-            logfire.trace(
-                "claude.stdout: {msg_type}",
-                msg_type=raw.get("type", "?"),
-                raw_json=raw,
-            )
+            _trace_stdout(raw)
 
             if isinstance(event, _ControlRequestEvent):
                 await self._handle_control_request(event)
@@ -977,11 +1102,7 @@ class Claude:
     async def _send_json(self, obj: dict) -> None:
         """Send a JSON object to claude's stdin."""
         assert self._proc and self._proc.stdin
-        logfire.trace(
-            "claude.stdin: {msg_type}",
-            msg_type=obj.get("type", "?"),
-            raw_json=obj,
-        )
+        _trace_stdin(obj)
         self._proc.stdin.write((json.dumps(obj) + "\n").encode())
         await self._proc.stdin.drain()
 

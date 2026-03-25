@@ -523,6 +523,9 @@ class Chat:
                 self._turn_span.__exit__(None, None, None)
                 self._turn_span = None
             self._output_parts = []
+            # Clear trace context so stdout traces between turns don't
+            # attach to the now-closed span.
+            self.set_trace_context(None)
 
             # State transitions
             self.state = ConversationState.READY
