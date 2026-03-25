@@ -13,6 +13,22 @@ from typing import Any
 import asyncpg
 
 
+def _decode_metadata(raw: str) -> dict:
+    """Decode metadata from Postgres, handling double-encoded JSONB.
+
+    Some memories have metadata stored as a JSON string inside JSONB
+    (e.g., '"{\\\"key\\\": ...}"' instead of '{"key": ...}').
+    json.loads on those returns a str, not a dict. Decode again if needed.
+    """
+    meta = json.loads(raw)
+    if isinstance(meta, str):
+        try:
+            meta = json.loads(meta)
+        except (json.JSONDecodeError, TypeError):
+            meta = {}
+    return meta if isinstance(meta, dict) else {}
+
+
 def _escape_pg_regex(text: str) -> str:
     """Escape special characters for safe use in Postgres regex (~* operator).
 
@@ -237,7 +253,7 @@ async def search_memories(
             {
                 "id": row["id"],
                 "content": row["content"],
-                "metadata": json.loads(row["metadata"]),
+                "metadata": _decode_metadata(row["metadata"]),
                 "score": float(row["score"]),
             }
             for row in rows
@@ -317,7 +333,7 @@ async def search_memories_by_embedding(
             {
                 "id": row["id"],
                 "content": row["content"],
-                "metadata": json.loads(row["metadata"]),
+                "metadata": _decode_metadata(row["metadata"]),
                 "score": float(row["score"]),
             }
             for row in rows
@@ -393,7 +409,7 @@ async def search_memories_by_name(
             {
                 "id": row["id"],
                 "content": row["content"],
-                "metadata": json.loads(row["metadata"]),
+                "metadata": _decode_metadata(row["metadata"]),
                 "score": 1.0,  # Name matches are binary — found or not
             }
             for row in rows
@@ -426,7 +442,7 @@ async def get_recent_memories(
             {
                 "id": row["id"],
                 "content": row["content"],
-                "metadata": json.loads(row["metadata"]),
+                "metadata": _decode_metadata(row["metadata"]),
             }
             for row in rows
         ]
@@ -450,7 +466,7 @@ async def get_memory(memory_id: int) -> dict[str, Any] | None:
         return {
             "id": row["id"],
             "content": row["content"],
-            "metadata": json.loads(row["metadata"]),
+            "metadata": _decode_metadata(row["metadata"]),
         }
 
 
