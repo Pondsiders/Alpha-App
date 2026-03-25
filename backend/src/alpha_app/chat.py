@@ -136,6 +136,7 @@ class Chat:
         self.messages: list[UserMessage | AssistantMessage] = []
         self._current_assistant: AssistantMessage | None = None
         self._turn_span = None  # Logfire span — opened by turn handler, closed by callback
+        self._output_parts: list[dict] = []  # Raw Messages API blocks for gen_ai.output.messages
 
         # Broadcast callback — set by whoever owns us (ws.py).
         # Signature: async (event_dict) -> None
@@ -423,6 +424,8 @@ class Chat:
 
         elif isinstance(event, AssistantEvent):
             # -- Complete content blocks from Claude --
+            # Accumulate raw Messages API blocks for Logfire gen_ai.output.messages
+            self._output_parts.extend(event.content)
             for block in event.content:
                 if block.get("type") == "tool_use":
                     tool_data = {
@@ -512,20 +515,14 @@ class Chat:
             self._current_assistant = None
 
             if self._turn_span:
-                if finalized_msg and finalized_msg.parts:
-                    output_parts = [
-                        {"role": "assistant", "parts": [p]}
-                        for p in finalized_msg.parts
-                        if p.get("type") == "text"
-                    ]
-                    self._turn_span.set_attribute("gen_ai.output.messages", output_parts)
-                    self._turn_span.set_attribute("gen_ai.response.model", finalized_msg.model or "")
-                    self._turn_span.set_attribute("gen_ai.usage.input_tokens", finalized_msg.input_tokens)
-                    self._turn_span.set_attribute("gen_ai.usage.output_tokens", finalized_msg.output_tokens)
-                    self._turn_span.set_attribute("gen_ai.usage.cache_read_input_tokens", finalized_msg.cache_read_tokens)
-                    self._turn_span.set_attribute("gen_ai.usage.cache_creation_input_tokens", finalized_msg.cache_creation_tokens)
+                if finalized_msg:
+                    from alpha_app.routes.streaming import _set_turn_span_response
+                    _set_turn_span_response(
+                        self._turn_span, finalized_msg, self, self._output_parts
+                    )
                 self._turn_span.__exit__(None, None, None)
                 self._turn_span = None
+            self._output_parts = []
 
             # State transitions
             self.state = ConversationState.READY
