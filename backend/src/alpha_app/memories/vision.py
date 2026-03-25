@@ -192,7 +192,7 @@ async def _store_image_memory(
     content_hash: str,
 ) -> int | None:
     """Store a new image memory in Cortex."""
-    import json
+    from datetime import datetime, timezone
 
     with logfire.span("vision.store_memory"):
         vec_str = "[" + ",".join(str(x) for x in embedding) + "]"
@@ -201,6 +201,7 @@ async def _store_image_memory(
         # here would cause double-encoding: json.dumps(json.dumps(dict))
         # producing a JSONB string instead of a JSONB object.
         metadata = {
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "garage_key": garage_key,
             "source": source,
             "content_hash": content_hash,

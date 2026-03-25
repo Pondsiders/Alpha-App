@@ -324,6 +324,8 @@ async def _search_by_names_with_idf(
 
 def _format_relative_time(created_at: str) -> str:
     """Format a memory's timestamp as relative time (PSO-8601)."""
+    if not created_at:
+        return "unknown"
     dt = pendulum.parse(created_at).in_timezone("America/Los_Angeles")
     now = pendulum.now("America/Los_Angeles")
 
