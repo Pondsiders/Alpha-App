@@ -586,9 +586,10 @@ class Claude:
 
                 event = self._parse_event(raw)
 
-                # Attach the turn's trace context so stdout traces nest
-                # under alpha.turn in Logfire. Between turns, _trace_context
-                # is None and traces float as top-level events (correct).
+                # Attach the turn's trace context so ALL traces in this
+                # iteration (stdout trace, broadcast traces from the callback,
+                # etc.) nest under alpha.turn in Logfire. Between turns,
+                # _trace_context is None and traces float as top-level (correct).
                 ctx = (
                     logfire.attach_context(self._trace_context)
                     if self._trace_context
@@ -597,20 +598,20 @@ class Claude:
                 with ctx:
                     _trace_stdout(raw)
 
-                # Control requests are internal — handle and don't emit.
-                if isinstance(event, _ControlRequestEvent):
-                    await self._handle_control_request(event)
-                    continue
+                    # Control requests are internal — handle and don't emit.
+                    if isinstance(event, _ControlRequestEvent):
+                        await self._handle_control_request(event)
+                        continue
 
-                # Capture session ID from first ResultEvent.
-                if isinstance(event, ResultEvent) and not self._session_id:
-                    if event.session_id:
-                        self._session_id = event.session_id
+                    # Capture session ID from first ResultEvent.
+                    if isinstance(event, ResultEvent) and not self._session_id:
+                        if event.session_id:
+                            self._session_id = event.session_id
 
-                # Fire the callback — this is where events reach Chat and
-                # ultimately the WebSocket handler.
-                if self._on_event:
-                    await self._on_event(event)
+                    # Fire the callback — this is where events reach Chat and
+                    # ultimately the WebSocket handler.
+                    if self._on_event:
+                        await self._on_event(event)
 
         except asyncio.CancelledError:
             return

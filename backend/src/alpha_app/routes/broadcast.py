@@ -5,9 +5,15 @@ flows through here. Dead connections are silently pruned.
 """
 
 import asyncio
+import os
 
 import logfire
 from fastapi import WebSocket
+
+
+def _trace_broadcast_enabled() -> bool:
+    """Lazy check — read at call time so load_dotenv has run."""
+    return os.environ.get("ALPHA_TRACE_WS_BROADCAST", "").strip() == "1"
 
 # Per-chat monotonic sequence counters.
 # The asyncio event loop is single-threaded, so incrementing here (before any
@@ -57,24 +63,41 @@ async def broadcast(
     if not targets:
         return
 
-    # Trace every outbound WebSocket event for timing analysis.
-    # Uses logfire.debug to avoid noise at info level.
-    event_type = event.get("type", "?")
-    chat_id = event.get("chatId", "")
-    preview = ""
-    if event_type in ("text-delta", "thinking-delta"):
-        data = event.get("data", "")
-        preview = repr(data[:40]) if data else ""
-    elif event_type in ("tool-use-start", "tool-use-delta", "tool-call"):
-        data = event.get("data", {})
-        if isinstance(data, dict):
-            preview = data.get("toolName", "") or data.get("partialJson", "")[:40]
-    logfire.trace(
-        "ws.broadcast: {event_type}",
-        event_type=event_type,
-        chat_id=chat_id,
-        preview=preview,
-    )
+    # Trace outbound WebSocket events — gated behind ALPHA_TRACE_WS_BROADCAST.
+    if _trace_broadcast_enabled():
+        event_type = event.get("type", "?")
+        chat_id = event.get("chatId", "")
+        preview = ""
+        if event_type in ("text-delta", "thinking-delta"):
+            data = event.get("data", "")
+            preview = repr(data[:40]) if data else ""
+        elif event_type in ("tool-use-start", "tool-call"):
+            data = event.get("data", {})
+            if isinstance(data, dict):
+                preview = data.get("toolName", "")
+        elif event_type == "tool-result":
+            data = event.get("data", {})
+            if isinstance(data, dict):
+                preview = data.get("toolCallId", "")[:12]
+        elif event_type == "chat-state":
+            data = event.get("data", {})
+            if isinstance(data, dict):
+                preview = data.get("state", "")
+        elif event_type == "assistant-message":
+            data = event.get("data", {})
+            if isinstance(data, dict):
+                parts = data.get("parts", [])
+                for p in parts:
+                    if p.get("type") == "text":
+                        text = p.get("text", "")
+                        preview = (text[:50] + "…") if len(text) > 50 else text
+                        break
+        logfire.trace(
+            "ws.broadcast: {event_type} {preview}",
+            event_type=event_type,
+            preview=preview,
+            chat_id=chat_id,
+        )
 
     results = await asyncio.gather(
         *(c.send_json(event) for c in targets),
