@@ -376,6 +376,38 @@ class Chat:
             if self.on_broadcast:
                 await self.on_broadcast(evt)
 
+        # -- Detect spontaneous responses (background task, system-initiated) --
+        # If Claude starts producing content while we're READY (not RESPONDING),
+        # it means Claude initiated a response without a user message.
+        # Transition to RESPONDING and broadcast so the frontend goes modal.
+        if (
+            isinstance(event, (StreamEvent, AssistantEvent))
+            and self.state == ConversationState.READY
+        ):
+            self.state = ConversationState.RESPONDING
+            self._cancel_reap_timer()
+
+            # Open a lightweight span for observability
+            if not self._turn_span:
+                span = logfire.span(
+                    "alpha.system-turn: spontaneous response",
+                    **{
+                        "gen_ai.operation.name": "chat",
+                        "gen_ai.system": "anthropic",
+                        "chat.id": chat_id,
+                        "chat.trigger": "system",
+                    },
+                )
+                span.__enter__()
+                self._turn_span = span
+                self.set_trace_context(logfire.get_context())
+
+            await _broadcast({
+                "type": "chat-state",
+                "chatId": chat_id,
+                "data": self.wire_state(),
+            })
+
         if isinstance(event, StreamEvent):
             # -- Streaming deltas: broadcast live, accumulate into message --
             if event.delta_type == "text_delta":

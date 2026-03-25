@@ -208,9 +208,13 @@ class TestSmartChatCallback:
         assert chat.state == ConversationState.READY
         assert chat.suggest == SuggestState.ARMED
 
-        # Should have broadcast assistant-message and chat-state
+        # Should have broadcast assistant-message and chat-state.
+        # Two chat-state broadcasts: spontaneous response detection (RESPONDING)
+        # and result finalization (READY).
         assert len(broadcasts.by_type("assistant-message")) == 1
-        assert len(broadcasts.by_type("chat-state")) == 1
+        assert len(broadcasts.by_type("chat-state")) == 2
+        assert broadcasts.by_type("chat-state")[0]["data"]["state"] == "busy"  # RESPONDING
+        assert broadcasts.by_type("chat-state")[1]["data"]["state"] == "idle"  # READY
 
     async def test_result_event_captures_session_uuid(self, chat, broadcasts):
         await chat._on_claude_event(_text_delta("Hi"))
