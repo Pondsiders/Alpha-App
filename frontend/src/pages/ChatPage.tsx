@@ -505,10 +505,25 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
     sendRef.current({ type: "buzz", chatId });
   }, [addAssistantPlaceholder, assistantIdMapRef]);
 
-  const adapters = useMemo(
-    () => ({ attachments: new SimpleImageAttachmentAdapter() }),
-    []
-  );
+  // Custom adapter that gives each pasted image a unique ID.
+  // SimpleImageAttachmentAdapter uses file.name as the ID, but clipboard
+  // pastes always produce the same filename (e.g. "image.png"), causing
+  // the second paste to overwrite the first. Unique IDs fix #41.
+  const adapters = useMemo(() => {
+    const base = new SimpleImageAttachmentAdapter();
+    let counter = 0;
+    return {
+      attachments: {
+        accept: base.accept,
+        async add(state: { file: File }) {
+          const result = await base.add(state);
+          return { ...result, id: `paste-${Date.now()}-${counter++}` };
+        },
+        send: base.send.bind(base),
+        remove: base.remove.bind(base),
+      },
+    };
+  }, []);
 
   const runtime = useExternalStoreRuntime({
     messages,

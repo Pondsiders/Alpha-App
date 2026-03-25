@@ -35,19 +35,21 @@ const ComposerAttachment: FC = () => {
   }
 
   return (
-    <AttachmentPrimitive.Root className="relative w-16 h-16 rounded-lg overflow-hidden bg-composer border border-border">
-      {imageUrl ? (
-        <img
-          src={imageUrl}
-          alt={attachment.name}
-          className="w-full h-full object-cover"
-        />
-      ) : (
-        <div className="w-full h-full flex items-center justify-center text-muted">
-          <ImageIcon size={24} />
-        </div>
-      )}
-      <AttachmentPrimitive.Remove className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-primary border-none flex items-center justify-center cursor-pointer text-white">
+    <AttachmentPrimitive.Root className="relative w-16 h-16">
+      <div className="w-full h-full rounded-lg overflow-hidden bg-composer border border-border">
+        {imageUrl ? (
+          <img
+            src={imageUrl}
+            alt={attachment.name}
+            className="w-full h-full object-cover"
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center text-muted">
+            <ImageIcon size={24} />
+          </div>
+        )}
+      </div>
+      <AttachmentPrimitive.Remove className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-primary border-none flex items-center justify-center cursor-pointer text-white z-10">
         <X size={12} />
       </AttachmentPrimitive.Remove>
     </AttachmentPrimitive.Root>
@@ -60,9 +62,11 @@ const ComposerAttachment: FC = () => {
 
 export const ComposerAttachments: FC = () => {
   return (
-    <ComposerPrimitive.Attachments
-      components={{ Attachment: ComposerAttachment }}
-    />
+    <div className="flex flex-row flex-wrap gap-2">
+      <ComposerPrimitive.Attachments
+        components={{ Attachment: ComposerAttachment }}
+      />
+    </div>
   );
 };
 
