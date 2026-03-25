@@ -207,6 +207,30 @@ function processReplayBuffer(events: ServerEvent[]): ReplayResult {
         currentAssistant = null;
         break;
       }
+      case "system-message": {
+        // System messages (task notifications, etc.) — own message in the thread.
+        const sysData = event.data as {
+          text?: string;
+          source?: string;
+          taskId?: string;
+          status?: string;
+        };
+        messages.push({
+          id: generateId(),
+          role: "system",
+          content: [{
+            type: "system-notification" as const,
+            text: sysData.text || "System event",
+            source: sysData.source || "system",
+            taskId: sysData.taskId,
+            status: sysData.status,
+          }],
+          createdAt: new Date(),
+        });
+        // Reset assistant accumulator — next content starts a new message.
+        currentAssistant = null;
+        break;
+      }
     }
   }
 
@@ -248,6 +272,7 @@ function Layout() {
     reconcileUserMessage: useWorkshopStore.getState().reconcileUserMessage,
     updateUserMessageById: useWorkshopStore.getState().updateUserMessageById,
     setReplaying: useWorkshopStore.getState().setReplaying,
+    addSystemMessage: useWorkshopStore.getState().addSystemMessage,
   });
   // Keep the ref fresh (store actions are stable with immer, but belt & suspenders)
   actionsRef.current = {
@@ -270,6 +295,7 @@ function Layout() {
     reconcileUserMessage: useWorkshopStore.getState().reconcileUserMessage,
     updateUserMessageById: useWorkshopStore.getState().updateUserMessageById,
     setReplaying: useWorkshopStore.getState().setReplaying,
+    addSystemMessage: useWorkshopStore.getState().addSystemMessage,
   };
 
   // Shared assistant ID map — Layout reads, ChatPage writes
@@ -559,6 +585,24 @@ function Layout() {
         if (!eChatId) break;
         const alData = event.data as { level: "yellow" | "red"; text: string };
         actions.addApproachLight(eChatId, alData.level, alData.text);
+        break;
+      }
+
+      case "system-message": {
+        if (!eChatId) break;
+        const sysData = event.data as {
+          text: string;
+          source: string;
+          taskId?: string;
+          status?: string;
+        };
+        actions.addSystemMessage(eChatId, sysData.text, sysData.source, {
+          ...(sysData.taskId ? { taskId: sysData.taskId } : {}),
+          ...(sysData.status ? { status: sysData.status } : {}),
+        });
+        // Clear assistant accumulator — the next text-delta starts a new
+        // assistant message after this system message boundary.
+        delete assistantIdMapRef.current[eChatId];
         break;
       }
 

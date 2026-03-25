@@ -35,7 +35,14 @@ export type ToolCallPart = {
   /** True while input_json_delta events are still arriving. */
   streaming?: boolean;
 };
-export type ContentPart = TextPart | ThinkingPart | ImagePart | ToolCallPart;
+export type SystemNotificationPart = {
+  type: "system-notification";
+  text: string;
+  source: string;   // "task_notification", "post_turn", etc.
+  taskId?: string;
+  status?: string;
+};
+export type ContentPart = TextPart | ThinkingPart | ImagePart | ToolCallPart | SystemNotificationPart;
 
 /** Who initiated this message. Undefined = human (the default). */
 export type MessageSource = "human" | "intro" | "infrastructure";
@@ -57,7 +64,7 @@ export interface CapsuleData {
 
 export interface Message {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "system";
   content: ContentPart[];
   createdAt: Date;
   source?: MessageSource;
@@ -148,6 +155,9 @@ interface WorkshopActions {
     chatId?: string,
   ) => void;
   setMessages: (messages: readonly Message[] | Message[]) => void;
+
+  // System messages (task notifications, post-turn, etc.)
+  addSystemMessage: (chatId: string, text: string, source: string, extra?: Record<string, string>) => void;
 
   // Remote messages (echoed from other connections via the switch)
   addRemoteUserMessage: (chatId: string, content: ContentPart[], serverId?: string) => string;
@@ -531,6 +541,28 @@ export const useWorkshopStore = create<WorkshopStore>()(
         }
       });
       return id;
+    },
+
+    addSystemMessage: (chatId, text, source, extra) => {
+      set((state) => {
+        const msg: Message = {
+          id: generateId(),
+          role: "system" as const,
+          content: [{
+            type: "system-notification",
+            text,
+            source,
+            ...(extra || {}),
+          } as SystemNotificationPart],
+          createdAt: new Date(),
+        };
+        if (chatId === state.activeChatId) {
+          state.messages.push(msg);
+        } else {
+          if (!state.messageCache[chatId]) state.messageCache[chatId] = [];
+          state.messageCache[chatId].push(msg);
+        }
+      });
     },
 
     // -- Reconciliation -------------------------------------------------------

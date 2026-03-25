@@ -34,7 +34,8 @@ export interface ServerEvent {
     | "done"
     | "interrupted"
     | "replay-done"
-    | "chat-data";
+    | "chat-data"
+    | "system-message";
   chatId?: string;
   data?: unknown;
 }

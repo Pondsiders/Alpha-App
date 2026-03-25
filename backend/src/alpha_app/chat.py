@@ -630,6 +630,21 @@ class Chat:
                 clear_seen(chat_id)
                 logfire.info("compact_boundary detected", chat_id=chat_id)
 
+            elif event.subtype == "task_notification":
+                summary = event.raw.get("summary", "Background task completed")
+                task_id = event.raw.get("task_id", "")
+                status = event.raw.get("status", "completed")
+                await _broadcast({
+                    "type": "system-message",
+                    "chatId": chat_id,
+                    "data": {
+                        "text": summary,
+                        "source": "task_notification",
+                        "taskId": task_id,
+                        "status": status,
+                    },
+                })
+
         elif isinstance(event, ErrorEvent):
             await _broadcast({
                 "type": "error", "chatId": chat_id, "data": event.message,

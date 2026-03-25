@@ -23,6 +23,7 @@ import { GrepResult } from "../components/tools/GrepResult";
 import { TodoResult } from "../components/tools/TodoResult";
 import { animated } from "../components/AnimatedTool";
 import { ToolGroup } from "../components/ToolGroup";
+import { SystemMessage as SystemMessageComponent } from "../components/SystemMessage";
 import { TopicBar } from "../components/TopicBar";
 import {
   ComposerAttachments,
@@ -253,6 +254,24 @@ const KNOWN_USER_PARTS = new Set(["text", "image", "file", "audio"]);
 const KNOWN_ASSISTANT_PARTS = new Set(["text", "reasoning", "tool-call", "file", "audio"]);
 
 const convertMessage = (message: Message): ThreadMessageLike => {
+  // System messages — convert to text-only (ThreadSystemMessage constraint).
+  if (message.role === "system") {
+    const text = message.content
+      .map((part) => {
+        if (part.type === "system-notification") return part.text;
+        if (part.type === "text") return part.text;
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n");
+    return {
+      id: message.id,
+      role: "system" as const,
+      content: [{ type: "text" as const, text }],
+      createdAt: message.createdAt,
+    };
+  }
+
   const knownParts = message.role === "user" ? KNOWN_USER_PARTS : KNOWN_ASSISTANT_PARTS;
 
   const content = message.content
@@ -274,7 +293,8 @@ const convertMessage = (message: Message): ThreadMessageLike => {
   return {
     id: message.id,
     role: message.role,
-    content,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    content: content as any,
     createdAt: message.createdAt,
   };
 };
@@ -548,6 +568,7 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
                   components={{
                     UserMessage,
                     AssistantMessage,
+                    SystemMessage: SystemMessageComponent,
                   }}
                 />
 
