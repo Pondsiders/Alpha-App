@@ -63,7 +63,9 @@ async def handle_send(
     chat_id = chat.id
     prompt_preview = build_prompt_preview(content)
 
-    with logfire.span(
+    # Open the turn span manually — it closes in the callback on ResultEvent.
+    # This span lives across the full turn: user input → Claude response.
+    span = logfire.span(
         "alpha.turn: {prompt_preview}",
         **{
             "prompt_preview": prompt_preview,
@@ -80,8 +82,11 @@ async def handle_send(
             "chat.id": chat_id,
             "session_id": chat.session_uuid or "",
         },
-    ) as span:
-        try:
+    )
+    span.__enter__()
+    chat._turn_span = span
+
+    try:
             # -- Resurrect if COLD ----------------------------------------
             if chat.state == ConversationState.COLD:
                 def _clear() -> int:
@@ -176,12 +181,19 @@ async def handle_send(
             # Response flows through Chat._on_claude_event → on_broadcast.
             # We don't wait for it here. That's the whole point.
 
-        except asyncio.CancelledError:
+    except asyncio.CancelledError:
+        # Close the span on cancellation
+        if chat._turn_span:
+            chat._turn_span.__exit__(None, None, None)
+            chat._turn_span = None
+    except Exception as e:
+        logfire.error("turn failed: {error}", error=str(e))
+        # Close the span with error info
+        if chat._turn_span:
+            chat._turn_span.set_attribute("error.type", type(e).__name__)
+            chat._turn_span.__exit__(type(e), e, e.__traceback__)
+            chat._turn_span = None
+        try:
+            await broadcast(connections, {"type": "error", "chatId": chat_id, "data": str(e)})
+        except Exception:
             pass
-        except Exception as e:
-            span.set_attribute("error.type", type(e).__name__)
-            logfire.error("turn failed: {error}", error=str(e))
-            try:
-                await broadcast(connections, {"type": "error", "chatId": chat_id, "data": str(e)})
-            except Exception:
-                pass

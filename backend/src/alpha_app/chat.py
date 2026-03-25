@@ -135,6 +135,7 @@ class Chat:
         # -- Smart Chat: the canonical conversation --
         self.messages: list[UserMessage | AssistantMessage] = []
         self._current_assistant: AssistantMessage | None = None
+        self._turn_span = None  # Logfire span — opened by turn handler, closed by callback
 
         # Broadcast callback — set by whoever owns us (ws.py).
         # Signature: async (event_dict) -> None
@@ -506,12 +507,43 @@ class Chat:
                 except Exception as e:
                     logfire.error("persist failed: {error}", error=str(e))
 
+            # Close the turn span with response attributes
+            finalized_msg = self._current_assistant  # May be None if empty result
             self._current_assistant = None
+
+            if self._turn_span:
+                if finalized_msg and finalized_msg.parts:
+                    output_parts = [
+                        {"role": "assistant", "parts": [p]}
+                        for p in finalized_msg.parts
+                        if p.get("type") == "text"
+                    ]
+                    self._turn_span.set_attribute("gen_ai.output.messages", output_parts)
+                    self._turn_span.set_attribute("gen_ai.response.model", finalized_msg.model or "")
+                    self._turn_span.set_attribute("gen_ai.usage.input_tokens", finalized_msg.input_tokens)
+                    self._turn_span.set_attribute("gen_ai.usage.output_tokens", finalized_msg.output_tokens)
+                    self._turn_span.set_attribute("gen_ai.usage.cache_read_input_tokens", finalized_msg.cache_read_tokens)
+                    self._turn_span.set_attribute("gen_ai.usage.cache_creation_input_tokens", finalized_msg.cache_creation_tokens)
+                self._turn_span.__exit__(None, None, None)
+                self._turn_span = None
 
             # State transitions
             self.state = ConversationState.READY
             self.suggest = SuggestState.ARMED
             self._start_reap_timer()
+
+            # Fire suggest in the dead time after the turn completes
+            if finalized_msg and finalized_msg.text.strip():
+                # Extract user text from the last UserMessage
+                user_text = ""
+                for m in reversed(self.messages):
+                    if isinstance(m, UserMessage):
+                        user_text = " ".join(
+                            b.get("text", "") for b in m.content if b.get("type") == "text"
+                        )
+                        break
+                if user_text.strip():
+                    asyncio.create_task(self._run_suggest(user_text, finalized_msg.text))
 
             # Broadcast updated state
             await _broadcast({
@@ -577,6 +609,26 @@ class Chat:
             self._current_assistant = AssistantMessage(
                 id=f"msg-{uuid.uuid4().hex[:12]}"
             )
+
+    async def _run_suggest(self, user_text: str, assistant_text: str) -> None:
+        """Fire-and-forget suggest pipeline. Populates self._pending_intro."""
+        from alpha_app.suggest import suggest, format_intro_block
+        self.suggest = SuggestState.FIRING
+        try:
+            memorables = await suggest(user_text, assistant_text)
+            block = format_intro_block(memorables)
+            if block:
+                self._pending_intro = block
+                logfire.info(
+                    "suggest: {count} memorables",
+                    count=len(memorables),
+                    memorables=memorables,
+                    chat_id=self.id,
+                )
+        except Exception:
+            pass
+        finally:
+            self.suggest = SuggestState.DISARMED
 
     # -- Approach light -------------------------------------------------------
 
