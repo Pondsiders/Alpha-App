@@ -42,7 +42,6 @@ from alpha_app.chat import Chat, ConversationState
 from alpha_app.db import load_chat, replay_events
 from alpha_app.routes.broadcast import broadcast
 from alpha_app.routes.handlers import handle_create_chat, handle_interrupt, handle_list_chats
-from alpha_app.routes.turn import handle_interjection, handle_new_turn
 from alpha_app.routes.turn_smart import handle_send as handle_send_smart
 from alpha_app.strings import BUZZ_NARRATION
 

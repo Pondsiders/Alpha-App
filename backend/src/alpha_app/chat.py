@@ -516,8 +516,8 @@ class Chat:
 
             if self._turn_span:
                 if finalized_msg:
-                    from alpha_app.routes.streaming import _set_turn_span_response
-                    _set_turn_span_response(
+                    from alpha_app.routes.spans import set_turn_span_response
+                    set_turn_span_response(
                         self._turn_span, finalized_msg, self, self._output_parts
                     )
                 self._turn_span.__exit__(None, None, None)
