@@ -506,11 +506,9 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
   const runtime = useExternalStoreRuntime({
     messages,
     setMessages,
-    // Always false — we manage duplex ourselves. Setting true would block
-    // ComposerPrimitive.Send, but we need sends to work mid-stream for
-    // interjections. Our own `isRunning` (derived from chat state) controls
-    // the stop button and interjection logic in onNew.
-    isRunning: false,
+    // Modal: when running, assistant-ui disables Send and shows Stop.
+    // No interjections — messages queue in Claude Code.
+    isRunning,
     onNew,
     onCancel,
     convertMessage,
