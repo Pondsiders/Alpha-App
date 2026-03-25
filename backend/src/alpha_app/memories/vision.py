@@ -196,18 +196,22 @@ async def _store_image_memory(
 
     with logfire.span("vision.store_memory"):
         vec_str = "[" + ",".join(str(x) for x in embedding) + "]"
-        metadata = json.dumps({
+        # Pass the dict directly — the pool's JSONB codec (registered in
+        # db.py._init_connection) calls json.dumps for us. Pre-serializing
+        # here would cause double-encoding: json.dumps(json.dumps(dict))
+        # producing a JSONB string instead of a JSONB object.
+        metadata = {
             "garage_key": garage_key,
             "source": source,
             "content_hash": content_hash,
             "type": "image",
-        })
+        }
 
         try:
             row = await pool.fetchrow(
                 """
                 INSERT INTO cortex.memories (content, embedding_qwen, metadata)
-                VALUES ($1, $2::vector, $3::jsonb)
+                VALUES ($1, $2::vector, $3)
                 RETURNING id
                 """,
                 caption,
