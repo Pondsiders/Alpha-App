@@ -1,19 +1,20 @@
 /**
- * AppSidebar — Chat list sidebar with indicator lights.
+ * AppSidebar — Flat chat list with week dividers.
  *
- * Phase 2: Driven by Zustand store (chats map populated via WebSocket).
- * Indicator dots: green=IDLE, amber-pulse=BUSY/STARTING, gray=DEAD.
- * "New Chat" navigates to /chat which triggers auto-create in Layout.
+ * Each chat shows its creation timestamp in PSO-8601 format.
+ * Divided by week: "This Week", "Last Week", then date ranges.
+ * New Chat button: small amber roundrect with + icon, left-aligned.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Plus } from "lucide-react";
 import {
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from "@/components/ui/hover-card";
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 import {
   Sidebar,
@@ -23,82 +24,78 @@ import {
   SidebarMenuItem,
   SidebarMenuButton,
   SidebarGroup,
+  SidebarGroupLabel,
   SidebarGroupContent,
   SidebarRail,
   useSidebar,
 } from "@/components/ui/sidebar";
 
-import { useWorkshopStore, type ChatState } from "@/store";
+import { useWorkshopStore, type ChatMeta } from "@/store";
 
 // ---------------------------------------------------------------------------
-// Helpers
+// PSO-8601 formatting
 // ---------------------------------------------------------------------------
 
-function formatRelative(epochSeconds: number): string {
+/** Short format for sidebar buttons: "Wednesday, 7:22 AM" */
+function formatShort(epochSeconds: number): string {
   if (!epochSeconds) return "";
-  const now = Date.now() / 1000;
-  const diff = now - epochSeconds;
-  if (diff < 60) return "just now";
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  if (diff < 172800) return "yesterday";
-  return `${Math.floor(diff / 86400)}d ago`;
+  const d = new Date(epochSeconds * 1000);
+  return d.toLocaleString("en-US", {
+    timeZone: "America/Los_Angeles",
+    weekday: "long",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
+
+/** Full PSO-8601 for tooltip: "Wed Mar 25 2026, 7:22 AM" */
+function formatFull(epochSeconds: number): string {
+  if (!epochSeconds) return "";
+  const d = new Date(epochSeconds * 1000);
+  return d.toLocaleString("en-US", {
+    timeZone: "America/Los_Angeles",
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
 }
 
 // ---------------------------------------------------------------------------
-// Indicator Light
+// Week grouping
 // ---------------------------------------------------------------------------
 
-const DOT_COLORS: Record<ChatState, string> = {
-  idle: "var(--theme-success)",
-  busy: "var(--theme-primary)",
-  starting: "var(--theme-primary)",
-  dead: "var(--theme-muted)",
-};
-
-const DOT_ANIMATIONS: Record<ChatState, string> = {
-  idle: "",
-  busy: "animate-pulse",
-  starting: "animate-pulse",
-  dead: "",
-};
-
-const STATE_LABELS: Record<ChatState, { text: string; color: string }> = {
-  idle: { text: "Idle", color: "var(--theme-success)" },
-  busy: { text: "Streaming", color: "var(--theme-primary)" },
-  starting: { text: "Starting", color: "var(--theme-primary)" },
-  dead: { text: "Inactive", color: "var(--theme-muted)" },
-};
-
-function ChatIndicator({ state, chatId }: { state: ChatState; chatId: string }) {
-  const label = STATE_LABELS[state];
-  return (
-    <HoverCard openDelay={300} closeDelay={100}>
-      <HoverCardTrigger asChild>
-        <span
-          className={`shrink-0 w-2 h-2 rounded-full cursor-default ${DOT_ANIMATIONS[state]}`}
-          style={{ backgroundColor: DOT_COLORS[state] }}
-          aria-label={state}
-        />
-      </HoverCardTrigger>
-      <HoverCardContent side="right" align="start" className="w-auto min-w-[140px]">
-        <div className="space-y-1.5">
-          <div className="flex items-baseline justify-between gap-3">
-            <span className="text-[11px] text-muted shrink-0">State</span>
-            <span className="text-[11px]" style={{ color: label.color }}>
-              {label.text}
-            </span>
-          </div>
-          <div className="flex items-baseline justify-between gap-3">
-            <span className="text-[11px] text-muted shrink-0">Chat</span>
-            <span className="text-[11px] font-mono" style={{ overflowWrap: "anywhere" }}>
-              {chatId}
-            </span>
-          </div>
-        </div>
-      </HoverCardContent>
-    </HoverCard>
+/** Get the Monday of the week containing a date (Pondside local time). */
+function weekStart(epochSeconds: number): string {
+  if (!epochSeconds) return "0000-01-01";
+  const d = new Date(epochSeconds * 1000);
+  // Get local date in LA
+  const laDate = new Date(
+    d.toLocaleString("en-US", { timeZone: "America/Los_Angeles" })
   );
+  const day = laDate.getDay(); // 0=Sun, 1=Mon, ...
+  const diff = day === 0 ? 6 : day - 1; // Days since Monday
+  laDate.setDate(laDate.getDate() - diff);
+  laDate.setHours(0, 0, 0, 0);
+  return laDate.toISOString().slice(0, 10); // YYYY-MM-DD
+}
+
+function weekLabel(weekStartStr: string, isThisWeek: boolean, isLastWeek: boolean): string {
+  if (isThisWeek) return "This Week";
+  if (isLastWeek) return "Last Week";
+  // Format as "Mar 8–14, 2026"
+  const [y, m, d] = weekStartStr.split("-").map(Number);
+  const start = new Date(y, m - 1, d);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 6);
+  const startStr = start.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const endStr = end.getDate().toString();
+  const yearStr = start.getFullYear().toString();
+  return `${startStr}–${endStr}, ${yearStr}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -118,29 +115,55 @@ export function AppSidebar({ onNewChat }: AppSidebarProps) {
   const activeChatId = useWorkshopStore((s) => s.activeChatId);
   const isEmpty = !activeChatId;
 
-  // Auto-open sidebar when in empty state (no active chat)
+  // Only force-open sidebar when truly empty (no chats at all after
+  // initial load). Avoid overriding localStorage on every mount —
+  // the brief isEmpty state before WebSocket populates chats was
+  // clobbering the user's saved preference.
+  const [initialLoadDone, setInitialLoadDone] = useState(false);
   useEffect(() => {
-    if (isEmpty) {
-      setOpen(true);
-    }
-  }, [isEmpty, setOpen]);
+    if (Object.keys(chats).length > 0) setInitialLoadDone(true);
+  }, [chats]);
+  useEffect(() => {
+    if (initialLoadDone && isEmpty) setOpen(true);
+  }, [initialLoadDone, isEmpty, setOpen]);
 
-  // Sort by updatedAt descending
-  const sortedChats = useMemo(
-    () => Object.values(chats).sort((a, b) => b.updatedAt - a.updatedAt),
+  // Sort by updatedAt descending, group by week
+  const grouped = useMemo(() => {
+    const sorted = Object.values(chats).sort((a, b) => b.updatedAt - a.updatedAt);
+
+    const now = Date.now() / 1000;
+    const thisWeekStr = weekStart(now);
+    const lastWeekEpoch = now - 7 * 86400;
+    const lastWeekStr = weekStart(lastWeekEpoch);
+
+    const groups: { key: string; label: string; chats: ChatMeta[] }[] = [];
+    const seen = new Map<string, ChatMeta[]>();
+
+    for (const chat of sorted) {
+      const ws = weekStart(chat.createdAt);
+      if (!seen.has(ws)) {
+        const arr: ChatMeta[] = [];
+        seen.set(ws, arr);
+        groups.push({
+          key: ws,
+          label: weekLabel(ws, ws === thisWeekStr, ws === lastWeekStr),
+          chats: arr,
+        });
+      }
+      seen.get(ws)!.push(chat);
+    }
+    return groups;
+  }, [chats]);
+
+  // New Chat guard
+  const hasUnusedChat = useMemo(
+    () =>
+      Object.values(chats).some(
+        (c) => (c.state === "idle" || c.state === "starting") && !c.title
+      ),
     [chats]
   );
 
-  // New Chat guard: disable if there's already a pending (zero-message) chat.
-  // Include "starting" so rapid double-clicks are also blocked before the
-  // subprocess finishes warming up.
-  const hasUnusedChat = useMemo(
-    () => sortedChats.some((c) => (c.state === "idle" || c.state === "starting") && !c.title),
-    [sortedChats]
-  );
-
-  // Optimistic pending state: disable the button immediately on click so rapid
-  // double-clicks are blocked even before the WebSocket round-trip completes.
   const [isPending, setIsPending] = useState(false);
   useEffect(() => {
     if (hasUnusedChat) setIsPending(false);
@@ -161,52 +184,70 @@ export function AppSidebar({ onNewChat }: AppSidebarProps) {
   }, [onNewChat, isMobile, setOpenMobile]);
 
   return (
-    <Sidebar side="left" variant="sidebar" collapsible="offcanvas">
-      <SidebarHeader>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              onClick={handleNewChat}
-              tooltip="New chat"
-              disabled={isPending || hasUnusedChat}
-              className={isEmpty && !hasUnusedChat ? "animate-breathe" : undefined}
-            >
-              <Plus size={16} />
-              <span>New chat</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
+    <Sidebar side="left" variant="sidebar" collapsible="offcanvas" className="border-border/50">
+      <SidebarHeader className="h-12 items-start justify-center pl-5 pr-3 border-b border-border shrink-0">
+        <button
+          onClick={handleNewChat}
+          disabled={isPending || hasUnusedChat}
+          className="flex items-center gap-2 text-sm transition-colors hover:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <span
+            className="flex items-center justify-center w-8 h-8 rounded-lg shrink-0"
+            style={{
+              backgroundColor: "var(--theme-primary)",
+              color: "var(--theme-bg)",
+            }}
+          >
+            <Plus size={16} strokeWidth={2.5} />
+          </span>
+          <span className="font-medium">New chat</span>
+        </button>
       </SidebarHeader>
 
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {sortedChats.map((chat) => (
-                <SidebarMenuItem key={chat.id}>
-                  <SidebarMenuButton
-                    onClick={() => handleChatClick(chat.id)}
-                    isActive={chatId === chat.id}
-                    tooltip={chat.title || "New chat"}
-                  >
-                    <ChatIndicator state={chat.state} chatId={chat.id} />
-                    <span className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
-                      {chat.title || (
-                        <span className="italic text-muted">New chat</span>
-                      )}
-                    </span>
-                    <span className="text-xs text-muted/50 shrink-0 group-data-[collapsible=icon]:hidden">
-                      {formatRelative(chat.updatedAt)}
-                    </span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {grouped.map((group) => (
+          <SidebarGroup key={group.key} className="py-1">
+            <SidebarGroupLabel className="text-[10px] text-muted/40 uppercase tracking-wider px-3 pb-0.5">
+              {group.label}
+            </SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {group.chats.map((chat) => {
+                  const ts = chat.createdAt;
+                  return (
+                    <SidebarMenuItem key={chat.id} className="pl-2">
+                      <TooltipProvider delayDuration={400}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <SidebarMenuButton
+                              onClick={() => handleChatClick(chat.id)}
+                              isActive={chatId === chat.id}
+                              className="text-[13px]"
+                              style={chatId === chat.id ? {
+                                borderLeft: "2px solid var(--theme-primary)",
+                                paddingLeft: "8px",
+                              } : undefined}
+                            >
+                              <span className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
+                                {formatShort(ts)}
+                              </span>
+                            </SidebarMenuButton>
+                          </TooltipTrigger>
+                          <TooltipContent side="right" className="text-xs">
+                            {formatFull(ts)}
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ))}
       </SidebarContent>
 
-      <SidebarRail />
+      <SidebarRail className="after:!bg-border/50 hover:after:!bg-border" />
     </Sidebar>
   );
 }

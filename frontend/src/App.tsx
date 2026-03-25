@@ -331,6 +331,7 @@ function Layout() {
           title: string;
           state: string;
           updatedAt: number;
+          createdAt?: number;
           sessionUuid?: string;
           tokenCount?: number;
           contextWindow?: number;
@@ -341,6 +342,7 @@ function Layout() {
           title: c.title,
           state: c.state as ChatState,
           updatedAt: c.updatedAt,
+          createdAt: c.createdAt || c.updatedAt,
           sessionUuid: c.sessionUuid || undefined,
           tokenCount: c.tokenCount,
           contextWindow: c.contextWindow,
@@ -360,11 +362,13 @@ function Layout() {
 
       case "chat-created": {
         const data = event.data as { state: string };
+        const nowEpoch = Date.now() / 1000;
         actions.addChat({
           id: eChatId!,
           title: "",
           state: data.state as ChatState,
-          updatedAt: Date.now() / 1000,
+          updatedAt: nowEpoch,
+          createdAt: nowEpoch,
         });
         // If we triggered this (auto-create at /chat), navigate to the new chat
         if (createPendingRef.current) {
@@ -774,6 +778,7 @@ function Layout() {
           title: md.title || "",
           state: md.state as ChatState,
           updatedAt: md.updatedAt || 0,
+          createdAt: (md as Record<string, unknown>).createdAt as number || md.updatedAt || 0,
           sessionUuid: md.sessionUuid || undefined,
           tokenCount: md.tokenCount,
           contextWindow: md.contextWindow,

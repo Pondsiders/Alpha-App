@@ -138,6 +138,7 @@ async def list_chats() -> list[dict]:
                 "title": data.get("title", ""),
                 "state": "dead",
                 "updatedAt": row["updated_at"].timestamp(),
+                "createdAt": data.get("created_at", 0) or row["updated_at"].timestamp(),
                 "sessionUuid": data.get("session_uuid", ""),
                 "tokenCount": data.get("token_count", 0) or 0,
                 "contextWindow": data.get("context_window", 0) or CONTEXT_WINDOW,

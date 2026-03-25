@@ -86,6 +86,7 @@ export interface ChatMeta {
   title: string;
   state: ChatState;
   updatedAt: number;
+  createdAt: number;  // Unix epoch seconds — set once at creation, never updated
   sessionUuid?: string;
   tokenCount?: number;
   contextWindow?: number;

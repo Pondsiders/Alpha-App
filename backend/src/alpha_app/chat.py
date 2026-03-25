@@ -347,6 +347,7 @@ class Chat:
             "state": self.state.wire_value,
             "title": self.title,
             "updatedAt": self.updated_at,
+            "createdAt": self.created_at,
             "sessionUuid": self.session_uuid or "",
             "tokenCount": self.token_count,
             "contextWindow": self.context_window,
