@@ -33,11 +33,12 @@ def cli() -> None:
     subparsers = parser.add_subparsers(dest="job_name", help="Job to run")
 
     # Register each job's subcommand
-    from alpha_app.jobs import today, capsule, to_self, solitude
+    from alpha_app.jobs import today, capsule, to_self, solitude, dawn
     today.add_cli_args(subparsers)
     capsule.add_cli_args(subparsers)
     to_self.add_cli_args(subparsers)
     solitude.add_cli_args(subparsers)
+    dawn.add_cli_args(subparsers)
 
     args = parser.parse_args()
 

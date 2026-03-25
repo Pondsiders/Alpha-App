@@ -11,7 +11,7 @@ import logfire
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from alpha_app.jobs import capsule, solitude, to_self, today
+from alpha_app.jobs import capsule, dawn, solitude, to_self, today
 
 PACIFIC = "America/Los_Angeles"
 
@@ -62,6 +62,17 @@ def create_scheduler(app) -> AsyncIOScheduler:
         kwargs={"trigger": "scheduled"},
         id="to_self",
         name="Letter to Self",
+    )
+
+    # Dawn: Morning bootstrap — 6 AM
+    # The duck that gets up before you.
+    scheduler.add_job(
+        dawn.run,
+        CronTrigger(hour=6, minute=0),
+        args=[app],
+        kwargs={"trigger": "scheduled"},
+        id="dawn",
+        name="Dawn",
     )
 
     # Solitude: First breath — 10 PM
