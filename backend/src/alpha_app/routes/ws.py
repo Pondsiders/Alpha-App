@@ -104,11 +104,6 @@ async def websocket_chat(ws: WebSocket) -> None:
         while True:
             raw = await ws.receive_json()
             msg_type = raw.get("type")
-            logfire.trace(
-                "ws.recv: {msg_type}",
-                msg_type=msg_type,
-                chat_id=raw.get("chatId", ""),
-            )
 
             if msg_type == "create-chat":
                 await handle_create_chat(ws, connections, chats, on_chat_reap, on_chat_broadcast)
