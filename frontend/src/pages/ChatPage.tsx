@@ -10,7 +10,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { ArrowUp, Square, Copy, Check } from "lucide-react";
+import { ArrowUp, Square, Copy } from "lucide-react";
 import { ToolFallback } from "../components/ToolFallback";
 import { MemoryTray } from "../components/MemoryTray";
 import { MemoryNote } from "../components/tools/MemoryNote";
@@ -35,6 +35,7 @@ import {
   ThreadPrimitive,
   ComposerPrimitive,
   MessagePrimitive,
+  ActionBarPrimitive,
   useMessage,
   SimpleImageAttachmentAdapter,
 } from "@assistant-ui/react";
@@ -182,63 +183,49 @@ const ASSISTANT_PARTS_COMPONENTS = {
   },
 };
 
-const AssistantMessage = () => {
-  const message = useMessage();
-  const [copied, setCopied] = useState(false);
+// -- Streaming cursor — thread-level "I'm working" indicator ----------------
 
-  // Cursor: visible on the LAST assistant message while the chat is busy.
-  // IMPORTANT: selector returns a primitive boolean, not an array/object reference.
-  // Subscribing to `s.messages` directly would re-render on every text delta
-  // during streaming, killing performance (1-2 chars/sec instead of smooth flow).
-  const showCursor = useWorkshopStore((s) => {
+const StreamingCursor = () => {
+  const isBusy = useWorkshopStore((s) => {
     const chat = s.activeChatId ? s.chats[s.activeChatId] : null;
-    const isBusy = chat?.state === "busy" || chat?.state === "starting";
-    if (!isBusy) return false;
-    // Find the last assistant message — is it this one?
-    for (let i = s.messages.length - 1; i >= 0; i--) {
-      if (s.messages[i].role === "assistant") return s.messages[i].id === message.id;
-    }
-    return false;
+    return chat?.state === "busy" || chat?.state === "starting";
   });
 
-  const handleCopy = async () => {
-    const rawText = (message.content as Array<{ type: string; text?: string }>)
-      .filter((p) => p.type === "text" && p.text)
-      .map((p) => p.text!)
-      .join("\n\n");
-    await navigator.clipboard.writeText(rawText);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
+  return (
+    <div
+      className={`flex items-center h-5 pl-2 transition-opacity duration-200 ${
+        isBusy ? "opacity-100" : "opacity-0"
+      }`}
+    >
+      <span
+        className={`w-2 h-2 rounded-full ${isBusy ? "animate-pulse-dot" : ""}`}
+        style={{ backgroundColor: "var(--theme-primary)" }}
+      />
+    </div>
+  );
+};
+
+// -- Assistant message --------------------------------------------------------
+
+const AssistantMessage = () => {
 
   return (
-    <MessagePrimitive.Root data-testid="assistant-message" className="mb-6 pl-2 pr-12 group/assistant">
-      <div className="text-text leading-relaxed flex flex-col gap-8">
+    <MessagePrimitive.Root data-testid="assistant-message" className="relative pl-2 pr-12 mb-8 group/assistant">
+      <div className="text-text leading-relaxed flex flex-col gap-5">
         <MessagePrimitive.Parts components={ASSISTANT_PARTS_COMPONENTS} />
-
-        {/* Cursor — the "I'm working" cue.
-            Always rendered (no layout shift), opacity toggles on busy state.
-            Negative margin-top pulls it closer to the content above — the
-            full gap-8 (32px) is too much breathing room for a tiny dot. */}
-        <div
-          className={`flex items-center h-5 -mt-4 transition-opacity duration-200 ${
-            showCursor ? "opacity-100" : "opacity-0"
-          }`}
-        >
-          <span
-            className={`w-2 h-2 rounded-full ${showCursor ? "animate-pulse-dot" : ""}`}
-            style={{ backgroundColor: "var(--theme-primary)" }}
-          />
-        </div>
       </div>
-      <div className="mt-1 opacity-0 group-hover/assistant:opacity-100 transition-opacity">
-        <button
-          onClick={handleCopy}
-          className="text-muted hover:text-text p-1 rounded bg-transparent border-none cursor-pointer transition-colors"
-          aria-label={copied ? "Copied" : "Copy message"}
-        >
-          {copied ? <Check size={14} /> : <Copy size={14} />}
-        </button>
+      {/* Copy button — inside the message root so hover zone is contiguous. */}
+      <div className="mt-2 opacity-0 group-hover/assistant:opacity-100 transition-opacity duration-150">
+        <ActionBarPrimitive.Root>
+          <ActionBarPrimitive.Copy asChild>
+            <button
+              className="text-muted/40 hover:text-text p-1 rounded bg-transparent border-none cursor-pointer transition-colors"
+              aria-label="Copy message"
+            >
+              <Copy size={14} />
+            </button>
+          </ActionBarPrimitive.Copy>
+        </ActionBarPrimitive.Root>
       </div>
     </MessagePrimitive.Root>
   );
@@ -555,7 +542,7 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
               scrollToBottomOnInitialize
               scrollToBottomOnThreadSwitch
             >
-              <div className="max-w-3xl mx-auto w-full flex-1 flex flex-col gap-8">
+              <div className="max-w-3xl mx-auto w-full flex-1">
                 {messages.length === 0 && !isRunning && (
                   <div className="flex-1 flex items-center justify-center h-full">
                     <p className="text-primary/40 text-2xl font-light tracking-wide select-none">
@@ -571,6 +558,10 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
                     SystemMessage: SystemMessageComponent,
                   }}
                 />
+
+                {/* Cursor — thread-level "I'm working" indicator.
+                    Visible when the chat is busy, sits after all messages. */}
+                <StreamingCursor />
 
                 {/* Approach lights — stage directions, not bubbles */}
                 {approachLights.map((light, i) => (
