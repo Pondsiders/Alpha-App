@@ -555,7 +555,7 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
               scrollToBottomOnInitialize
               scrollToBottomOnThreadSwitch
             >
-              <div className="max-w-3xl mx-auto w-full flex-1">
+              <div className="max-w-3xl mx-auto w-full flex-1 flex flex-col gap-8">
                 {messages.length === 0 && !isRunning && (
                   <div className="flex-1 flex items-center justify-center h-full">
                     <p className="text-primary/40 text-2xl font-light tracking-wide select-none">

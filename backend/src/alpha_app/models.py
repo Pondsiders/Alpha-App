@@ -258,3 +258,34 @@ class AssistantMessage:
             p["text"] for p in self.parts
             if p.get("type") == "text" and p.get("text")
         )
+
+
+# ---------------------------------------------------------------------------
+# SystemMessage — endogenous input (task notifications, etc.)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SystemMessage:
+    """A system event rendered as a first-class message in the conversation.
+
+    Not from the human. Not from me. From the infrastructure.
+    Task notifications, post-turn bookkeeping, compact boundaries —
+    events that I react to as endogenous stimuli.
+    """
+
+    id: str
+    text: str
+    source: str = "system"  # "task_notification", "post_turn", "compact", ...
+    timestamp: str | None = None
+
+    def to_wire(self) -> dict:
+        return {
+            "id": self.id,
+            "text": self.text,
+            "source": self.source,
+            "timestamp": self.timestamp,
+        }
+
+    def to_db(self) -> dict:
+        return self.to_wire()

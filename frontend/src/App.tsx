@@ -706,6 +706,17 @@ function Layout() {
                 ? ((d.orientation as Record<string, unknown>).capsules as CapsuleData[] | undefined)
                 : undefined,
             };
+          } else if (msg.role === "system") {
+            return {
+              id: (d.id as string) || `replay-s-${idx}`,
+              role: "system" as const,
+              content: [{
+                type: "system-notification" as const,
+                text: (d.text as string) || "System event",
+                source: (d.source as string) || "system",
+              }],
+              createdAt: new Date(),
+            };
           } else {
             // AssistantMessage — two formats:
             // New (to_db): { id, parts: [{type, text?, thinking?, toolCallId?, ...}], ... }

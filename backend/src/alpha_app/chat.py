@@ -32,7 +32,7 @@ from alpha_app import (
 )
 
 from alpha_app.constants import CLAUDE_MODEL as MODEL, CONTEXT_WINDOW
-from alpha_app.models import AssistantMessage, UserMessage
+from alpha_app.models import AssistantMessage, SystemMessage, UserMessage
 
 # Mock mode — swap Claude for MockClaude in tests.
 _MOCK_CLAUDE = os.environ.get("_ALPHA_MOCK_CLAUDE", "").strip() == "1"
@@ -133,7 +133,7 @@ class Chat:
         self._reap_task: asyncio.Task | None = None
 
         # -- Smart Chat: the canonical conversation --
-        self.messages: list[UserMessage | AssistantMessage] = []
+        self.messages: list[UserMessage | AssistantMessage | SystemMessage] = []
         self._current_assistant: AssistantMessage | None = None
         self._turn_span = None  # Logfire span — opened by turn handler, closed by callback
         self._output_parts: list[dict] = []  # Raw Messages API blocks for gen_ai.output.messages
@@ -232,6 +232,13 @@ class Chat:
                     duration_ms=data.get("duration_ms", 0.0),
                     inference_count=data.get("inference_count", 0),
                 ))
+            elif row["role"] == "system":
+                self.messages.append(SystemMessage(
+                    id=data.get("id", ""),
+                    text=data.get("text", ""),
+                    source=data.get("source", "system"),
+                    timestamp=data.get("timestamp"),
+                ))
 
     def messages_to_wire(self) -> list[dict]:
         """Serialize messages for the 'gimme the fucking chat' payload."""
@@ -241,6 +248,8 @@ class Chat:
                 result.append({"role": "user", "data": msg.to_wire()})
             elif isinstance(msg, AssistantMessage):
                 result.append({"role": "assistant", "data": msg.to_wire()})
+            elif isinstance(msg, SystemMessage):
+                result.append({"role": "system", "data": msg.to_wire()})
         return result
 
     # -- Token state properties -----------------------------------------------
@@ -631,18 +640,34 @@ class Chat:
                 logfire.info("compact_boundary detected", chat_id=chat_id)
 
             elif event.subtype == "task_notification":
+                import pendulum
                 summary = event.raw.get("summary", "Background task completed")
                 task_id = event.raw.get("task_id", "")
                 status = event.raw.get("status", "completed")
+
+                # Create, persist, and broadcast the system message
+                sys_msg = SystemMessage(
+                    id=f"sys-{uuid.uuid4().hex[:12]}",
+                    text=summary,
+                    source="task_notification",
+                    timestamp=pendulum.now("America/Los_Angeles").format(
+                        "ddd MMM D YYYY, h:mm A"
+                    ),
+                )
+                self.messages.append(sys_msg)
+
+                # Persist to app.messages
+                try:
+                    from alpha_app.db import store_message, next_message_ordinal
+                    ordinal = await next_message_ordinal(chat_id)
+                    await store_message(chat_id, ordinal, "system", sys_msg.to_db())
+                except Exception as e:
+                    logfire.error("persist system message failed: {error}", error=str(e))
+
                 await _broadcast({
                     "type": "system-message",
                     "chatId": chat_id,
-                    "data": {
-                        "text": summary,
-                        "source": "task_notification",
-                        "taskId": task_id,
-                        "status": status,
-                    },
+                    "data": sys_msg.to_wire(),
                 })
 
         elif isinstance(event, ErrorEvent):
