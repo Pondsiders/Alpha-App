@@ -1,9 +1,16 @@
 """spans.py — Logfire span helpers for gen_ai semantic conventions.
 
 Formats input/output messages for Logfire Model Run cards.
-The turn-level span attributes are now set by streaming.py's
-_set_turn_span_response(), which reads from AssistantMessage.
+set_turn_span_response() sets all gen_ai attributes on the turn span
+when a ResultEvent arrives.
 """
+
+from __future__ import annotations
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from alpha_app.chat import Chat
+    from alpha_app.models import AssistantMessage
 
 
 def build_prompt_preview(content: list[dict], max_len: int = 50) -> str:
@@ -62,4 +69,42 @@ def format_output_messages(output_parts: list[dict]) -> list[dict]:
             })
     return [{"role": "assistant", "parts": parts}]
 
+
+def set_turn_span_response(
+    span,
+    msg: "AssistantMessage",
+    chat: "Chat",
+    output_parts: list[dict],
+) -> None:
+    """Set gen_ai response attributes on the turn span.
+
+    Called from Chat._on_claude_event when ResultEvent arrives.
+    Reads from the AssistantMessage for token counts and metadata,
+    from the Chat for quota usage, and from output_parts for the
+    Logfire gen_ai.output.messages format.
+    """
+    output_messages = format_output_messages(output_parts)
+
+    span.set_attribute("gen_ai.response.model", msg.model or "")
+    span.set_attribute("gen_ai.usage.input_tokens", msg.input_tokens)
+    span.set_attribute("gen_ai.usage.output_tokens", msg.output_tokens)
+    span.set_attribute("gen_ai.usage.cache_creation.input_tokens", msg.cache_creation_tokens)
+    span.set_attribute("gen_ai.usage.cache_read.input_tokens", msg.cache_read_tokens)
+    span.set_attribute("gen_ai.output.messages", output_messages)
+    span.set_attribute("gen_ai.response.id", chat.response_id or "")
+    span.set_attribute("gen_ai.response.finish_reasons", [msg.stop_reason or "unknown"])
+    span.set_attribute("gen_ai.token_count", msg.input_tokens)
+    span.set_attribute("cost_usd", msg.cost_usd)
+    span.set_attribute("duration_ms", msg.duration_ms)
+    span.set_attribute("inference_count", msg.inference_count)
+    span.set_attribute("response_length", sum(
+        len(p.get("content", ""))
+        for m in output_messages
+        for p in m.get("parts", [])
+    ))
+
+    if chat.usage_5h is not None:
+        span.set_attribute("anthropic.quota.usage_5h", chat.usage_5h)
+    if chat.usage_7d is not None:
+        span.set_attribute("anthropic.quota.usage_7d", chat.usage_7d)
 

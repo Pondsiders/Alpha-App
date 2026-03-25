@@ -42,7 +42,7 @@ from alpha_app.chat import Chat, ConversationState
 from alpha_app.db import load_chat, replay_events
 from alpha_app.routes.broadcast import broadcast
 from alpha_app.routes.handlers import handle_create_chat, handle_interrupt, handle_list_chats
-from alpha_app.routes.turn import handle_interjection, handle_new_turn
+from alpha_app.routes.turn_smart import handle_send as handle_send_smart
 from alpha_app.strings import BUZZ_NARRATION
 
 router = APIRouter()
@@ -84,7 +84,17 @@ async def websocket_chat(ws: WebSocket) -> None:
             "data": {"state": "dead"},
         })
 
-    # Per-connection tracking for background streaming tasks
+    # Broadcast callback for Smart Chat — events from Claude flow here.
+    async def on_chat_broadcast(event: dict) -> None:
+        await broadcast(connections, event)
+
+    def _wire_chat(chat: Chat) -> None:
+        """Set callbacks and registry on a Chat."""
+        chat.on_reap = on_chat_reap
+        chat.on_broadcast = on_chat_broadcast
+        chat._topic_registry = getattr(ws.app.state, "topic_registry", None)
+
+    # Per-connection tracking for background streaming tasks (legacy path)
     streaming_tasks: dict[str, asyncio.Task] = {}
     turn_input_messages: dict[str, list] = {}
 
@@ -101,7 +111,7 @@ async def websocket_chat(ws: WebSocket) -> None:
             )
 
             if msg_type == "create-chat":
-                await handle_create_chat(ws, connections, chats, on_chat_reap)
+                await handle_create_chat(ws, connections, chats, on_chat_reap, on_chat_broadcast)
 
             elif msg_type == "list-chats":
                 await handle_list_chats(ws, chats)
@@ -123,25 +133,20 @@ async def websocket_chat(ws: WebSocket) -> None:
                 if not chat:
                     chat = await load_chat(chat_id)
                     if chat:
-                        chat.on_reap = on_chat_reap
-                        chat._topic_registry = getattr(ws.app.state, "topic_registry", None)
+                        _wire_chat(chat)
                         chats[chat_id] = chat
                     else:
                         await ws.send_json({"type": "error", "chatId": chat_id, "data": "Chat not found"})
-                        await ws.send_json({"type": "done", "chatId": chat_id})
                         continue
 
-                if chat.state in (ConversationState.ENRICHING, ConversationState.RESPONDING):
-                    # Interjection — feed to subprocess, echo to others
-                    await handle_interjection(ws, connections, chat, content, turn_input_messages)
-                else:
-                    # New turn — user-message broadcast happens in handle_new_turn
-                    # after enrobe, so the stored event carries enriched+tagged content
-                    task = asyncio.create_task(
-                        handle_new_turn(ws, connections, chat, content, turn_input_messages, streaming_tasks,
-                                        msg_id=message_id, topics=topics)
-                    )
-                    streaming_tasks[chat_id] = task
+                # Smart Chat path: send returns immediately, response flows via callback.
+                # Modal UI: no interjections. If Claude is busy, the message waits
+                # in Claude Code's internal queue.
+                task = asyncio.create_task(
+                    handle_send_smart(ws, connections, chat, content,
+                                     msg_id=message_id, topics=topics)
+                )
+                streaming_tasks[chat_id] = task
 
             elif msg_type == "buzz":
                 # The nonverbal hello. No user message — just a stage direction
@@ -156,22 +161,18 @@ async def websocket_chat(ws: WebSocket) -> None:
                 if not chat:
                     chat = await load_chat(chat_id)
                     if chat:
-                        chat.on_reap = on_chat_reap
-                        chat._topic_registry = getattr(ws.app.state, "topic_registry", None)
+                        _wire_chat(chat)
                         chats[chat_id] = chat
                     else:
                         await ws.send_json({"type": "error", "chatId": chat_id, "data": "Chat not found"})
-                        await ws.send_json({"type": "done", "chatId": chat_id})
                         continue
 
                 # Narration message — stage direction, not a human message
                 narration = [{"type": "text", "text": BUZZ_NARRATION}]
 
-                # No user-message echo — the narration is invisible to the human.
-                # Go straight to turn, suppressing the user-message broadcast.
                 task = asyncio.create_task(
-                    handle_new_turn(ws, connections, chat, narration, turn_input_messages, streaming_tasks,
-                                    broadcast_user_message=False, source="buzzer")
+                    handle_send_smart(ws, connections, chat, narration,
+                                     broadcast_user_message=False, source="buzzer")
                 )
                 streaming_tasks[chat_id] = task
 
@@ -197,11 +198,10 @@ async def websocket_chat(ws: WebSocket) -> None:
                 if not chat:
                     chat = await load_chat(chat_id)
                     if chat:
-                        chat.on_reap = on_chat_reap
-                        chat._topic_registry = getattr(ws.app.state, "topic_registry", None)
+                        _wire_chat(chat)
                         chats[chat_id] = chat
                 if chat:
-                    chat._topic_registry = getattr(ws.app.state, "topic_registry", None)
+                    _wire_chat(chat)
                     await ws.send_json({
                         "type": "chat-state",
                         "chatId": chat_id,
@@ -228,11 +228,10 @@ async def websocket_chat(ws: WebSocket) -> None:
                 if not chat:
                     chat = await load_chat(chat_id)
                     if chat:
-                        chat.on_reap = on_chat_reap
-                        chat._topic_registry = getattr(ws.app.state, "topic_registry", None)
+                        _wire_chat(chat)
                         chats[chat_id] = chat
                 if chat:
-                    chat._topic_registry = getattr(ws.app.state, "topic_registry", None)
+                    _wire_chat(chat)
 
                 logfire.debug(
                     "join-chat: {chat_id} found={found} in_memory={in_memory} "
