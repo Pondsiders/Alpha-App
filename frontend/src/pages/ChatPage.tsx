@@ -115,19 +115,16 @@ const UserMessage = () => {
             <Markdown remarkPlugins={[remarkGfm]}>{textContent}</Markdown>
           </div>
         )}
-        {/* Image bubble(s) — below text */}
-        {imageParts.map((img, i) => (
-          <div
-            key={i}
-            className="rounded-2xl overflow-hidden border border-border max-w-[66%]"
-          >
-            <img
-              src={img.image}
-              alt="Attached image"
-              className="w-full h-auto"
-            />
+        {/* Attachment shelf — horizontal scroll strip */}
+        {imageParts.length > 0 && (
+          <div className="flex gap-2 overflow-x-auto mt-1 max-w-full">
+            {imageParts.map((img, i) => (
+              <div key={i} className="shrink-0 rounded-lg overflow-hidden border border-border/50 max-w-48">
+                <img src={img.image} alt={`Attachment ${i + 1}`} className="w-full h-auto max-h-36 object-cover" />
+              </div>
+            ))}
           </div>
-        ))}
+        )}
         {/* Memory cards — fanned layout */}
         {memories && memories.length > 0 && (
           <MemoryTray memories={memories} />
