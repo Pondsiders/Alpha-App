@@ -35,7 +35,10 @@ export interface ServerEvent {
     | "interrupted"
     | "replay-done"
     | "chat-data"
-    | "system-message";
+    | "system-message"
+    | "agent-started"
+    | "agent-progress"
+    | "agent-done";
   chatId?: string;
   data?: unknown;
 }

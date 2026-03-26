@@ -131,6 +131,21 @@ interface WorkshopState {
 
   // Replay — when true, message list doesn't render (store mutates silently)
   isReplaying: boolean;
+
+  // Agent progress — transient state for active subagent rendering.
+  // Keyed by toolUseId (ties back to the Agent tool-call part).
+  // Ephemeral — not persisted. Cleared on agent-done.
+  agentProgress: Record<string, {
+    taskId: string;
+    prompt?: string;
+    description?: string;
+    lastToolName?: string;
+    toolUses?: number;
+    durationMs?: number;
+    status?: string;
+    summary?: string;
+    done?: boolean;
+  }>;
 }
 
 interface WorkshopActions {
@@ -199,6 +214,11 @@ interface WorkshopActions {
   // Approach lights
   addApproachLight: (chatId: string, level: "yellow" | "red", text: string) => void;
 
+  // Agent progress (transient)
+  updateAgentStarted: (toolUseId: string, data: { taskId: string; prompt?: string; description?: string }) => void;
+  updateAgentProgress: (toolUseId: string, data: { description?: string; lastToolName?: string; toolUses?: number; durationMs?: number }) => void;
+  updateAgentDone: (toolUseId: string, data: { status?: string; summary?: string; toolUses?: number; durationMs?: number }) => void;
+
   // Reset
   reset: () => void;
 }
@@ -230,6 +250,7 @@ const initialState: WorkshopState = {
   _pendingSendText: null,
   _pendingEchos: [],
   isReplaying: false,
+  agentProgress: {},
 };
 
 export const useWorkshopStore = create<WorkshopStore>()(
@@ -759,6 +780,43 @@ export const useWorkshopStore = create<WorkshopStore>()(
         state._pendingEchos.splice(idx, 1);
       });
       return { isInterjection: match.isInterjection };
+    },
+
+    // -- Agent progress (transient) -------------------------------------------
+
+    updateAgentStarted: (toolUseId, data) => {
+      set((state) => {
+        state.agentProgress[toolUseId] = {
+          taskId: data.taskId,
+          prompt: data.prompt,
+          description: data.description,
+        };
+      });
+    },
+
+    updateAgentProgress: (toolUseId, data) => {
+      set((state) => {
+        const existing = state.agentProgress[toolUseId];
+        if (existing) {
+          if (data.description) existing.description = data.description;
+          if (data.lastToolName) existing.lastToolName = data.lastToolName;
+          if (data.toolUses !== undefined) existing.toolUses = data.toolUses;
+          if (data.durationMs !== undefined) existing.durationMs = data.durationMs;
+        }
+      });
+    },
+
+    updateAgentDone: (toolUseId, data) => {
+      set((state) => {
+        const existing = state.agentProgress[toolUseId];
+        if (existing) {
+          existing.done = true;
+          if (data.status) existing.status = data.status;
+          if (data.summary) existing.summary = data.summary;
+          if (data.toolUses !== undefined) existing.toolUses = data.toolUses;
+          if (data.durationMs !== undefined) existing.durationMs = data.durationMs;
+        }
+      });
     },
 
     // -- Reset ----------------------------------------------------------------

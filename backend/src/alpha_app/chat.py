@@ -700,13 +700,59 @@ class Chat:
                 clear_seen(chat_id)
                 logfire.info("compact_boundary detected", chat_id=chat_id)
 
+            elif event.subtype == "task_started":
+                # Agent spawned — broadcast so frontend can open an AgentGroup
+                await _broadcast({
+                    "type": "agent-started",
+                    "chatId": chat_id,
+                    "data": {
+                        "taskId": event.raw.get("task_id", ""),
+                        "toolUseId": event.raw.get("tool_use_id", ""),
+                        "description": event.raw.get("description", ""),
+                        "prompt": (event.raw.get("prompt", "") or "")[:200],
+                        "taskType": event.raw.get("task_type", ""),
+                    },
+                })
+
+            elif event.subtype == "task_progress":
+                # Agent working — broadcast so frontend can grow the AgentGroup
+                usage = event.raw.get("usage", {})
+                await _broadcast({
+                    "type": "agent-progress",
+                    "chatId": chat_id,
+                    "data": {
+                        "taskId": event.raw.get("task_id", ""),
+                        "toolUseId": event.raw.get("tool_use_id", ""),
+                        "description": event.raw.get("description", ""),
+                        "lastToolName": event.raw.get("last_tool_name", ""),
+                        "toolUses": usage.get("tool_uses", 0),
+                        "durationMs": usage.get("duration_ms", 0),
+                    },
+                })
+
             elif event.subtype == "task_notification":
                 import pendulum
                 summary = event.raw.get("summary", "Background task completed")
                 task_id = event.raw.get("task_id", "")
                 status = event.raw.get("status", "completed")
+                usage = event.raw.get("usage", {})
 
-                # Create, persist, and broadcast the system message
+                # Broadcast agent-done so frontend can close the AgentGroup
+                await _broadcast({
+                    "type": "agent-done",
+                    "chatId": chat_id,
+                    "data": {
+                        "taskId": task_id,
+                        "toolUseId": event.raw.get("tool_use_id", ""),
+                        "status": status,
+                        "summary": summary,
+                        "totalTokens": usage.get("total_tokens", 0),
+                        "toolUses": usage.get("tool_uses", 0),
+                        "durationMs": usage.get("duration_ms", 0),
+                    },
+                })
+
+                # Create, persist, and broadcast the system message card
                 sys_msg = SystemMessage(
                     id=f"sys-{uuid.uuid4().hex[:12]}",
                     text=summary,

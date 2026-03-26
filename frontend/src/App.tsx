@@ -273,6 +273,9 @@ function Layout() {
     updateUserMessageById: useWorkshopStore.getState().updateUserMessageById,
     setReplaying: useWorkshopStore.getState().setReplaying,
     addSystemMessage: useWorkshopStore.getState().addSystemMessage,
+    updateAgentStarted: useWorkshopStore.getState().updateAgentStarted,
+    updateAgentProgress: useWorkshopStore.getState().updateAgentProgress,
+    updateAgentDone: useWorkshopStore.getState().updateAgentDone,
   });
   // Keep the ref fresh (store actions are stable with immer, but belt & suspenders)
   actionsRef.current = {
@@ -296,6 +299,9 @@ function Layout() {
     updateUserMessageById: useWorkshopStore.getState().updateUserMessageById,
     setReplaying: useWorkshopStore.getState().setReplaying,
     addSystemMessage: useWorkshopStore.getState().addSystemMessage,
+    updateAgentStarted: useWorkshopStore.getState().updateAgentStarted,
+    updateAgentProgress: useWorkshopStore.getState().updateAgentProgress,
+    updateAgentDone: useWorkshopStore.getState().updateAgentDone,
   };
 
   // Shared assistant ID map — Layout reads, ChatPage writes
@@ -589,6 +595,59 @@ function Layout() {
         if (!eChatId) break;
         const alData = event.data as { level: "yellow" | "red"; text: string };
         actions.addApproachLight(eChatId, alData.level, alData.text);
+        break;
+      }
+
+      // -- Agent lifecycle events --
+      case "agent-started": {
+        if (!eChatId) break;
+        const asData = event.data as {
+          taskId: string;
+          toolUseId: string;
+          description?: string;
+          prompt?: string;
+        };
+        actions.updateAgentStarted(asData.toolUseId, {
+          taskId: asData.taskId,
+          prompt: asData.prompt,
+          description: asData.description,
+        });
+        break;
+      }
+
+      case "agent-progress": {
+        if (!eChatId) break;
+        const apData = event.data as {
+          toolUseId: string;
+          description?: string;
+          lastToolName?: string;
+          toolUses?: number;
+          durationMs?: number;
+        };
+        actions.updateAgentProgress(apData.toolUseId, {
+          description: apData.description,
+          lastToolName: apData.lastToolName,
+          toolUses: apData.toolUses,
+          durationMs: apData.durationMs,
+        });
+        break;
+      }
+
+      case "agent-done": {
+        if (!eChatId) break;
+        const adData = event.data as {
+          toolUseId: string;
+          status?: string;
+          summary?: string;
+          toolUses?: number;
+          durationMs?: number;
+        };
+        actions.updateAgentDone(adData.toolUseId, {
+          status: adData.status,
+          summary: adData.summary,
+          toolUses: adData.toolUses,
+          durationMs: adData.durationMs,
+        });
         break;
       }
 

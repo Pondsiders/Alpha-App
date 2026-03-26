@@ -21,6 +21,7 @@ import { EditResult } from "../components/tools/EditResult";
 import { WriteResult } from "../components/tools/WriteResult";
 import { GrepResult } from "../components/tools/GrepResult";
 import { TodoResult } from "../components/tools/TodoResult";
+import { AgentResult } from "../components/tools/AgentResult";
 import { animated } from "../components/AnimatedTool";
 import { ToolGroup } from "../components/ToolGroup";
 import { SystemMessage as SystemMessageComponent } from "../components/SystemMessage";
@@ -178,6 +179,7 @@ const ASSISTANT_PARTS_COMPONENTS = {
       Grep: GrepResult,
       Glob: GrepResult,
       TodoWrite: TodoResult,
+      Agent: AgentResult,
     },
     Fallback: ToolFallback,
   },
