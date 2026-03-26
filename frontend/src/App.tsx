@@ -572,14 +572,32 @@ function Layout() {
 
       case "tool-result": {
         if (!eChatId) break;
-        const aid = assistantIdMapRef.current[eChatId];
-        if (!aid) break;
         const { toolCallId, result, isError } = event.data as {
           toolCallId: string;
           result: JSONValue;
           isError?: boolean;
         };
-        actions.updateToolResult(aid, toolCallId, result, isError, eChatId);
+        // Try the tracked assistant message first; fall back to searching
+        // all messages for the matching tool-call part. The fallback handles
+        // Agent tool results that arrive after system-message cleared the ref.
+        let trAid = assistantIdMapRef.current[eChatId];
+        if (!trAid) {
+          const msgs = eChatId === useWorkshopStore.getState().activeChatId
+            ? useWorkshopStore.getState().messages
+            : useWorkshopStore.getState().messageCache[eChatId] || [];
+          for (let i = msgs.length - 1; i >= 0; i--) {
+            const m = msgs[i];
+            if (m.role === "assistant" && m.content.some(
+              (p) => p.type === "tool-call" && (p as ToolCallPart).toolCallId === toolCallId
+            )) {
+              trAid = m.id;
+              break;
+            }
+          }
+        }
+        if (trAid) {
+          actions.updateToolResult(trAid, toolCallId, result, isError, eChatId);
+        }
         break;
       }
 
