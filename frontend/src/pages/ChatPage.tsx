@@ -108,27 +108,32 @@ const UserMessage = () => {
   return (
     <MessagePrimitive.Root data-testid="user-message" className="flex flex-col items-end mb-4">
       {/* Constraining wrapper — all user message parts share the same max width */}
-      <div className="flex flex-col items-end gap-2 max-w-[75%]">
-        {/* Text bubble — the hero, now with Markdown rendering */}
-        {textContent && (
-          <div className="px-4 py-3 bg-user-bubble rounded-2xl text-text break-words max-w-full overflow-x-auto markdown-text">
-            <Markdown remarkPlugins={[remarkGfm]}>{textContent}</Markdown>
-          </div>
-        )}
-        {/* Attachment shelf — horizontal scroll strip */}
-        {imageParts.length > 0 && (
-          <div className="flex gap-2 overflow-x-auto mt-1 max-w-full">
-            {imageParts.map((img, i) => (
-              <div key={i} className="shrink-0 rounded-lg overflow-hidden border border-border/50 max-w-48">
-                <img src={img.image} alt={`Attachment ${i + 1}`} className="w-full h-auto max-h-36 object-cover" />
-              </div>
-            ))}
-          </div>
-        )}
-        {/* Memory cards — fanned layout */}
-        {memories && memories.length > 0 && (
-          <MemoryTray memories={memories} />
-        )}
+      <div className="flex flex-col items-end max-w-[75%]">
+        {/* Rich bubble — one unified container for text + attachments + memories */}
+        <div className="bg-user-bubble rounded-2xl text-text max-w-full">
+          {/* Text */}
+          {textContent && (
+            <div className="px-4 py-3 break-words overflow-x-auto markdown-text">
+              <Markdown remarkPlugins={[remarkGfm]}>{textContent}</Markdown>
+            </div>
+          )}
+          {/* Attachment shelf — horizontal scroll strip inside the bubble */}
+          {imageParts.length > 0 && (
+            <div className="flex gap-2 overflow-x-auto px-4 pb-3" style={{ direction: "rtl" }}>
+              {[...imageParts].reverse().map((img, i) => (
+                <div key={i} className="shrink-0 rounded-lg overflow-hidden border border-border/50 max-w-48" style={{ direction: "ltr" }}>
+                  <img src={img.image} alt={`Attachment ${i + 1}`} className="w-full h-auto max-h-36 object-cover" />
+                </div>
+              ))}
+            </div>
+          )}
+          {/* Memory tray — inside the bubble */}
+          {memories && memories.length > 0 && (
+            <div className="px-2 pb-2">
+              <MemoryTray memories={memories} />
+            </div>
+          )}
+        </div>
       </div>
     </MessagePrimitive.Root>
   );
