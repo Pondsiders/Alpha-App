@@ -45,25 +45,30 @@ export const AgentResult: ToolCallMessagePartComponent = ({
     // Partial JSON while streaming
   }
 
-  // Resolve output text from result
+  // Resolve output text from result prop OR agent-done summary
   const resultText = (() => {
-    if (result === undefined || result === null) return "";
-    if (typeof result === "string") return result;
-    if (typeof result === "object" && "content" in result) {
-      const content = (result as { content: Array<{ text?: string }> }).content;
-      if (Array.isArray(content)) {
-        return content
-          .filter((c) => c.text)
-          .map((c) => c.text)
-          .join("\n");
+    // First try the tool result (populated by tool-result event)
+    if (result !== undefined && result !== null) {
+      if (typeof result === "string") return result;
+      if (typeof result === "object" && "content" in result) {
+        const content = (result as { content: Array<{ text?: string }> }).content;
+        if (Array.isArray(content)) {
+          return content
+            .filter((c) => c.text)
+            .map((c) => c.text)
+            .join("\n");
+        }
       }
+      return JSON.stringify(result, null, 2);
     }
-    return JSON.stringify(result, null, 2);
+    // Fall back to agent-done summary (from task_notification)
+    if (progress?.summary) return progress.summary;
+    return "";
   })();
 
   const hasResult = resultText.length > 0;
-  const isRunning = !hasResult;
   const isDone = progress?.done || hasResult;
+  const isRunning = !isDone;
 
   // Live status from progress events (or static from args)
   const statusDescription = progress?.description || description || "Agent";
