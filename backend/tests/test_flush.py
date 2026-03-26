@@ -209,6 +209,75 @@ class TestLoadMessages:
 # ---------------------------------------------------------------------------
 
 
+class TestOrdinalCollision:
+    """Regression: Chat loaded from DB must not overwrite existing ordinals."""
+
+    async def test_new_messages_get_correct_ordinals_after_load(self):
+        """A Chat loaded with 2 messages, then a new message appended,
+        should flush the new message at ordinal 2 — not ordinal 0.
+
+        This is the bug that ate ordinals 0-1 on March 26, 2026.
+        """
+        chat = Chat(id="test-ordinal-collision")
+
+        # Simulate load_messages: 2 messages loaded from Postgres (clean)
+        existing_user = _user_msg("First message from this morning")
+        existing_user._dirty = False
+        existing_asst = _assistant_msg("First response from this morning")
+        existing_asst._dirty = False
+        chat.messages = [existing_user, existing_asst]
+
+        # New message arrives (dirty)
+        new_msg = _user_msg("New message after restart")
+        chat.messages.append(new_msg)
+
+        pool_mock, mock_conn = _make_pool_mock()
+        with (
+            patch("alpha_app.db.get_pool", return_value=pool_mock),
+            patch("alpha_app.db.persist_chat", new_callable=AsyncMock),
+        ):
+            count = await chat.flush()
+
+        # Only 1 dirty message should be written
+        assert count == 1
+
+        # The UPSERT should be called with ordinal=2, not ordinal=0
+        # execute(sql, chat_id, ordinal, role, data) — ordinal is positional arg [2]
+        call_args = mock_conn.execute.call_args
+        assert call_args is not None
+        actual_ordinal = call_args[0][2]  # sql=0, chat_id=1, ordinal=2
+        assert actual_ordinal == 2, (
+            f"Expected ordinal 2 for new message after 2 existing, got {actual_ordinal}"
+        )
+
+    async def test_load_chat_includes_messages(self):
+        """load_chat() should return a Chat with messages[] populated."""
+        from alpha_app.db import load_chat
+
+        mock_row = {
+            "id": "test-lc",
+            "updated_at": MagicMock(timestamp=MagicMock(return_value=1000.0)),
+            "data": {
+                "title": "Test",
+                "session_uuid": "abc",
+                "token_count": 100,
+                "context_window": 200000,
+            },
+        }
+
+        pool_mock, _ = _make_pool_mock()
+        pool_mock.fetchrow = AsyncMock(return_value=mock_row)
+
+        with (
+            patch("alpha_app.db.get_pool", return_value=pool_mock),
+            patch.object(Chat, "load_messages", new_callable=AsyncMock) as mock_load,
+        ):
+            chat = await load_chat("test-lc")
+
+        assert chat is not None
+        mock_load.assert_awaited_once()
+
+
 @pytest.mark.integration
 class TestFlushIntegration:
     """End-to-end persistence through flush() and load_messages()."""
