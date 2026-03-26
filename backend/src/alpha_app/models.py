@@ -104,6 +104,7 @@ class UserMessage:
     memories: list[RecalledMemory] = field(default_factory=list)
     topic_context: str | None = None          # Injected topic context
     topic_names: list[str] = field(default_factory=list)  # Which topics were injected
+    _dirty: bool = field(default=True, repr=False)  # Born dirty — flush writes to Postgres
 
     @staticmethod
     def _to_display_block(block: dict) -> dict:
@@ -140,6 +141,10 @@ class UserMessage:
         if self.orientation:
             wire["orientation"] = self.orientation.to_wire()
         return wire
+
+    def to_db(self) -> dict:
+        """Full-fidelity format for app.messages. Same as to_wire() for user messages."""
+        return self.to_wire()
 
     def to_content_blocks(self) -> list[dict]:
         """Messages API format for Claude. Positional block list.
@@ -216,6 +221,7 @@ class AssistantMessage:
     cost_usd: float = 0.0
     duration_ms: float = 0.0
     inference_count: int = 0
+    _dirty: bool = field(default=True, repr=False)  # Born dirty — flush writes to Postgres
 
     def to_wire(self) -> dict:
         """WebSocket format for the frontend.
@@ -278,6 +284,7 @@ class SystemMessage:
     text: str
     source: str = "system"  # "task_notification", "post_turn", "compact", ...
     timestamp: str | None = None
+    _dirty: bool = field(default=True, repr=False)  # Born dirty — flush writes to Postgres
 
     def to_wire(self) -> dict:
         return {

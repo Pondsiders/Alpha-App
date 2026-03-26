@@ -528,6 +528,12 @@ class Claude:
 
         self._state = ClaudeState.STARTING
         self._session_id = session_id
+        mode = "resume" if session_id else "fresh"
+        logfire.info(
+            "claude.lifecycle: start {mode} session={session}",
+            mode=mode,
+            session=session_id or "(new)",
+        )
 
         try:
             if self._use_proxy:
@@ -539,13 +545,25 @@ class Claude:
             self._stderr_task = asyncio.create_task(self._drain_stderr())
             await self._init_handshake()
             self._state = ClaudeState.RUNNING
+            logfire.info(
+                "claude.lifecycle: running {mode} session={session} pid={pid}",
+                mode=mode,
+                session=self._session_id or "?",
+                pid=self._proc.pid if self._proc else "?",
+            )
 
             # Start continuous stdout drain AFTER the init handshake.
             # From this point on, _drain_stdout owns the stdout pipe.
             # events() is dead — all events flow through on_event callback.
             if self._on_event:
                 self._stdout_task = asyncio.create_task(self._drain_stdout())
-        except Exception:
+        except Exception as exc:
+            logfire.error(
+                "claude.lifecycle: start FAILED {mode} session={session} error={error}",
+                mode=mode,
+                session=session_id or "(new)",
+                error=str(exc),
+            )
             self._state = ClaudeState.STOPPED
             await self._cleanup()
             raise
@@ -578,6 +596,10 @@ class Claude:
                 if raw is None:
                     # Subprocess exited
                     self._state = ClaudeState.STOPPED
+                    logfire.warn(
+                        "claude.lifecycle: subprocess exited session={session}",
+                        session=self._session_id or "?",
+                    )
                     if self._on_event:
                         await self._on_event(
                             ErrorEvent(raw={}, message="claude process exited unexpectedly")
@@ -614,9 +636,17 @@ class Claude:
                         await self._on_event(event)
 
         except asyncio.CancelledError:
+            logfire.debug(
+                "claude.lifecycle: drain cancelled session={session}",
+                session=self._session_id or "?",
+            )
             return
         except Exception as e:
-            logfire.error("claude.drain_crashed: {error}", error=str(e))
+            logfire.error(
+                "claude.lifecycle: drain CRASHED session={session} error={error}",
+                session=self._session_id or "?",
+                error=str(e),
+            )
             self._state = ClaudeState.STOPPED
 
     async def events(self) -> AsyncIterator[Event]:
@@ -663,6 +693,10 @@ class Claude:
         if self._state == ClaudeState.STOPPED:
             return
 
+        logfire.info(
+            "claude.lifecycle: stop session={session}",
+            session=self._session_id or "?",
+        )
         self._state = ClaudeState.STOPPED
         await self._cleanup()
 

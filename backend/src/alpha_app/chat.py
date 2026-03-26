@@ -211,14 +211,16 @@ class Chat:
         for row in rows:
             data = row["data"] if isinstance(row["data"], dict) else json.loads(row["data"])
             if row["role"] == "user":
-                self.messages.append(UserMessage(
+                msg = UserMessage(
                     id=data.get("id", ""),
                     content=data.get("content", []),
                     source=data.get("source", "human"),
                     timestamp=data.get("timestamp"),
-                ))
+                )
+                msg._dirty = False  # Loaded from Postgres — already persisted
+                self.messages.append(msg)
             elif row["role"] == "assistant":
-                self.messages.append(AssistantMessage(
+                msg = AssistantMessage(
                     id=data.get("id", ""),
                     parts=data.get("parts", []),
                     input_tokens=data.get("input_tokens", 0),
@@ -231,14 +233,18 @@ class Chat:
                     cost_usd=data.get("cost_usd", 0.0),
                     duration_ms=data.get("duration_ms", 0.0),
                     inference_count=data.get("inference_count", 0),
-                ))
+                )
+                msg._dirty = False  # Loaded from Postgres — already persisted
+                self.messages.append(msg)
             elif row["role"] == "system":
-                self.messages.append(SystemMessage(
+                msg = SystemMessage(
                     id=data.get("id", ""),
                     text=data.get("text", ""),
                     source=data.get("source", "system"),
                     timestamp=data.get("timestamp"),
-                ))
+                )
+                msg._dirty = False  # Loaded from Postgres — already persisted
+                self.messages.append(msg)
 
     def messages_to_wire(self) -> list[dict]:
         """Serialize messages for the 'gimme the fucking chat' payload."""
@@ -251,6 +257,64 @@ class Chat:
             elif isinstance(msg, SystemMessage):
                 result.append({"role": "system", "data": msg.to_wire()})
         return result
+
+    # -- Persistence: Chat owns its own writes --------------------------------
+
+    async def flush(self) -> int:
+        """Write dirty messages to Postgres. Returns count written.
+
+        UPSERT by (chat_id, ordinal). The ordinal is the array index in
+        self.messages — the source of truth for ordering.
+
+        Also persists chat metadata (token counts, title, etc.) so the
+        sidebar and chat list stay current.
+
+        This is the ONLY write path for messages. No external observer
+        needed. Dawn, Solitude, WebSocket turns — all go through here.
+        """
+        dirty = [
+            (i, msg) for i, msg in enumerate(self.messages)
+            if getattr(msg, "_dirty", False)
+        ]
+        if not dirty:
+            return 0
+
+        from alpha_app.db import get_pool, persist_chat
+
+        try:
+            pool = get_pool()
+            async with pool.acquire() as conn:
+                async with conn.transaction():
+                    for ordinal, msg in dirty:
+                        role = (
+                            "user" if isinstance(msg, UserMessage)
+                            else "assistant" if isinstance(msg, AssistantMessage)
+                            else "system"
+                        )
+                        data = msg.to_db() if hasattr(msg, "to_db") else msg.to_wire()
+                        await conn.execute(
+                            """INSERT INTO app.messages (chat_id, ordinal, role, data)
+                               VALUES ($1, $2, $3, $4)
+                               ON CONFLICT (chat_id, ordinal)
+                               DO UPDATE SET data = EXCLUDED.data, role = EXCLUDED.role""",
+                            self.id, ordinal, role, data,
+                        )
+                        msg._dirty = False
+
+            await persist_chat(self)
+            logfire.debug(
+                "chat.flush: wrote {count} message(s) for chat={chat_id}",
+                count=len(dirty),
+                chat_id=self.id,
+            )
+        except Exception as e:
+            logfire.error(
+                "chat.flush failed: {error} chat={chat_id}",
+                error=str(e),
+                chat_id=self.id,
+            )
+
+        return len(dirty)
 
     # -- Token state properties -----------------------------------------------
 
@@ -543,14 +607,8 @@ class Chat:
                     "data": msg.to_wire(),
                 })
 
-                # Persist to app.messages
-                try:
-                    from alpha_app.db import store_message, next_message_ordinal, persist_chat
-                    ordinal = await next_message_ordinal(chat_id)
-                    await store_message(chat_id, ordinal, "assistant", msg.to_db())
-                    await persist_chat(self)
-                except Exception as e:
-                    logfire.error("persist failed: {error}", error=str(e))
+                # Persist all dirty messages (including this one) to Postgres
+                await self.flush()
 
             # Close the turn span with response attributes
             finalized_msg = self._current_assistant  # May be None if empty result
@@ -657,13 +715,8 @@ class Chat:
                 )
                 self.messages.append(sys_msg)
 
-                # Persist to app.messages
-                try:
-                    from alpha_app.db import store_message, next_message_ordinal
-                    ordinal = await next_message_ordinal(chat_id)
-                    await store_message(chat_id, ordinal, "system", sys_msg.to_db())
-                except Exception as e:
-                    logfire.error("persist system message failed: {error}", error=str(e))
+                # Persist system message to Postgres
+                await self.flush()
 
                 await _broadcast({
                     "type": "system-message",
@@ -822,10 +875,19 @@ class Chat:
         self._cancel_reap_timer()
         if self._claude:
             self._snapshot_token_state()
+            logfire.info(
+                "chat.lifecycle: reap chat={chat_id} session={session} tokens={tokens}",
+                chat_id=self.id,
+                session=self.session_uuid or "?",
+                tokens=self._cached_token_count,
+            )
             try:
                 await self._claude.stop()
             except Exception:
-                pass
+                logfire.warn(
+                    "chat.lifecycle: reap stop failed chat={chat_id}",
+                    chat_id=self.id,
+                )
             self._claude = None
         self.state = ConversationState.COLD
         self.suggest = SuggestState.DISARMED
@@ -843,6 +905,12 @@ class Chat:
         prompt = system_prompt or self._system_prompt
         self.state = ConversationState.STARTING
 
+        logfire.info(
+            "chat.lifecycle: wake chat={chat_id} broadcast={has_broadcast}",
+            chat_id=self.id,
+            has_broadcast=self.on_broadcast is not None,
+        )
+
         try:
             self._claude = _make_claude(
                 model=MODEL,
@@ -850,7 +918,7 @@ class Chat:
                 permission_mode="bypassPermissions",
                 mcp_servers=mcp_servers,
                 disallowed_tools=disallowed_tools,
-                on_event=self._on_claude_event if self.on_broadcast else None,
+                on_event=self._on_claude_event,  # Always wire — Chat owns its events
             )
             await self._claude.start(None)  # Fresh start, no resume
 
@@ -858,7 +926,16 @@ class Chat:
             self._needs_orientation = True
             self._injected_topics = set()
             self._start_reap_timer()
-        except Exception:
+            logfire.info(
+                "chat.lifecycle: wake complete chat={chat_id}",
+                chat_id=self.id,
+            )
+        except Exception as exc:
+            logfire.error(
+                "chat.lifecycle: wake FAILED chat={chat_id} error={error}",
+                chat_id=self.id,
+                error=str(exc),
+            )
             self.state = ConversationState.COLD
             self._claude = None
             raise
@@ -882,6 +959,13 @@ class Chat:
 
         self.state = ConversationState.STARTING
 
+        logfire.info(
+            "chat.lifecycle: resurrect chat={chat_id} session={session} broadcast={has_broadcast}",
+            chat_id=self.id,
+            session=_uuid,
+            has_broadcast=self.on_broadcast is not None,
+        )
+
         try:
             self._claude = _make_claude(
                 model=MODEL,
@@ -889,7 +973,7 @@ class Chat:
                 permission_mode="bypassPermissions",
                 mcp_servers=mcp_servers,
                 disallowed_tools=disallowed_tools,
-                on_event=self._on_claude_event if self.on_broadcast else None,
+                on_event=self._on_claude_event,  # Always wire — Chat owns its events
             )
             await self._claude.start(_uuid)
 
@@ -900,8 +984,19 @@ class Chat:
             # Don't reset _injected_topics — they persist across resurrections.
             # Only reset on wake() (new chat) and compact_boundary (new window).
             self._start_reap_timer()
+            logfire.info(
+                "chat.lifecycle: resurrect complete chat={chat_id} session={session}",
+                chat_id=self.id,
+                session=_uuid,
+            )
 
-        except Exception:
+        except Exception as exc:
+            logfire.error(
+                "chat.lifecycle: resurrect FAILED chat={chat_id} session={session} error={error}",
+                chat_id=self.id,
+                session=_uuid,
+                error=str(exc),
+            )
             self.state = ConversationState.COLD
             self._claude = None
             raise
@@ -921,6 +1016,11 @@ class Chat:
 
     def _start_reap_timer(self) -> None:
         self._cancel_reap_timer()
+        logfire.debug(
+            "chat.lifecycle: reap timer started chat={chat_id} timeout={timeout}s",
+            chat_id=self.id,
+            timeout=REAP_TIMEOUT,
+        )
         self._reap_task = asyncio.create_task(self._reap_after(REAP_TIMEOUT))
 
     def _cancel_reap_timer(self) -> None:

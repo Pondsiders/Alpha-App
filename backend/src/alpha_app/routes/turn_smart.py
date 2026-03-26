@@ -13,7 +13,7 @@ import logfire
 from fastapi import WebSocket
 
 from alpha_app.chat import MODEL, Chat, ConversationState, SuggestState
-from alpha_app.db import persist_chat, store_message, next_message_ordinal
+from alpha_app.db import persist_chat
 from alpha_app.routes.broadcast import broadcast
 from alpha_app.routes.enrobe import enrobe
 from alpha_app.routes.spans import build_prompt_preview, format_input_messages
@@ -158,12 +158,9 @@ async def handle_send(
                         "data": event["data"],
                     })
 
-            # -- Store UserMessage to app.messages -------------------------
-            user_ordinal = await next_message_ordinal(chat_id)
-            await store_message(chat_id, user_ordinal, "user", result.message.to_wire())
-
-            # -- Add to Chat.messages[] -----------------------------------
-            chat.messages.append(result.message)
+            # -- Add to Chat.messages[] and persist -------------------------
+            chat.messages.append(result.message)  # Born dirty
+            await chat.flush()  # Write UserMessage to Postgres immediately
 
             # -- Send to Claude (returns immediately) ----------------------
             # Reset output token accumulator for this turn
@@ -175,8 +172,6 @@ async def handle_send(
                 "chatId": chat_id,
                 "data": chat.wire_state(),
             })
-
-            await persist_chat(chat)
 
             # Response flows through Chat._on_claude_event → on_broadcast.
             # We don't wait for it here. That's the whole point.
