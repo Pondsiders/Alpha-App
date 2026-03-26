@@ -233,7 +233,13 @@ async def next_message_ordinal(chat_id: str) -> int:
 
 
 async def load_chat(chat_id: str) -> Chat | None:
-    """Load a chat's metadata from Postgres. Returns a DEAD Chat, or None."""
+    """Load a chat's metadata AND messages from Postgres. Returns a DEAD Chat, or None.
+
+    Messages are loaded eagerly so that Chat.messages[] matches Postgres
+    from the start. This is critical for flush() — ordinals are array
+    indices, so an empty messages[] would overwrite existing rows at
+    ordinal 0, 1, etc.
+    """
     try:
         pool = get_pool()
         row = await pool.fetchrow(
@@ -241,11 +247,13 @@ async def load_chat(chat_id: str) -> Chat | None:
             chat_id,
         )
         if row:
-            return Chat.from_db(
+            chat = Chat.from_db(
                 chat_id=row["id"],
                 updated_at=row["updated_at"].timestamp(),
                 data=row["data"],
             )
+            await chat.load_messages()
+            return chat
         return None
     except Exception:
         return None

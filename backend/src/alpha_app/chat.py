@@ -302,10 +302,12 @@ class Chat:
                         msg._dirty = False
 
             await persist_chat(self)
-            logfire.debug(
-                "chat.flush: wrote {count} message(s) for chat={chat_id}",
+            logfire.info(
+                "chat.flush: wrote {count} message(s) for chat={chat_id} ordinals={ordinals} total={total}",
                 count=len(dirty),
                 chat_id=self.id,
+                ordinals=[i for i, _ in dirty],
+                total=len(self.messages),
             )
         except Exception as e:
             logfire.error(
