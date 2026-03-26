@@ -241,9 +241,32 @@ function processReplayBuffer(events: ServerEvent[]): ReplayResult {
 // Layout — owns the WebSocket, dispatches all events to the store
 // ---------------------------------------------------------------------------
 
+const FONT_SIZES = [16, 17, 18] as const;
+
 function Layout() {
   const navigate = useNavigate();
   const { chatId } = useParams<{ chatId?: string }>();
+
+  // Font size toggle — Ctrl+] cycles through 16/17/18px
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.key === "]") {
+        e.preventDefault();
+        const root = document.documentElement;
+        const current = parseInt(
+          root.style.getPropertyValue("--chat-font-size") || "17",
+          10
+        );
+        const idx = FONT_SIZES.indexOf(current as typeof FONT_SIZES[number]);
+        const next = FONT_SIZES[(idx + 1) % FONT_SIZES.length];
+        root.style.setProperty("--chat-font-size", `${next}px`);
+        // Brief toast so you know what size you're on
+        toast(`Font: ${next}px`, { duration: 1000 });
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   // Stable refs for use inside the event callback
   const navigateRef = useRef(navigate);

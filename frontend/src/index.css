@@ -90,7 +90,7 @@
 @utility chat-font {
   font-family: "Inter Variable", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   font-feature-settings: "cv01", "cv02", "cv03", "cv04";
-  font-size: 18px;
+  font-size: var(--chat-font-size, 17px);
 }
 
 /* Mobile: dial font down — you hold the phone closer to your face. */
