@@ -45,6 +45,7 @@ import type {
   AppendMessage,
 } from "@assistant-ui/react";
 import { MarkdownTextPrimitive } from "@assistant-ui/react-markdown";
+import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   useWorkshopStore,
@@ -108,10 +109,10 @@ const UserMessage = () => {
     <MessagePrimitive.Root data-testid="user-message" className="flex flex-col items-end mb-4">
       {/* Constraining wrapper — all user message parts share the same max width */}
       <div className="flex flex-col items-end gap-2 max-w-[75%]">
-        {/* Text bubble — the hero */}
+        {/* Text bubble — the hero, now with Markdown rendering */}
         {textContent && (
-          <div className="px-4 py-3 bg-user-bubble rounded-2xl text-text break-words whitespace-pre-wrap">
-            {textContent}
+          <div className="px-4 py-3 bg-user-bubble rounded-2xl text-text break-words max-w-full overflow-x-auto markdown-text">
+            <Markdown remarkPlugins={[remarkGfm]}>{textContent}</Markdown>
           </div>
         )}
         {/* Image bubble(s) — below text */}
