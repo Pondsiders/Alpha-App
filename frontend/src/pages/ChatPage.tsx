@@ -13,6 +13,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { ArrowUp, Square, Copy } from "lucide-react";
 import { ToolFallback } from "../components/ToolFallback";
 import { MemoryTray } from "../components/MemoryTray";
+import { MemoryCard } from "../components/MemoryCard";
 import { MemoryNote } from "../components/tools/MemoryNote";
 import { MemoryStore } from "../components/tools/MemoryStore";
 import { BashResult } from "../components/tools/BashResult";
@@ -127,10 +128,18 @@ const UserMessage = () => {
               ))}
             </div>
           )}
-          {/* Memory tray — inside the bubble */}
+          {/* Memory shelf — horizontal cards, RTL for right-alignment, scroll-to-left on mount */}
           {memories && memories.length > 0 && (
-            <div className="px-2 pb-2">
-              <MemoryTray memories={memories} />
+            <div
+              className="flex gap-2 overflow-x-auto px-4 pb-4 pt-2"
+              style={{ direction: "rtl" }}
+              ref={(el) => { if (el) el.scrollLeft = -el.scrollWidth; }}
+            >
+              {[...memories].reverse().map((m) => (
+                <div key={m.id} style={{ direction: "ltr" }} className="shrink-0">
+                  <MemoryCard memory={m} flat />
+                </div>
+              ))}
             </div>
           )}
         </div>
