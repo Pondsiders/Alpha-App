@@ -1,23 +1,67 @@
 # Alpha — the duck in the machine
 #
-# Deploy on alpha-pi:  docker compose up --build -d
-# Deploy on Primer:    uv run alpha  (no Docker, no scheduler)
+# The Tailscale sidecar gives the stack its own identity on the tailnet:
+# https://alpha.tail8bd569.ts.net
+#
+# Deploy:  docker compose up --build -d
+# Bare metal (no Docker, no scheduler):  uv run alpha
 
 services:
+  tailscale:
+    image: ghcr.io/tailscale/tailscale:latest
+    container_name: alpha-tailscale
+    hostname: alpha
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_SERVE_CONFIG=/config/serve-config.json
+    volumes:
+      - alpha-ts-state:/var/lib/tailscale
+      - ./tailscale:/config:ro
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    restart: unless-stopped
+
+  garage:
+    image: dxflrs/garage:v2.2.0
+    container_name: alpha-garage
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+    environment:
+      - GARAGE_CONFIG_FILE=/etc/garage.toml
+    volumes:
+      - ./garage/garage.toml:/etc/garage.toml:ro
+      - /var/lib/garage/alpha:/data
+    restart: unless-stopped
+
   alpha:
     build:
       context: .
     container_name: alpha
-    ports:
-      - "18010:18010"
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+      - garage
     env_file: .env
     environment:
       - CONTAINER=1
       - TZ=America/Los_Angeles
-    dns:
-      - 100.100.100.100
     volumes:
       - /Pondside:/Pondside
-      - /Pondside/Basement/Files/certs:/certs:ro
-      - ~/.config/gws:/home/alpha/.config/gws
+      # Alpha-Home IS /home/alpha. One mount, one home.
+      - /Pondside/Alpha-Home:/home/alpha
+      # Overlay Jeffery's GWS tokens for calendar/docs access.
+      - /home/jefferyharrell/.config/gws:/home/alpha/.config/gws
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Dev workflow: source mount overlays baked-in code.
+      # Edit on Pondside, restart container, changes take effect.
+      # Remove these two lines for production (Pi lifeboat).
+      - ./backend/src:/app/backend/src:ro
+      - ./frontend/dist:/app/frontend/dist:ro
     restart: unless-stopped
+
+volumes:
+  alpha-ts-state:
+    driver: local

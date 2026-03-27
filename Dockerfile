@@ -21,10 +21,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         sudo \
         # Network tools — curl for APIs, wget for downloads, jq for JSON
         curl wget jq \
-        # Shell comfort — less for paging, tree for dirs, file for types
-        less tree file \
-        # Process tools — ps, top, etc.
-        procps \
+        # Network debugging — dns lookups, ping, netcat
+        dnsutils iputils-ping netcat-openbsd \
+        # Shell comfort — less for paging, tree for dirs, file for types, nano for emergencies
+        less tree file nano \
+        # Process tools — ps, top, htop, etc.
+        procps htop \
         # SSH client — for reaching other machines if needed
         openssh-client \
         # Certificates — HTTPS everywhere
@@ -40,6 +42,15 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update \
     && apt-get install -y gh \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Docker CLI — for managing host containers via Docker socket mount
+RUN install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+        > /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    && apt-get install -y docker-ce-cli docker-compose-plugin \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Install uv for fast dependency resolution
@@ -62,11 +73,16 @@ RUN cd /app/backend && uv pip install --system .
 # Bluesky CLI — Alpha's own project, installed from GitHub
 RUN uv pip install --system git+https://github.com/alphafornow/bluesky-cli.git
 
+# System-level Python tools — furniture, not app dependencies
+RUN uv pip install --system duckdb httpx rich ipython
+
 # Copy built frontend from stage 1
 COPY --from=frontend-build /build/dist/ /app/frontend/dist/
 
-# Non-root user — UID 1000 matches jefferyharrell on the host
-RUN useradd --uid 1000 --create-home --shell /bin/bash alpha \
+# Non-root user — UID 1000 matches jefferyharrell on the host.
+# GID 126 matches the host's docker group so alpha can use the Docker socket.
+RUN groupadd -g 126 docker \
+    && useradd --uid 1000 --create-home --shell /bin/bash --groups docker alpha \
     && echo 'alpha ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/alpha \
     && chmod 0440 /etc/sudoers.d/alpha
 USER alpha

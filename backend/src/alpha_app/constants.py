@@ -16,13 +16,13 @@ CONTEXT_FILE_NAME = "ALPHA.md"
 # Claude subprocess — where it runs and where it stores transcripts.
 # /Pondside is the one path guaranteed identical inside and outside Docker.
 CLAUDE_CWD = Path("/Pondside")
-CLAUDE_CONFIG_DIR = Path("/Pondside/Alpha-Home/.claude")
+CLAUDE_CONFIG_DIR = Path("/home/alpha/.claude")
 
 # -- Network ------------------------------------------------------------------
 
-REDIS_URL = "redis://alpha-pi:6379"
-OLLAMA_URL = "http://primer:11434"
-GARAGE_ENDPOINT = "http://primer:3900"
+REDIS_URL = "redis://alpha-pi.tail8bd569.ts.net:6379"
+OLLAMA_URL = "http://primer.tail8bd569.ts.net:11434"
+GARAGE_ENDPOINT = "http://127.0.0.1:3900"
 GARAGE_BUCKET = "pondside"
 GARAGE_REGION = "pondside"
 PORT = 18010
