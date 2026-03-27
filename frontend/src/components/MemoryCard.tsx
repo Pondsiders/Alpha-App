@@ -77,7 +77,7 @@ export function MemoryCard({ memory, flat = false }: MemoryCardProps) {
     <HoverCard openDelay={300} closeDelay={100}>
       <HoverCardTrigger asChild>
         <motion.div
-          whileHover={flat ? { y: -2 } : { y: -3, boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}
+          whileHover={flat ? undefined : { y: -3, boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }}
           transition={{ type: "tween", duration: 0.15 }}
           className={`flex-shrink-0 px-3 py-2 rounded-lg border border-border bg-surface
                      max-w-[220px] min-w-[160px] cursor-default select-none

@@ -9,7 +9,8 @@
  * to assistant-ui primitives.
  */
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, useLayoutEffect } from "react";
+import { motion, useSpring, useMotionValue } from "framer-motion";
 import { ArrowUp, Square, Copy } from "lucide-react";
 import { ToolFallback } from "../components/ToolFallback";
 import { MemoryTray } from "../components/MemoryTray";
@@ -110,8 +111,9 @@ const UserMessage = () => {
     <MessagePrimitive.Root data-testid="user-message" className="flex flex-col items-end mb-4">
       {/* Constraining wrapper — all user message parts share the same max width */}
       <div className="flex flex-col items-end max-w-[75%]">
-        {/* Rich bubble — one unified container for text + attachments + memories */}
-        <div className="bg-user-bubble rounded-2xl text-text max-w-full">
+        {/* Rich bubble — one unified container for text + attachments + memories.
+            Height animates smoothly as enrichment adds shelves. */}
+        <UserBubbleAnimator className="bg-user-bubble rounded-2xl text-text max-w-full">
           {/* Text */}
           {textContent && (
             <div className="px-4 py-3 break-words overflow-x-auto markdown-text">
@@ -142,11 +144,73 @@ const UserMessage = () => {
               ))}
             </div>
           )}
-        </div>
+        </UserBubbleAnimator>
       </div>
     </MessagePrimitive.Root>
   );
 };
+
+/**
+ * Animated container that smoothly grows when children change height.
+ * Uses ResizeObserver on inner content + spring-animated outer height.
+ * Content renders immediately; the container reveals it over 500ms.
+ */
+function UserBubbleAnimator({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  const contentRef = useRef<HTMLDivElement>(null);
+  const height = useMotionValue("auto");
+  const animatedHeight = useSpring(0, { stiffness: 200, damping: 30 });
+  const [initialized, setInitialized] = useState(false);
+
+  useLayoutEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+
+    const ro = new ResizeObserver(([entry]) => {
+      const h = entry.contentRect.height;
+      if (!initialized) {
+        // First render: snap to height, no animation
+        animatedHeight.jump(h);
+        setInitialized(true);
+      } else {
+        // Subsequent changes: animate + chase scroll
+        animatedHeight.set(h);
+        // Keep viewport glued to bottom if user hasn't scrolled up
+        const scrollParent = el.closest('[data-testid="thread-viewport"]')
+          ?? el.closest('[style*="overflow"]');
+        if (scrollParent) {
+          const dist = scrollParent.scrollHeight - scrollParent.clientHeight - scrollParent.scrollTop;
+          if (dist < 200) {
+            requestAnimationFrame(() => {
+              scrollParent.scrollTop = scrollParent.scrollHeight - scrollParent.clientHeight;
+            });
+          }
+        }
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [animatedHeight, initialized]);
+
+  return (
+    <motion.div
+      className={className}
+      style={{
+        height: initialized ? animatedHeight : "auto",
+        overflow: "hidden",
+      }}
+    >
+      <div ref={contentRef}>
+        {children}
+      </div>
+    </motion.div>
+  );
+}
 
 const ThinkingBlock = ({ text, status }: { text: string; status: unknown }) => {
   const isStreaming = (status as { type?: string })?.type === "running";
