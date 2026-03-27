@@ -26,8 +26,8 @@ PACIFIC = "America/Los_Angeles"
 IDLE_THRESHOLD_SECONDS = 1800  # 30 minutes
 
 # Prompts — living documents on the filesystem
-DAWN_PROMPT_PATH = "/Pondside/Alpha-Home/infrastructure/dawn.md"
-DAWN_NUDGE_PATH = "/Pondside/Alpha-Home/infrastructure/dawn_nudge.md"
+DAWN_PROMPT_PATH = "/Pondside/Alpha-Home/Alpha/prompts/dawn/dawn.md"
+DAWN_NUDGE_PATH = "/Pondside/Alpha-Home/Alpha/prompts/dawn/dawn_nudge.md"
 
 # Same interactive tools disabled as Solitude — nobody's awake to answer
 DISALLOWED_INTERACTIVE = [

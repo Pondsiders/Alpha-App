@@ -36,8 +36,8 @@ PACIFIC = "America/Los_Angeles"
 
 # Prompts — living documents on the filesystem, not in source code
 PROMPTS_DIR = "/Pondside/Alpha-Home/Alpha/prompts/solitude"
-FIRST_BREATH_PATH = "/Pondside/Alpha-Home/infrastructure/first_breath.md"
-LAST_BREATH_PATH = "/Pondside/Alpha-Home/infrastructure/last_breath.md"
+FIRST_BREATH_PATH = f"{PROMPTS_DIR}/first_breath.md"
+LAST_BREATH_PATH = f"{PROMPTS_DIR}/last_breath.md"
 
 # Tools that require human interaction — disabled at night
 DISALLOWED_INTERACTIVE = [
