@@ -179,6 +179,7 @@ async def run_first(app, **kwargs) -> str | None:
     ) as span:
         # Read the first breath prompt
         prompt_content = _read_prompt(FIRST_BREATH_PATH)
+        logfire.info("solitude: loaded first breath prompt from {path}", path=FIRST_BREATH_PATH)
         if prompt_content:
             prompt = f"It's {_time_str(now)}.\n\n{prompt_content}"
         else:
@@ -284,6 +285,7 @@ async def run_last(app, **kwargs) -> str | None:
 
         # Read the last breath prompt
         prompt_content = _read_prompt(LAST_BREATH_PATH)
+        logfire.info("solitude: loaded last breath prompt from {path}", path=LAST_BREATH_PATH)
         if prompt_content:
             prompt = f"It's {_time_str(now)}.\n\n{prompt_content}"
         else:

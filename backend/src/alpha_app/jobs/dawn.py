@@ -103,6 +103,7 @@ async def run(app, **kwargs) -> str | None:
             # Branch 1: No chat today. Create one, run Dawn.
             logfire.info("dawn: no chat today, creating new dawn chat")
             prompt = _read_prompt(DAWN_PROMPT_PATH)
+            logfire.info("dawn: loaded prompt from {path}", path=DAWN_PROMPT_PATH)
             if not prompt:
                 prompt = "[Alpha] Good morning. Use the Dawn skill to start the day."
             branch = "new_chat"
@@ -142,6 +143,7 @@ async def run(app, **kwargs) -> str | None:
                 seconds_ago=seconds_idle,
             )
             prompt = _read_prompt(DAWN_NUDGE_PATH)
+            logfire.info("dawn: loaded nudge prompt from {path}", path=DAWN_NUDGE_PATH)
             if not prompt:
                 prompt = "[Alpha] Hey — this would be a good time to run the Dawn skill."
             branch = "nudge"
