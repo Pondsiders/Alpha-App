@@ -13,22 +13,6 @@ from typing import Any
 import asyncpg
 
 
-def _decode_metadata(raw: str) -> dict:
-    """Decode metadata from Postgres, handling double-encoded JSONB.
-
-    Some memories have metadata stored as a JSON string inside JSONB
-    (e.g., '"{\\\"key\\\": ...}"' instead of '{"key": ...}').
-    json.loads on those returns a str, not a dict. Decode again if needed.
-    """
-    meta = json.loads(raw)
-    if isinstance(meta, str):
-        try:
-            meta = json.loads(meta)
-        except (json.JSONDecodeError, TypeError):
-            meta = {}
-    return meta if isinstance(meta, dict) else {}
-
-
 def _escape_pg_regex(text: str) -> str:
     """Escape special characters for safe use in Postgres regex (~* operator).
 
@@ -42,6 +26,19 @@ def _escape_pg_regex(text: str) -> str:
 _pool: asyncpg.Pool | None = None
 
 
+async def _init_connection(conn: asyncpg.Connection) -> None:
+    """Configure each connection in the pool.
+
+    Registers JSONB codec so Python dicts go in and come out automatically.
+    """
+    await conn.set_type_codec(
+        "jsonb",
+        encoder=json.dumps,
+        decoder=json.loads,
+        schema="pg_catalog",
+    )
+
+
 async def get_pool() -> asyncpg.Pool:
     """Get or create the connection pool."""
     global _pool
@@ -53,6 +50,7 @@ async def get_pool() -> asyncpg.Pool:
             dsn,
             min_size=2,
             max_size=10,
+            init=_init_connection,
         )
     return _pool
 
@@ -135,7 +133,7 @@ async def store_memory(
             """,
             content,
             json.dumps(embedding),  # pgvector accepts JSON array
-            json.dumps(metadata),
+            metadata,
         )
         return memory_id, created_at
 
@@ -253,7 +251,7 @@ async def search_memories(
             {
                 "id": row["id"],
                 "content": row["content"],
-                "metadata": _decode_metadata(row["metadata"]),
+                "metadata": row["metadata"],
                 "score": float(row["score"]),
             }
             for row in rows
@@ -333,7 +331,7 @@ async def search_memories_by_embedding(
             {
                 "id": row["id"],
                 "content": row["content"],
-                "metadata": _decode_metadata(row["metadata"]),
+                "metadata": row["metadata"],
                 "score": float(row["score"]),
             }
             for row in rows
@@ -409,7 +407,7 @@ async def search_memories_by_name(
             {
                 "id": row["id"],
                 "content": row["content"],
-                "metadata": _decode_metadata(row["metadata"]),
+                "metadata": row["metadata"],
                 "score": 1.0,  # Name matches are binary — found or not
             }
             for row in rows
@@ -442,7 +440,7 @@ async def get_recent_memories(
             {
                 "id": row["id"],
                 "content": row["content"],
-                "metadata": _decode_metadata(row["metadata"]),
+                "metadata": row["metadata"],
             }
             for row in rows
         ]
@@ -466,7 +464,7 @@ async def get_memory(memory_id: int) -> dict[str, Any] | None:
         return {
             "id": row["id"],
             "content": row["content"],
-            "metadata": _decode_metadata(row["metadata"]),
+            "metadata": row["metadata"],
         }
 
 
