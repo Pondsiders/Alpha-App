@@ -92,10 +92,10 @@ export function MemoryCard({ memory, flat = false }: MemoryCardProps) {
             <img
               src={memory.image}
               alt=""
-              className="w-full h-12 object-cover rounded-sm mt-0.5 opacity-80"
+              className="w-full h-12 object-cover object-top rounded-sm mt-0.5 opacity-80"
             />
           ) : preview ? (
-            <div className="text-[12px] text-text/70 leading-tight line-clamp-2">
+            <div className="text-[12px] text-text/70 leading-tight line-clamp-2 h-12 overflow-hidden">
               {preview}
             </div>
           ) : null}
