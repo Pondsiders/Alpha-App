@@ -285,22 +285,28 @@ async def _get_total_memory_count() -> int:
 
 async def _search_by_queries(
     embeddings: list[list[float]],
+    queries: list[str],
     exclude: list[int],
 ) -> list[dict[str, Any]]:
-    """Cosine similarity search per query. Top-N per query, deduped."""
+    """Cosine similarity search per query. One memory per query, deduped."""
     if not embeddings:
         return []
 
-    async def search_one(embedding: list[float]) -> dict[str, Any] | None:
+    async def search_one(embedding: list[float], query: str) -> dict[str, Any] | None:
         results = await search_by_embedding(
             embedding=embedding,
             limit=_QUERY_LIMIT,
             exclude=exclude,
             min_score=_MIN_COSINE,
         )
-        return results[0] if results else None
+        if results:
+            mem = results[0]
+            mem["trigger"] = query
+            mem["trigger_type"] = "query"
+            return mem
+        return None
 
-    tasks = [search_one(emb) for emb in embeddings]
+    tasks = [search_one(emb, q) for emb, q in zip(embeddings, queries)]
     results = await asyncio.gather(*tasks)
 
     memories = []
@@ -349,6 +355,8 @@ async def _search_by_names_with_idf(
         if results:
             mem = results[0]
             mem["score"] = idf
+            mem["trigger"] = name
+            mem["trigger_type"] = "name"
             return mem
         return None
 
@@ -475,6 +483,11 @@ async def _process_image_part(
             exclude=exclude,
             min_score=_MIN_COSINE,
         )
+
+        # Tag each result with the caption that found it
+        for r in results:
+            r["trigger"] = caption
+            r["trigger_type"] = "image_caption"
 
         span.set_attribute("recall.image.search_results", len(results))
 
@@ -676,7 +689,7 @@ async def recall(
 
                 name_ids = [m["id"] for m in name_memories]
                 query_exclude = seen_list + name_ids
-                query_memories = await _search_by_queries(embeddings, query_exclude) if embeddings else []
+                query_memories = await _search_by_queries(embeddings, queries, query_exclude) if embeddings else []
 
                 text_memories = name_memories + query_memories
 
@@ -709,6 +722,21 @@ async def recall(
 
         # -- Attach images from Garage -----------------------------------------
         await _attach_images(all_memories)
+
+        # -- Log each recalled memory for Logfire provenance --------------------
+        for mem in all_memories:
+            logfire.info(
+                "recall.memory #{id} {score:.2f} {preview}",
+                id=mem["id"],
+                score=mem.get("score", 0),
+                preview=mem.get("content", "")[:80],
+                trigger_type=mem.get("trigger_type", "unknown"),
+                trigger=mem.get("trigger", ""),
+                has_image=bool(mem.get("image_b64")),
+                has_garage_key=bool(mem.get("garage_key")),
+                content=mem.get("content", ""),
+                created_at=mem.get("created_at", ""),
+            )
 
         # -- Mark seen ---------------------------------------------------------
         if all_memories:
