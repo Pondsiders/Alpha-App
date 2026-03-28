@@ -89,9 +89,11 @@ export function MemoryCard({ memory, flat = false }: MemoryCardProps) {
             <span className="font-mono">{memory.score.toFixed(2)}</span>
           </div>
           {memory.image ? (
-            <div className="text-[12px] text-text/70 leading-tight">
-              📷 Image
-            </div>
+            <img
+              src={memory.image}
+              alt=""
+              className="w-full h-12 object-cover rounded-sm mt-0.5 opacity-80"
+            />
           ) : preview ? (
             <div className="text-[12px] text-text/70 leading-tight line-clamp-2">
               {preview}
