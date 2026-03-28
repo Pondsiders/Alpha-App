@@ -96,8 +96,7 @@ _seen_ids: dict[str, set[int]] = {}
 
 
 def get_seen_ids(session_id: str) -> set[int]:
-    # TEMPORARY: disable seen cache for visual recall testing
-    return set()
+    return _seen_ids.get(session_id, set())
 
 
 def mark_seen(session_id: str, memory_ids: list[int]) -> None:
