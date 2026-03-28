@@ -15,6 +15,9 @@ data/
 .vscode/
 .idea/
 
+# Claude Code workspace settings
+.claude/
+
 # Secrets
 .env
 
