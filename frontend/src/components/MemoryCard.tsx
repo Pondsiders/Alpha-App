@@ -88,14 +88,18 @@ export function MemoryCard({ memory, flat = false }: MemoryCardProps) {
             <span className="font-mono">#{memory.id}</span>
             <span className="font-mono">{memory.score.toFixed(2)}</span>
           </div>
-          {preview && (
+          {memory.image ? (
+            <div className="text-[12px] text-text/70 leading-tight">
+              📷 Image
+            </div>
+          ) : preview ? (
             <div className="text-[12px] text-text/70 leading-tight line-clamp-2">
               {preview}
             </div>
-          )}
+          ) : null}
         </motion.div>
       </HoverCardTrigger>
-      <HoverCardContent className="w-80" side="top" align="center">
+      <HoverCardContent className={memory.image ? "w-64 p-2" : "w-80"} side="top" align="center">
         {/* Header — ID + score */}
         <div className="flex items-center justify-between mb-2">
           <span className="font-mono text-[12px] text-primary font-semibold">
@@ -106,10 +110,18 @@ export function MemoryCard({ memory, flat = false }: MemoryCardProps) {
           </span>
         </div>
 
-        {/* Memory content */}
-        <div className="text-[13px] text-text/90 leading-relaxed max-h-[200px] overflow-y-auto whitespace-pre-wrap break-words">
-          {memory.content}
-        </div>
+        {/* Memory content — image or text */}
+        {memory.image ? (
+          <img
+            src={memory.image}
+            alt={`Memory #${memory.id}`}
+            className="w-full rounded-md"
+          />
+        ) : (
+          <div className="text-[13px] text-text/90 leading-relaxed max-h-[200px] overflow-y-auto whitespace-pre-wrap break-words">
+            {memory.content}
+          </div>
+        )}
 
         {/* Footer — PSO-8601 timestamp + relative age */}
         <div className="mt-2 pt-2 border-t border-border text-[11px] text-muted">

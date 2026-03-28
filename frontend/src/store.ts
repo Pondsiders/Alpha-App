@@ -53,6 +53,8 @@ export interface RecalledMemory {
   content: string;
   score: number;
   created_at: string;
+  /** Data URI for image memories (quarter-MP JPEG from Garage). */
+  image?: string;
 }
 
 /** A temporal capsule (yesterday, last night, today, letter). */
