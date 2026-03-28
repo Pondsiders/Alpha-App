@@ -18,7 +18,7 @@ dependencies = [
     "Pillow>=11.0.0",
     "APScheduler>=3.10.0,<4",
     "numpy>=2.4.3",
-    "boto3>=1.42.71",
+    "aiobotocore>=2.20.0",
     "tokenizers>=0.21.0",
     "html2text>=2024.2.26",
 ]

@@ -187,8 +187,8 @@ async def search_by_embedding(
                 "created_at": metadata.get("created_at", ""),
                 "score": item.get("score"),
             }
-            if metadata.get("image_path"):
-                mem["image_path"] = metadata["image_path"]
+            if metadata.get("garage_key"):
+                mem["garage_key"] = metadata["garage_key"]
             memories.append(mem)
 
         return memories
@@ -228,8 +228,8 @@ async def search_by_name(
                 "created_at": metadata.get("created_at", ""),
                 "score": item.get("score"),
             }
-            if metadata.get("image_path"):
-                mem["image_path"] = metadata["image_path"]
+            if metadata.get("garage_key"):
+                mem["garage_key"] = metadata["garage_key"]
             memories.append(mem)
 
         return memories

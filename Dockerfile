@@ -68,7 +68,7 @@ WORKDIR /app
 
 # Install app dependencies
 COPY backend/ /app/backend/
-RUN cd /app/backend && uv pip install --system .
+RUN cd /app/backend && uv pip install --system -e .
 
 # Bluesky CLI — Alpha's own project, installed from GitHub
 RUN uv pip install --system git+https://github.com/alphafornow/bluesky-cli.git

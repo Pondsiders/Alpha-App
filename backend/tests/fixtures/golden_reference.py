@@ -70,17 +70,12 @@ TODOS = (
     "\u2022 [p1] Simorgh: the first-person oral history of Project Alpha"
 )
 
-# Memories — recall_memories_rich returns list[tuple[dict, str]] pairs
-# Each pair is (raw_dict, formatted_string)
+# Memories — recall() returns list[dict] with id, content, created_at, score
 MEMORIES_FIRST_TURN = [
-    ({"id": 14102, "content": "Probe results confirmed.", "created_at": "2026-03-11T10:40:00-07:00", "score": 0.65},
-     "## Memory #14102 (today at 10:40 AM, score 0.65)\nProbe results confirmed."),
-    ({"id": 11888, "content": "Rosemary SDK Phase 2 complete.", "created_at": "2026-02-19T14:00:00-08:00", "score": 0.53},
-     "## Memory #11888 (3 weeks ago, score 0.53)\nRosemary SDK Phase 2 complete."),
-    ({"id": 10762, "content": "First clean compaction recovery.", "created_at": "2026-02-02T09:00:00-08:00", "score": 0.63},
-     "## Memory #10762 (Mon Feb 2 2026, score 0.63)\nFirst clean compaction recovery."),
-    ({"id": 9344, "content": "Resumed session after UUID scare.", "created_at": "2026-01-16T11:00:00-08:00", "score": 0.72},
-     "## Memory #9344 (Fri Jan 16 2026, score 0.72)\nResumed session after UUID scare."),
+    {"id": 14102, "content": "Probe results confirmed.", "created_at": "2026-03-11T10:40:00-07:00", "score": 0.65},
+    {"id": 11888, "content": "Rosemary SDK Phase 2 complete.", "created_at": "2026-02-19T14:00:00-08:00", "score": 0.53},
+    {"id": 10762, "content": "First clean compaction recovery.", "created_at": "2026-02-02T09:00:00-08:00", "score": 0.63},
+    {"id": 9344, "content": "Resumed session after UUID scare.", "created_at": "2026-01-16T11:00:00-08:00", "score": 0.72},
 ]
 
 TIMESTAMP_FIRST = "[Sent Wed Mar 11 2026, 12:25 PM]"
@@ -99,12 +94,9 @@ INTRO_SPEAKS = (
 )
 
 MEMORIES_NORMAL_TURN = [
-    ({"id": 12537, "content": "Logfire traces after the handoff.", "created_at": "2026-02-25T15:00:00-08:00", "score": 0.73},
-     "## Memory #12537 (2 weeks ago, score 0.73)\nLogfire traces after the handoff."),
-    ({"id": 9764, "content": "Trace comparison confirmed.", "created_at": "2026-01-23T10:00:00-08:00", "score": 0.61},
-     "## Memory #9764 (Fri Jan 23 2026, score 0.61)\nTrace comparison confirmed."),
-    ({"id": 12555, "content": "Issue #19 phase 2 tested and working.", "created_at": "2026-02-25T18:00:00-08:00", "score": 0.78},
-     "## Memory #12555 (2 weeks ago, score 0.78)\nIssue #19 phase 2 tested and working."),
+    {"id": 12537, "content": "Logfire traces after the handoff.", "created_at": "2026-02-25T15:00:00-08:00", "score": 0.73},
+    {"id": 9764, "content": "Trace comparison confirmed.", "created_at": "2026-01-23T10:00:00-08:00", "score": 0.61},
+    {"id": 12555, "content": "Issue #19 phase 2 tested and working.", "created_at": "2026-02-25T18:00:00-08:00", "score": 0.78},
 ]
 
 TIMESTAMP_NORMAL = "[Sent Wed Mar 11 2026, 12:32 PM]"
@@ -134,8 +126,9 @@ def first_turn_blocks() -> list[dict]:
     _add(USER_MESSAGE_FIRST)
 
     # Memories (after user message — "something to munch on while you wait")
-    for _raw, formatted in MEMORIES_FIRST_TURN:
-        _add(formatted)
+    from alpha_app.memories.recall import format_memory
+    for mem in MEMORIES_FIRST_TURN:
+        _add(format_memory(mem))
 
     return blocks
 
@@ -161,7 +154,8 @@ def normal_turn_blocks() -> list[dict]:
     _add(USER_MESSAGE_NORMAL)
 
     # Memories (after user message)
-    for _raw, formatted in MEMORIES_NORMAL_TURN:
-        _add(formatted)
+    from alpha_app.memories.recall import format_memory
+    for mem in MEMORIES_NORMAL_TURN:
+        _add(format_memory(mem))
 
     return blocks

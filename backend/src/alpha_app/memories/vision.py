@@ -65,7 +65,7 @@ async def process_image(
         garage_key = f"images/{source}/{content_hash}.{ext}"
 
         # Step 2: Check if we've seen this exact image before
-        is_known = garage.head_object(garage_key)
+        is_known = await garage.head_object(garage_key)
 
         # Step 3: Resize for Qwen (60ms — cheap enough to derive every time)
         resized_jpeg = _resize_to_1mp(image_data)
@@ -73,7 +73,7 @@ async def process_image(
 
         # Step 4: Store original in Garage (one copy, derive 1MP on demand)
         if not is_known:
-            garage.put_object(garage_key, image_data, content_type=content_type)
+            await garage.put_object(garage_key, image_data, content_type=content_type)
 
         # Step 5: Caption via Qwen 3.5 4B
         caption = await _caption_image(image_b64)
@@ -242,9 +242,8 @@ async def _search_memories(
         try:
             rows = await pool.fetch(
                 """
-                SELECT id, content,
-                       1 - (embedding_qwen::halfvec(2560) <=> $1::halfvec(2560)) AS score,
-                       metadata->>'created_at' AS created_at
+                SELECT id, content, metadata,
+                       1 - (embedding_qwen::halfvec(2560) <=> $1::halfvec(2560)) AS score
                 FROM cortex.memories
                 WHERE NOT forgotten AND embedding_qwen IS NOT NULL
                 ORDER BY embedding_qwen::halfvec(2560) <=> $1::halfvec(2560)
@@ -253,16 +252,28 @@ async def _search_memories(
                 vec_str,
                 top_k,
             )
-            results = [
-                {
+            results = []
+            for row in rows:
+                if float(row["score"]) <= 0.5:
+                    continue
+                import json as _json
+                meta = row["metadata"]
+                if isinstance(meta, str):
+                    try:
+                        meta = _json.loads(meta)
+                    except (ValueError, TypeError):
+                        meta = {}
+                if not isinstance(meta, dict):
+                    meta = {}
+                mem = {
                     "id": row["id"],
                     "content": row["content"],
                     "score": float(row["score"]),
-                    "created_at": row["created_at"] or "unknown",
+                    "created_at": meta.get("created_at", "unknown"),
                 }
-                for row in rows
-                if float(row["score"]) > 0.5  # minimum similarity threshold
-            ]
+                if meta.get("garage_key"):
+                    mem["garage_key"] = meta["garage_key"]
+                results.append(mem)
 
             # Attach results to span for Logfire visibility
             span.set_attribute("vision.search.result_count", len(results))

@@ -48,6 +48,8 @@ services:
     environment:
       - CONTAINER=1
       - TZ=America/Los_Angeles
+      # Bytecache cleaned at build time — source mounts always win.
+      # Runtime .pyc writes are fine (they go to the writable layer).
     volumes:
       - /Pondside:/Pondside
       # Alpha-Home IS /home/alpha. One mount, one home.

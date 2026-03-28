@@ -49,18 +49,42 @@ class RecalledMemory:
     created_at: str    # ISO timestamp
     score: float
     formatted: str     # Pre-formatted "## Memory #NNN (...)\n..." string
+    image_b64: str | None = None   # Quarter-MP JPEG as base64 (visual recall)
 
     def to_wire(self) -> dict:
-        return {
+        wire = {
             "id": self.id,
             "content": self.content,
             "score": round(self.score, 2),
             "created_at": self.created_at,
         }
+        if self.image_b64:
+            wire["image"] = f"data:image/jpeg;base64,{self.image_b64}"
+        return wire
 
-    def to_context(self) -> str:
-        """Format for Claude — the full ## Memory block."""
-        return self.formatted
+    def to_context(self) -> list[dict]:
+        """Format for Claude — metadata header + image, or text memory.
+
+        Image memories: header text block ("## Memory #NNN ...") then image block.
+        Text memories: single text block with header + content.
+        The header-then-image pattern makes it clear which images are recalled
+        versus which were attached by the user.
+        """
+        if self.image_b64:
+            # Image memory: metadata header + image (no caption text — the image IS the content)
+            return [
+                {"type": "text", "text": self.formatted.split("\n", 1)[0]},  # Just the ## Memory header line
+                {"type": "image", "source": {
+                    "type": "base64",
+                    "media_type": "image/jpeg",
+                    "data": self.image_b64,
+                }},
+            ]
+        else:
+            # Text memory: header + content as one text block
+            return [
+                {"type": "text", "text": self.formatted},
+            ]
 
 
 # ---------------------------------------------------------------------------
@@ -168,9 +192,9 @@ class UserMessage:
         # User content (the actual human input)
         blocks.extend(self.content)
 
-        # Memories — after user content
+        # Memories — after user content (may include image blocks)
         for mem in self.memories:
-            blocks.append({"type": "text", "text": mem.to_context()})
+            blocks.extend(mem.to_context())
 
         # Topic context — after memories
         if self.topic_context:
