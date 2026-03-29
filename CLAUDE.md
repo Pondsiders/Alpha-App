@@ -154,7 +154,7 @@ Zustand store with Immer middleware, multi-chat aware. `chats` map + `activeChat
 - Session transcripts stored as JSONL in `data/claude/`
 - Chat metadata TTL: 29 days (before Claude's ~30 day JSONL auto-prune)
 - `KERNEL.md` is the approved design doc for the multi-chat kernel architecture; `SMART-CHAT.md` documents the callback-based refactor
-- Docker runs as non-root user `alpha` (UID 1000, matches host user)
+- Docker runs as non-root user `alpha` (UID 1001, matching `alpha` on Primer; GID 1003 `pondside` for shared `/Pondside` access)
 - Multi-stage Dockerfile: Node 22 builds frontend, Python 3.12 runs backend
 
 ## Environment Variables

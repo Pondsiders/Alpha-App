@@ -23,6 +23,27 @@ services:
       - NET_ADMIN
     restart: unless-stopped
 
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: alpha-postgres
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+    entrypoint: ["/entrypoint.sh"]
+    command: ["postgres"]
+    environment:
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_ROLE=${POSTGRES_ROLE:-primary}
+      - REPLICATION_PRIMARY_HOST=${REPLICATION_PRIMARY_HOST:-alpha-pi}
+      - REPLICATION_PRIMARY_PORT=${REPLICATION_PRIMARY_PORT:-15432}
+      - REPLICATION_USER=${REPLICATION_USER:-replicator}
+      - REPLICATION_PASSWORD=${REPLICATION_PASSWORD}
+      - TZ=America/Los_Angeles
+    volumes:
+      - /var/lib/postgres/alpha:/var/lib/postgresql/data
+      - ./postgres/entrypoint.sh:/entrypoint.sh:ro
+    restart: unless-stopped
+
   garage:
     image: dxflrs/garage:v2.2.0
     container_name: alpha-garage
@@ -44,6 +65,7 @@ services:
     depends_on:
       - tailscale
       - garage
+      - postgres
     env_file: .env
     environment:
       - CONTAINER=1
