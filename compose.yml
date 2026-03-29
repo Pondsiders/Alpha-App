@@ -61,6 +61,7 @@ services:
     build:
       context: .
     container_name: alpha
+    profiles: ["full"]
     network_mode: service:tailscale
     depends_on:
       - tailscale
