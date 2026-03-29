@@ -35,6 +35,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         tmux \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# Postgres 17 client tools (psql, pg_dump, pg_basebackup)
+RUN curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+        | gpg --dearmor -o /etc/apt/trusted.gpg.d/postgresql.gpg \
+    && echo "deb http://apt.postgresql.org/pub/repos/apt trixie-pgdg main" \
+        > /etc/apt/sources.list.d/pgdg.list \
+    && apt-get update \
+    && apt-get install -y postgresql-client-17 \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
 # GitHub CLI — installed from the official repo
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
