@@ -34,3 +34,4 @@ backend/scripts/.gatsby_cache.txt
 # Large source assets (tracked via LFS or not at all)
 Icon-iOS-Default-1024x1024@1x.png
 backend/tests/captures/
+.stignore
