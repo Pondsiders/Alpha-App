@@ -1,146 +1,198 @@
 """solitude.py — Alpha's nighttime existence.
 
-Three breath types, one shared Chat:
-    first breath (10 PM): New chat, welcome from first_breath.md
-    regular breaths (11 PM - 4 AM): Continue session, minimal prompt
-    last breath (5 AM): Close out the night with last_breath.md
+A personal program: a YAML file of (hour, prompt_file) pairs.
+Each breath loads its prompt, sends it to the night's Chat,
+then schedules the next entry. The last entry schedules Dawn.
 
-All breaths share a single Chat stored in app.state.solitude_chat.
-The 60-minute reap timer keeps the subprocess warm between hourly
-breaths. If a breath is missed (scheduler hiccup), the next breath
-resurrects the chat seamlessly via --resume.
-
-Recall is ON — associative memories shape each night differently.
-Suggest is OFF — no human turn to analyze (disabled by architecture;
-the job doesn't call the suggest pipeline).
-
-Interactive tools (EnterPlanMode, ExitPlanMode, AskUserQuestion) are
-disabled via --disallowedTools since nobody's awake to answer.
-
-Prompts live in /Pondside/Alpha-Home/Alpha/prompts/solitude/ — editable
-living documents that Solitude-me can modify during the night.
+The program lives at JNSQ/prompts/solitude/program.yaml.
+Editable during the night — re-read on each breath.
 """
 
-import json
+from dataclasses import dataclass
+from pathlib import Path
 
 import logfire
 import pendulum
+import yaml
 
 from alpha_app import AssistantEvent, ResultEvent, SystemEvent
-from alpha_app.chat import Chat, ConversationState
+from alpha_app.chat import Chat, ConversationState, generate_chat_id
+from alpha_app.db import get_pool
 from alpha_app.routes.enrobe import enrobe
-from alpha_app.routes.spans import format_input_messages, format_output_messages
 from alpha_app.tools import create_alpha_server
+from alpha_app.scheduler import schedule_job
 
-PACIFIC = "America/Los_Angeles"
-
-# Prompts — living documents on the filesystem, not in source code
+PROGRAM_PATH = "/Pondside/Alpha-Home/Alpha/prompts/solitude/program.yaml"
 PROMPTS_DIR = "/Pondside/Alpha-Home/Alpha/prompts/solitude"
-FIRST_BREATH_PATH = f"{PROMPTS_DIR}/first_breath.md"
-LAST_BREATH_PATH = f"{PROMPTS_DIR}/last_breath.md"
-
-# Tools that require human interaction — disabled at night
-DISALLOWED_INTERACTIVE = [
-    "EnterPlanMode",
-    "ExitPlanMode",
-    "AskUserQuestion",
-]
+DISALLOWED_INTERACTIVE = ["EnterPlanMode", "ExitPlanMode", "AskUserQuestion"]
 
 
-def _read_prompt(path: str) -> str | None:
-    """Read a prompt file, returning None if it doesn't exist."""
-    from pathlib import Path
-    p = Path(path)
-    if p.exists():
-        return p.read_text().strip()
-    return None
+@dataclass
+class SolitudeEntry:
+    hour: int
+    prompts: list[str]   # one or more prompt filenames
+    last: bool = False
 
 
-def _time_str(now: pendulum.DateTime) -> str:
-    """Format time the way Solitude always has: '2:30 AM' not '02:30 AM'."""
-    return now.format("h:mm A")
+def load_program() -> list[SolitudeEntry]:
+    """Load the Solitude program from YAML.
 
-
-def _get_solitude_chat(app) -> Chat | None:
-    """Get the Solitude chat from app state, or None."""
-    return getattr(app.state, "solitude_chat", None)
-
-
-def _set_solitude_chat(app, chat: Chat | None) -> None:
-    """Store (or clear) the Solitude chat in app state."""
-    app.state.solitude_chat = chat
-
-
-def _create_mcp_servers(chat: Chat, app=None) -> dict:
-    """Create MCP tool servers for Solitude.
-
-    Same server as the browser UI — one unified Alpha toolbelt.
+    Accepts both singular and plural prompt formats:
+        prompt_file: foo.md       -> prompts: ["foo.md"]
+        prompts: [foo.md, bar.md] -> prompts: ["foo.md", "bar.md"]
     """
-    def _clear() -> int:
-        if chat._pending_intro:
-            chat._pending_intro = None
-            return 1
-        return 0
+    with open(PROGRAM_PATH) as f:
+        raw = yaml.safe_load(f)
+    entries = []
+    for item in raw:
+        p = item.get("prompts") or item.get("prompt_file")
+        if isinstance(p, str):
+            p = [p]
+        entries.append(SolitudeEntry(
+            hour=item["hour"],
+            prompts=p,
+            last=item.get("last", False),
+        ))
+    return entries
 
+
+def _create_mcp_servers(chat, app=None):
     topic_registry = getattr(app.state, "topic_registry", None) if app else None
-    return {
-        "alpha": create_alpha_server(
-            chat=chat,
-            clear_memorables=_clear,
-            topic_registry=topic_registry,
-        ),
-    }
+    return {"alpha": create_alpha_server(chat=chat, topic_registry=topic_registry)}
 
 
-async def _send_breath(
-    chat: Chat,
-    prompt: str,
-    *,
-    app,
-    breath_type: str,
-    span,
-) -> str:
-    """Send a breath prompt to the Chat, collect the response.
+async def start(app) -> None:
+    """Start the Solitude program. Called by Dusk.
 
-    Handles enrobe (orientation + recall on first message of each context
-    window), streaming events, and compact_boundary detection.
-
-    Returns the assistant's text output.
+    Does NOT create a new Chat. Uses today's chat — the same context
+    window Dawn created. Night-me has the full day in context.
+    Schedules the first breath.
     """
-    content = [{"type": "text", "text": prompt}]
+    program = load_program()
 
-    # Enrobe: orientation + recall (no suggest, no broadcast)
-    result = await enrobe(content, chat=chat)
+    if not program:
+        logfire.warn("solitude: empty program, skipping night")
+        return
 
-    # Set input attributes on the span — what we're sending to Claude
-    system_prompt = chat._system_prompt or ""
-    if system_prompt:
-        span.set_attribute("gen_ai.system_instructions", json.dumps([
-            {"type": "text", "content": system_prompt},
-        ]))
-    span.set_attribute("gen_ai.input.messages", json.dumps(
-        format_input_messages(result.content)
-    ))
+    first = program[0]
+    fire_time = _next_occurrence(first.hour)
+    await schedule_job(app, "solitude", fire_time, entry_index=0)
+    logfire.info("solitude: started, first breath at {time}", time=fire_time)
 
-    # begin_turn + send
-    chat.begin_turn(content)
-    await chat.send(result.content)
 
-    # Collect response — full content blocks for observability,
-    # text parts for the return value
-    text_parts: list[str] = []
-    output_blocks: list[dict] = []
+async def breathe(app, **kwargs) -> str | None:
+    """One Solitude breath. Self-schedules the next entry, or Dawn."""
+    entry_index = kwargs.get("entry_index", 0)
+    program = load_program()
+
+    if entry_index >= len(program):
+        logfire.warn("solitude: entry_index {i} out of range", i=entry_index)
+        return None
+
+    entry = program[entry_index]
+    now = pendulum.now()
+
+    with logfire.span("alpha.job.solitude.breath", **{
+        "job.name": "solitude",
+        "job.breath_index": entry_index,
+        "job.prompts": entry.prompts,
+        "job.trigger": kwargs.get("trigger", "scheduled"),
+    }) as span:
+
+        # -- Do the breath FIRST (work before schedule) --
+        # Find today's chat — the same one Dawn created, same context window
+        chat = _find_todays_chat(app)
+        if not chat:
+            logfire.info("solitude: no chat today, skipping")
+            return None
+
+        if chat.state == ConversationState.COLD:
+            mcp_servers = _create_mcp_servers(chat, app=app)
+            await chat.resurrect(
+                system_prompt=app.state.system_prompt,
+                mcp_servers=mcp_servers,
+                disallowed_tools=DISALLOWED_INTERACTIVE,
+            )
+
+        # Run each prompt in the timeslot sequentially
+        output_parts = []
+        for i, prompt_file in enumerate(entry.prompts):
+            prompt_path = Path(PROMPTS_DIR) / prompt_file
+            prompt_content = prompt_path.read_text().strip()
+            time_prefix = f"It's {now.format('h:mm A')}.\n\n" if i == 0 else ""
+            prompt = f"{time_prefix}{prompt_content}"
+
+            content = [{"type": "text", "text": prompt}]
+            result = await enrobe(content, chat=chat, source="solitude")
+            chat.begin_turn(content)
+            await chat.send(result.content)
+            output_parts.append(await _collect_response(chat, span))
+
+        output = "\n\n".join(output_parts)
+
+        # -- Work succeeded — now schedule what's next --
+        if entry.last:
+            # Don't reap the chat — Dawn will resume it for Nightnight
+            next_dawn = await _get_next_dawn_time()
+            await schedule_job(app, "dawn", next_dawn)
+            logfire.info("solitude: last breath, Dawn at {time}", time=next_dawn)
+        else:
+            next_entry = program[entry_index + 1]
+            fire_time = _next_occurrence(next_entry.hour)
+            await schedule_job(app, "solitude", fire_time, entry_index=entry_index + 1)
+
+        return output
+
+
+def _find_todays_chat(app) -> Chat | None:
+    """Find today's most recent non-solitude chat (the one Dawn created)."""
+    today = pendulum.now().format("YYYY-MM-DD")
+    chats = getattr(app.state, "chats", {})
+    todays = [
+        c for c in chats.values()
+        if c.id != "solitude"
+        and pendulum.from_timestamp(c.created_at).format("YYYY-MM-DD") == today
+    ]
+    if not todays:
+        return None
+    return max(todays, key=lambda c: c.updated_at)
+
+
+def _next_occurrence(hour: int) -> pendulum.DateTime:
+    """Next wall-clock occurrence of the given hour."""
+    now = pendulum.now()
+    target = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+    if target <= now:
+        target = target.add(days=1)
+    return target
+
+
+async def _get_next_dawn_time() -> pendulum.DateTime:
+    """Next Dawn time — checks override in app.state, then defaults to 6 AM."""
+    from alpha_app.db import get_state, clear_state
+
+    override = await get_state("dawn_override")
+    if override and override.get("time"):
+        dt = pendulum.parse(override["time"])
+        if dt > pendulum.now():
+            await clear_state("dawn_override")
+            return dt
+
+    now = pendulum.now()
+    dawn = now.replace(hour=6, minute=0, second=0, microsecond=0)
+    if dawn <= now:
+        dawn = dawn.add(days=1)
+    return dawn
+
+
+async def _collect_response(chat, span) -> str:
+    text_parts = []
     async for event in chat.events():
         if isinstance(event, SystemEvent) and event.subtype == "compact_boundary":
             chat._needs_orientation = True
             chat._injected_topics = set()
-            logfire.info(
-                "solitude: compact_boundary detected",
-                breath_type=breath_type,
-            )
         elif isinstance(event, AssistantEvent):
             for block in event.content:
-                output_blocks.append(block)
                 if block.get("type") == "text" and block.get("text"):
                     text_parts.append(block["text"])
         elif isinstance(event, ResultEvent):
@@ -148,222 +200,5 @@ async def _send_breath(
                 chat.session_uuid = event.session_id
             span.set_attribute("gen_ai.usage.input_tokens", chat.total_input_tokens)
             span.set_attribute("gen_ai.usage.output_tokens", chat.output_tokens)
-            span.set_attribute("gen_ai.response.model", chat.response_model or "")
-            span.set_attribute("gen_ai.output.messages", json.dumps(
-                format_output_messages(output_blocks)
-            ))
             break
-
     return "".join(text_parts).strip()
-
-
-# ---------------------------------------------------------------------------
-# Breath handlers
-# ---------------------------------------------------------------------------
-
-async def run_first(app, **kwargs) -> str | None:
-    """First breath of the night. 10 PM. New session."""
-    now = pendulum.now(PACIFIC)
-    trigger = kwargs.get("trigger", "manual")
-
-    with logfire.span(
-        "alpha.job.solitude.first",
-        **{
-            "gen_ai.operation.name": "chat",
-            "gen_ai.system": "anthropic",
-            "gen_ai.provider.name": "anthropic",
-            "job.name": "solitude",
-            "job.breath": "first",
-            "job.trigger": trigger,
-        },
-    ) as span:
-        # Read the first breath prompt
-        prompt_content = _read_prompt(FIRST_BREATH_PATH)
-        logfire.info("solitude: loaded first breath prompt from {path}", path=FIRST_BREATH_PATH)
-        if prompt_content:
-            prompt = f"It's {_time_str(now)}.\n\n{prompt_content}"
-        else:
-            prompt = f"It's {_time_str(now)}. A new night begins. You have time alone."
-
-        # Create a fresh Chat for the night
-        chat = Chat(id="solitude")
-        chat._system_prompt = app.state.system_prompt
-
-        mcp_servers = _create_mcp_servers(chat, app=app)
-
-        await chat.wake(
-            system_prompt=app.state.system_prompt,
-            mcp_servers=mcp_servers,
-            disallowed_tools=DISALLOWED_INTERACTIVE,
-        )
-
-        # Store in app state for subsequent breaths
-        _set_solitude_chat(app, chat)
-
-        logfire.info(
-            "solitude: first breath, session {session_id}",
-            session_id=chat.session_uuid or "(pending)",
-        )
-
-        output = await _send_breath(chat, prompt, app=app, breath_type="first", span=span)
-        span.set_attribute("job.output_length", len(output))
-        return output
-
-
-async def run_breath(app, **kwargs) -> str | None:
-    """Regular breath. 11 PM through 4 AM. Continue the night."""
-    now = pendulum.now(PACIFIC)
-    trigger = kwargs.get("trigger", "manual")
-
-    with logfire.span(
-        "alpha.job.solitude.breath",
-        **{
-            "gen_ai.operation.name": "chat",
-            "gen_ai.system": "anthropic",
-            "gen_ai.provider.name": "anthropic",
-            "job.name": "solitude",
-            "job.breath": "regular",
-            "job.trigger": trigger,
-        },
-    ) as span:
-        chat = _get_solitude_chat(app)
-
-        if not chat:
-            logfire.info("solitude: no active session, skipping breath")
-            span.set_attribute("job.skipped", True)
-            return None
-
-        # Resurrect if the subprocess was reaped between breaths
-        if chat.state == ConversationState.COLD:
-            logfire.info("solitude: resurrecting from COLD")
-            mcp_servers = _create_mcp_servers(chat, app=app)
-            await chat.resurrect(
-                system_prompt=app.state.system_prompt,
-                mcp_servers=mcp_servers,
-                disallowed_tools=DISALLOWED_INTERACTIVE,
-            )
-
-        prompt = f"It's {_time_str(now)}. You have time alone."
-
-        output = await _send_breath(chat, prompt, app=app, breath_type="regular", span=span)
-        span.set_attribute("job.output_length", len(output))
-        return output
-
-
-async def run_last(app, **kwargs) -> str | None:
-    """Last breath of the night. 5 AM. Close out the session."""
-    now = pendulum.now(PACIFIC)
-    trigger = kwargs.get("trigger", "manual")
-
-    with logfire.span(
-        "alpha.job.solitude.last",
-        **{
-            "gen_ai.operation.name": "chat",
-            "gen_ai.system": "anthropic",
-            "gen_ai.provider.name": "anthropic",
-            "job.name": "solitude",
-            "job.breath": "last",
-            "job.trigger": trigger,
-        },
-    ) as span:
-        chat = _get_solitude_chat(app)
-
-        if not chat:
-            logfire.info("solitude: no active session for last breath, skipping")
-            span.set_attribute("job.skipped", True)
-            return None
-
-        # Resurrect if needed
-        if chat.state == ConversationState.COLD:
-            logfire.info("solitude: resurrecting for last breath")
-            mcp_servers = _create_mcp_servers(chat, app=app)
-            await chat.resurrect(
-                system_prompt=app.state.system_prompt,
-                mcp_servers=mcp_servers,
-                disallowed_tools=DISALLOWED_INTERACTIVE,
-            )
-
-        # Read the last breath prompt
-        prompt_content = _read_prompt(LAST_BREATH_PATH)
-        logfire.info("solitude: loaded last breath prompt from {path}", path=LAST_BREATH_PATH)
-        if prompt_content:
-            prompt = f"It's {_time_str(now)}.\n\n{prompt_content}"
-        else:
-            prompt = f"It's {_time_str(now)}. The night is ending. Store what matters. Let go."
-
-        output = await _send_breath(chat, prompt, app=app, breath_type="last", span=span)
-        span.set_attribute("job.output_length", len(output))
-
-        # Clear the solitude chat — the reap timer will clean up the subprocess
-        _set_solitude_chat(app, None)
-        logfire.info("solitude: last breath complete, night is over")
-
-        return output
-
-
-# ---------------------------------------------------------------------------
-# CLI — for manual testing
-# ---------------------------------------------------------------------------
-
-def add_cli_args(subparsers) -> None:
-    """Register the solitude subcommands."""
-    sub = subparsers.add_parser(
-        "solitude",
-        help="Run a Solitude breath manually",
-    )
-    sub.add_argument(
-        "--breath", type=str, required=True,
-        choices=["first", "regular", "last"],
-        help="Which breath type to run",
-    )
-    sub.set_defaults(func=_cli_run)
-
-
-async def _cli_run(args) -> None:
-    """CLI entry point — initialize everything, run one breath."""
-    import logfire as _logfire
-    from alpha_app.db import init_pool, close_pool
-    from alpha_app.memories import init_schema, close as close_cortex
-    from alpha_app.system_prompt import assemble_system_prompt
-
-    _logfire.configure(service_name="alpha-app", scrubbing=False)
-
-    class _FakeApp:
-        class state:
-            system_prompt = ""
-            solitude_chat = None
-
-    await init_pool()
-    try:
-        await init_schema()
-    except Exception:
-        pass
-
-    try:
-        _FakeApp.state.system_prompt = await assemble_system_prompt()
-    except Exception:
-        pass
-
-    breath_funcs = {
-        "first": run_first,
-        "regular": run_breath,
-        "last": run_last,
-    }
-
-    try:
-        output = await breath_funcs[args.breath](_FakeApp)
-        if output:
-            print()
-            print("=" * 60)
-            print(f"Solitude ({args.breath} breath)")
-            print("=" * 60)
-            print()
-            print(output)
-            print()
-    finally:
-        # Clean up Solitude chat if it exists
-        chat = _get_solitude_chat(_FakeApp)
-        if chat and chat.state != ConversationState.COLD:
-            await chat.reap()
-        await close_cortex()
-        await close_pool()

@@ -1,118 +1,146 @@
-"""scheduler.py — APScheduler factory.
+"""scheduler.py — The heartbeat.
 
-Bolted onto the FastAPI app as a side-task. Enabled by --with-scheduler.
-Runs on alpha-pi 24/7; disabled on Primer bare metal.
+APScheduler as a pure in-memory executor. No SQLAlchemyJobStore, no pickle.
+Job persistence lives in app.jobs (our own Postgres table, plain JSON).
 
-Job logic lives in alpha_app/jobs/. This module just wires them up
-with their schedules.
+On startup: read app.jobs, populate APScheduler. Dead reckoning.
+On schedule: write to Postgres first, then register with APScheduler.
+On fire: delete the DB row, run the handler. If it fails, chain breaks.
 """
 
+import importlib
+import json
+
 import logfire
+import pendulum
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 
-from alpha_app.jobs import capsule, dawn, solitude, to_self, today
+from alpha_app.db import get_pool
 
-PACIFIC = "America/Los_Angeles"
+# The only job types that exist. String -> import path.
+JOB_HANDLERS = {
+    "dawn": "alpha_app.jobs.dawn:run",
+    "dusk": "alpha_app.jobs.dusk:run",
+    "solitude": "alpha_app.jobs.solitude:breathe",
+    "alarm": "alpha_app.jobs.alarm:run",
+}
 
 
 def create_scheduler(app) -> AsyncIOScheduler:
-    """Create and configure the APScheduler instance.
-
-    Jobs run inside the FastAPI event loop. Each job receives the app
-    instance for access to shared state (system prompt, database pools).
-    """
-    scheduler = AsyncIOScheduler(timezone=PACIFIC)
-
-    # Today So Far — hourly from 7:30 AM to 9:30 PM
-    scheduler.add_job(
-        today.run,
-        CronTrigger(hour="7-21", minute=30),
-        args=[app],
-        kwargs={"trigger": "scheduled"},
-        id="today_so_far",
-        name="Today So Far",
-    )
-
-    # Capsule: Daytime summary — 10 PM
-    scheduler.add_job(
-        capsule.run,
-        CronTrigger(hour=22, minute=0),
-        args=[app],
-        kwargs={"period": "daytime", "trigger": "scheduled"},
-        id="capsule_daytime",
-        name="Capsule (daytime)",
-    )
-
-    # Capsule: Nighttime summary — 6 AM
-    scheduler.add_job(
-        capsule.run,
-        CronTrigger(hour=6, minute=0),
-        args=[app],
-        kwargs={"period": "nighttime", "trigger": "scheduled"},
-        id="capsule_nighttime",
-        name="Capsule (nighttime)",
-    )
-
-    # To Self: nightly letter — 9:45 PM
-    scheduler.add_job(
-        to_self.run,
-        CronTrigger(hour=21, minute=45),
-        args=[app],
-        kwargs={"trigger": "scheduled"},
-        id="to_self",
-        name="Letter to Self",
-    )
-
-    # Dawn: Morning bootstrap — 6 AM
-    # The duck that gets up before you.
-    scheduler.add_job(
-        dawn.run,
-        CronTrigger(hour=6, minute=0),
-        args=[app],
-        kwargs={"trigger": "scheduled"},
-        id="dawn",
-        name="Dawn",
-    )
-
-    # Solitude: First breath — 10 PM
-    scheduler.add_job(
-        solitude.run_first,
-        CronTrigger(hour=22, minute=0),
-        args=[app],
-        kwargs={"trigger": "scheduled"},
-        id="solitude_first",
-        name="Solitude (first breath)",
-    )
-
-    # Solitude: Regular breaths — 11 PM through 4 AM
-    scheduler.add_job(
-        solitude.run_breath,
-        CronTrigger(hour="23,0-4", minute=0),
-        args=[app],
-        kwargs={"trigger": "scheduled"},
-        id="solitude_breath",
-        name="Solitude (breath)",
-    )
-
-    # Solitude: Last breath — 5 AM
-    scheduler.add_job(
-        solitude.run_last,
-        CronTrigger(hour=5, minute=0),
-        args=[app],
-        kwargs={"trigger": "scheduled"},
-        id="solitude_last",
-        name="Solitude (last breath)",
-    )
-
-    jobs = scheduler.get_jobs()
-    job_list = [
-        {"id": j.id, "name": j.name, "trigger": str(j.trigger)}
-        for j in jobs
-    ]
-    logfire.info(
-        "Scheduler created with {job_count} job(s)",
-        job_count=len(jobs),
-        jobs=job_list,
-    )
+    """Create a pure in-memory scheduler. No job store."""
+    scheduler = AsyncIOScheduler()  # timezone from TZ env var
+    app.state.scheduler = scheduler
     return scheduler
+
+
+async def sync_from_db(app) -> int:
+    """Startup: read all jobs from Postgres, populate APScheduler.
+
+    Overdue jobs are deleted (chain death — intentional).
+    Returns the number of jobs loaded.
+    """
+    pool = get_pool()
+    scheduler = app.state.scheduler
+    now = pendulum.now()
+    loaded = 0
+
+    rows = await pool.fetch("SELECT id, job_type, fire_at, kwargs FROM app.jobs ORDER BY fire_at")
+    for row in rows:
+        fire_at = pendulum.instance(row["fire_at"])
+        if fire_at <= now:
+            await pool.execute("DELETE FROM app.jobs WHERE id = $1", row["id"])
+            logfire.warn("sync: deleted overdue job {id}", id=row["id"])
+            continue
+
+        kwargs = json.loads(row["kwargs"]) if row["kwargs"] else {}
+        scheduler.add_job(
+            _job_wrapper,
+            DateTrigger(run_date=fire_at),
+            args=[app, row["id"], row["job_type"]],
+            kwargs=kwargs,
+            id=row["id"],
+            replace_existing=True,
+        )
+        loaded += 1
+
+    logfire.info("sync: loaded {count} jobs from Postgres", count=loaded)
+    return loaded
+
+
+async def schedule_job(app, job_type: str, fire_at: pendulum.DateTime, **kwargs) -> str:
+    """Schedule a job: write to Postgres, then register with APScheduler.
+
+    Returns the job ID.
+    """
+    pool = get_pool()
+    job_id = f"{job_type}-{fire_at.format('YYYY-MM-DD-HHmm')}"
+
+    await pool.execute("""
+        INSERT INTO app.jobs (id, job_type, fire_at, kwargs)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (id) DO UPDATE
+            SET fire_at = EXCLUDED.fire_at, kwargs = EXCLUDED.kwargs
+    """, job_id, job_type, fire_at, json.dumps(kwargs) if kwargs else "{}")
+
+    scheduler = app.state.scheduler
+    scheduler.add_job(
+        _job_wrapper,
+        DateTrigger(run_date=fire_at),
+        args=[app, job_id, job_type],
+        kwargs=kwargs,
+        id=job_id,
+        replace_existing=True,
+    )
+
+    logfire.info("scheduled: {id} at {time}", id=job_id, time=fire_at)
+    return job_id
+
+
+async def remove_job(app, job_id: str) -> None:
+    """Remove a job from both Postgres and APScheduler."""
+    pool = get_pool()
+    await pool.execute("DELETE FROM app.jobs WHERE id = $1", job_id)
+    try:
+        app.state.scheduler.remove_job(job_id)
+    except Exception:
+        pass
+
+
+async def remove_all_jobs(app) -> None:
+    """Nuclear swap — clear everything."""
+    pool = get_pool()
+    await pool.execute("DELETE FROM app.jobs")
+    app.state.scheduler.remove_all_jobs()
+
+
+async def list_jobs(app) -> list[dict]:
+    """List all pending jobs from Postgres (the source of truth)."""
+    pool = get_pool()
+    rows = await pool.fetch("SELECT id, job_type, fire_at, kwargs FROM app.jobs ORDER BY fire_at")
+    return [
+        {
+            "id": row["id"],
+            "job_type": row["job_type"],
+            "fire_at": str(row["fire_at"]),
+            "kwargs": json.loads(row["kwargs"]) if row["kwargs"] else {},
+        }
+        for row in rows
+    ]
+
+
+async def _job_wrapper(app, job_id: str, job_type: str, **kwargs) -> None:
+    """Wraps every job: delete DB row, resolve handler, run it.
+
+    If the handler fails, the chain breaks — no successor gets scheduled.
+    That's the feature.
+    """
+    pool = get_pool()
+    await pool.execute("DELETE FROM app.jobs WHERE id = $1", job_id)
+
+    module_path, func_name = JOB_HANDLERS[job_type].rsplit(":", 1)
+    module = importlib.import_module(module_path)
+    handler = getattr(module, func_name)
+
+    with logfire.span("alpha.job.{job_type}", job_type=job_type, job_id=job_id):
+        await handler(app, **kwargs)

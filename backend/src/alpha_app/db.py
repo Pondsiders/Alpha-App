@@ -20,6 +20,7 @@ Usage:
 import json
 import os
 from datetime import datetime, timezone
+from typing import Any
 
 import asyncpg
 
@@ -75,6 +76,33 @@ async def init_pool() -> None:
                 role TEXT NOT NULL,
                 data JSONB NOT NULL,
                 PRIMARY KEY (chat_id, ordinal)
+            )
+        """)
+
+        # App state — single JSONB row for all ephemeral app state.
+        # No per-value tables. Future state is a new key, not a new migration.
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS app.state (
+                id INTEGER PRIMARY KEY DEFAULT 1,
+                data JSONB NOT NULL DEFAULT '{}',
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                CONSTRAINT state_single_row CHECK (id = 1)
+            )
+        """)
+        # Ensure the single row exists
+        await conn.execute("""
+            INSERT INTO app.state (id, data) VALUES (1, '{}')
+            ON CONFLICT (id) DO NOTHING
+        """)
+
+        # Job persistence — our own table, plain JSON, no pickle.
+        # APScheduler is pure in-memory; this is the source of truth.
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS app.jobs (
+                id TEXT PRIMARY KEY,
+                job_type TEXT NOT NULL,
+                fire_at TIMESTAMPTZ NOT NULL,
+                kwargs JSONB DEFAULT '{}'
             )
         """)
 
@@ -257,3 +285,31 @@ async def load_chat(chat_id: str) -> Chat | None:
         return None
     except Exception:
         return None
+
+
+# -- App state (single JSONB row) -------------------------------------------
+
+
+async def get_state(key: str) -> Any:
+    """Read a value from app.state."""
+    pool = get_pool()
+    row = await pool.fetchval("SELECT data->>$1 FROM app.state WHERE id = 1", key)
+    return json.loads(row) if row else None
+
+
+async def set_state(key: str, value: Any) -> None:
+    """Write a value to app.state (merge, don't replace)."""
+    pool = get_pool()
+    await pool.execute("""
+        INSERT INTO app.state (id, data) VALUES (1, $1::jsonb)
+        ON CONFLICT (id) DO UPDATE
+            SET data = app.state.data || $1::jsonb, updated_at = now()
+    """, json.dumps({key: value}))
+
+
+async def clear_state(key: str) -> None:
+    """Remove a key from app.state."""
+    pool = get_pool()
+    await pool.execute(
+        "UPDATE app.state SET data = data - $1, updated_at = now() WHERE id = 1", key
+    )

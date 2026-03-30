@@ -2,15 +2,10 @@
 
 Each job module exports:
     run(app, **kwargs)  — async function, called by APScheduler or CLI
-    add_cli_args(sub)   — adds job-specific arguments to argparse subparser
 
-Usage:
-    # Scheduled (via APScheduler in the FastAPI lifespan):
-    scheduler.add_job(today.run, args=[app], ...)
-
-    # Manual (via CLI):
-    uv run job today-so-far
-    uv run job capsule --daypart daytime --date 2026-03-13
+The circadian chain: Dawn -> Dusk -> Solitude -> Dawn.
+Each job does its work, then schedules its successor.
+Jobs persist in app.jobs (Postgres). APScheduler is the in-memory executor.
 """
 
 import argparse
@@ -32,13 +27,9 @@ def cli() -> None:
     )
     subparsers = parser.add_subparsers(dest="job_name", help="Job to run")
 
-    # Register each job's subcommand
-    from alpha_app.jobs import today, capsule, to_self, solitude, dawn
-    today.add_cli_args(subparsers)
-    capsule.add_cli_args(subparsers)
-    to_self.add_cli_args(subparsers)
-    solitude.add_cli_args(subparsers)
-    dawn.add_cli_args(subparsers)
+    # Register each job's subcommand (only those with CLI support)
+    from alpha_app.jobs import dawn
+    dawn.add_cli_args(subparsers) if hasattr(dawn, "add_cli_args") else None
 
     args = parser.parse_args()
 

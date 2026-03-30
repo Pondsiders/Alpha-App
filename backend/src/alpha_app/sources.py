@@ -140,30 +140,20 @@ async def fetch_capsules() -> tuple[str | None, str | None]:
 # ---------------------------------------------------------------------------
 
 async def fetch_letter() -> str | None:
-    """Fetch the letter from last night from Redis.
+    """Read the letter to tomorrow from app.state.
 
     Returns pre-formatted markdown:
-        ## Letter from last night (9:45 PM)
+        ## Letter from last night
         {content}
 
-    Returns None if no letter exists or Redis is unreachable.
+    Returns None if no letter exists.
     """
     try:
-        r = await _get_redis()
-        try:
-            content, time_str = await asyncio.gather(
-                r.get("systemprompt:past:to_self"),
-                r.get("systemprompt:past:to_self:time"),
-            )
-        finally:
-            await r.aclose()
-
+        from alpha_app.db import get_state
+        content = await get_state("letter_to_tomorrow")
         if not content:
             return None
-
-        time_part = f" ({time_str})" if time_str else ""
-        return f"## Letter from last night{time_part}\n\n{content}"
-
+        return f"## Letter from last night\n\n{content}"
     except Exception:
         return None
 

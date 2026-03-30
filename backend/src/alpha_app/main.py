@@ -66,9 +66,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Scheduler — only when --with-scheduler is set (alpha-pi Docker, not Primer bare metal)
     scheduler = None
     if getattr(app.state, "_enable_scheduler", False):
-        from alpha_app.scheduler import create_scheduler
+        from alpha_app.scheduler import create_scheduler, sync_from_db
         scheduler = create_scheduler(app)
         scheduler.start()
+        await sync_from_db(app)  # Populate APScheduler from app.jobs
 
     yield
 
@@ -100,6 +101,9 @@ app.add_middleware(
 
 # Mount routes
 app.include_router(ws_router)
+
+from alpha_app.routes.schedule_api import router as schedule_router
+app.include_router(schedule_router)
 
 
 @app.get("/health")
