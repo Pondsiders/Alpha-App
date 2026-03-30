@@ -20,6 +20,19 @@ from pydantic import BaseModel
 router = APIRouter(prefix="/api/schedule", tags=["schedule"])
 
 
+def _parse_local(time_str: str) -> pendulum.DateTime:
+    """Parse a time string as local time (from TZ env var).
+
+    If the string already has timezone info (e.g. +05:30), use it as-is.
+    If naive (no tz), interpret as Pondside local time.
+    """
+    dt = pendulum.parse(time_str)
+    if dt.timezone_name == "UTC" and "+" not in time_str and "Z" not in time_str:
+        # Naive input — pendulum defaulted to UTC. Re-parse as local.
+        dt = pendulum.parse(time_str, tz=pendulum.now().timezone)
+    return dt
+
+
 class DawnRequest(BaseModel):
     time: str  # ISO 8601 datetime, e.g. "2026-03-31T06:00:00"
 
@@ -44,7 +57,7 @@ async def get_jobs(request: Request):
 async def post_dawn(request: Request, body: DawnRequest):
     """Schedule a Dawn at a specific time. The bootstrap."""
     from alpha_app.scheduler import schedule_job
-    dt = pendulum.parse(body.time)
+    dt = _parse_local(body.time)
     job_id = await schedule_job(request.app, "dawn", dt)
     return {"scheduled": "dawn", "time": str(dt), "job_id": job_id}
 
@@ -53,7 +66,7 @@ async def post_dawn(request: Request, body: DawnRequest):
 async def set_override(request: Request, body: OverrideRequest):
     """Set a dawn override for travel or schedule changes."""
     from alpha_app.db import set_state
-    dt = pendulum.parse(body.dawn_time)
+    dt = _parse_local(body.dawn_time)
     await set_state("dawn_override", {"time": str(dt)})
     return {"override_set": str(dt)}
 
@@ -62,7 +75,7 @@ async def set_override(request: Request, body: OverrideRequest):
 async def post_alarm(request: Request, body: AlarmRequest):
     """Set a custom alarm — drops a message into today's chat."""
     from alpha_app.scheduler import schedule_job
-    dt = pendulum.parse(body.time)
+    dt = _parse_local(body.time)
     job_id = await schedule_job(request.app, "alarm", dt, message=body.message)
     return {"alarm_set": str(dt), "message": body.message, "job_id": job_id}
 
