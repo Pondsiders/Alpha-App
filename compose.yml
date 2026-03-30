@@ -1,11 +1,3 @@
-# Alpha — the duck in the machine
-#
-# The Tailscale sidecar gives the stack its own identity on the tailnet:
-# https://alpha.tail8bd569.ts.net
-#
-# Deploy:  docker compose up --build -d
-# Bare metal (no Docker, no scheduler):  uv run alpha
-
 services:
   tailscale:
     image: ghcr.io/tailscale/tailscale:latest
@@ -30,18 +22,38 @@ services:
     depends_on:
       - tailscale
     entrypoint: ["/entrypoint.sh"]
-    command: ["postgres"]
-    environment:
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_ROLE=${POSTGRES_ROLE:-primary}
-      - REPLICATION_PRIMARY_HOST=${REPLICATION_PRIMARY_HOST:-alpha-pi}
-      - REPLICATION_PRIMARY_PORT=${REPLICATION_PRIMARY_PORT:-15432}
-      - REPLICATION_USER=${REPLICATION_USER:-replicator}
-      - REPLICATION_PASSWORD=${REPLICATION_PASSWORD}
-      - TZ=America/Los_Angeles
+    command: ["postgres",
+      "-c", "archive_mode=on",
+      "-c", "archive_command=/scripts/archive-wal.sh %p %f",
+      "-c", "archive_timeout=300",
+      "-c", "wal_level=replica",
+      "-c", "max_wal_senders=5",
+      "-c", "max_replication_slots=5",
+      "-c", "hot_standby=on",
+      "-c", "wal_keep_size=1024"]
+    env_file: .env
     volumes:
       - /var/lib/postgres/alpha:/var/lib/postgresql/data
+      - /mnt/Wilson/wal:/mnt/Wilson/wal
       - ./postgres/entrypoint.sh:/entrypoint.sh:ro
+      - ./postgres/archive-wal.sh:/scripts/archive-wal.sh:ro
+    restart: unless-stopped
+
+  backup:
+    build:
+      context: ./backup
+    container_name: alpha-backup
+    profiles: ["full"]
+    network_mode: service:tailscale
+    depends_on:
+      - tailscale
+      - postgres
+    env_file: .env
+    environment:
+      - B2_BUCKET=alpha-yellowstone
+      - B2_ENDPOINT=https://s3.us-west-000.backblazeb2.com
+    volumes:
+      - /mnt/Wilson:/mnt/Wilson
     restart: unless-stopped
 
   garage:
@@ -70,19 +82,11 @@ services:
     env_file: .env
     environment:
       - CONTAINER=1
-      - TZ=America/Los_Angeles
-      # Bytecache cleaned at build time — source mounts always win.
-      # Runtime .pyc writes are fine (they go to the writable layer).
     volumes:
       - /Pondside:/Pondside
-      # Alpha-Home IS /home/alpha. One mount, one home.
       - /Pondside/Alpha-Home:/home/alpha
-      # Overlay Jeffery's GWS tokens for calendar/docs access.
       - /home/jefferyharrell/.config/gws:/home/alpha/.config/gws
       - /var/run/docker.sock:/var/run/docker.sock
-      # Dev workflow: source mount overlays baked-in code.
-      # Edit on Pondside, restart container, changes take effect.
-      # Remove these two lines for production (Pi lifeboat).
       - ./backend/src:/app/backend/src:ro
       - ./frontend/dist:/app/frontend/dist:ro
     restart: unless-stopped
