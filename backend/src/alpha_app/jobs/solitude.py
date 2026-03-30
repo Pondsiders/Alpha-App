@@ -186,6 +186,25 @@ async def _get_next_dawn_time() -> pendulum.DateTime:
 
 
 async def _collect_response(chat, span) -> str:
+    """Drain events from chat, return text content.
+
+    If the chat has an on_broadcast callback (live WebSocket session),
+    we can't use events() — the callback handles delivery. We wait for
+    the turn to complete by polling state instead.
+    """
+    if chat.on_broadcast:
+        # Live session — callback handles events. Wait for turn to finish.
+        # Poll state until we're back to READY (or COLD if something died).
+        import asyncio
+        for _ in range(600):  # 10 min max wait
+            await asyncio.sleep(1)
+            if chat.state in (ConversationState.READY, ConversationState.COLD):
+                break
+        # Can't capture text content in callback mode — return empty
+        span.set_attribute("gen_ai.usage.input_tokens", chat.total_input_tokens)
+        span.set_attribute("gen_ai.usage.output_tokens", chat.output_tokens)
+        return ""
+
     text_parts = []
     async for event in chat.events():
         if isinstance(event, SystemEvent) and event.subtype == "compact_boundary":

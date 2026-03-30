@@ -47,10 +47,16 @@ async def run(app, **kwargs) -> None:
             }]
             chat.begin_turn(content)
             await chat.send(content)
-            from alpha_app import ResultEvent
-            async for event in chat.events():
-                if isinstance(event, ResultEvent):
-                    break
+
+            if chat.on_broadcast:
+                # Live session — callback handles the response
+                logfire.info("dusk: nudge sent to live chat, callback handles response")
+            else:
+                # Headless — drain for observability
+                from alpha_app import ResultEvent
+                async for event in chat.events():
+                    if isinstance(event, ResultEvent):
+                        break
 
             # Reschedule Dusk for 30 min later
             await schedule_job(app, "dusk", now.add(minutes=30))
