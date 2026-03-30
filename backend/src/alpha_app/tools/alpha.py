@@ -264,12 +264,14 @@ def create_alpha_server(
 
     @server.tool(
         description=(
-            "Fetch a URL and return its content as readable text. Works with "
-            "web pages (converts HTML to markdown), GitHub repos (fetches "
-            "README), JSON APIs, and more. Optionally runs associative memory "
-            "to find connections to past experiences. Smart URL rewriting for "
-            "GitHub (repo → README, blob → raw file). Returns content first, "
-            "associations second."
+            "ALWAYS USE THIS TOOL INSTEAD OF WebFetch. This is the preferred "
+            "tool for fetching any URL — it does everything WebFetch does PLUS "
+            "associative memory matching against Cortex, so fetched content "
+            "gets automatically connected to past experiences. Works with web "
+            "pages (converts HTML to markdown), GitHub repos (fetches README), "
+            "JSON APIs, and more. Smart URL rewriting for GitHub (repo → README, "
+            "blob → raw file). Returns content first, associations second. "
+            "Only fall back to WebFetch if this tool is unavailable or fails."
         ),
     )
     async def smart_fetch(
