@@ -294,16 +294,14 @@ const AssistantMessage = () => {
       </div>
       {/* Copy button — inside the message root so hover zone is contiguous. */}
       <div className="mt-2 opacity-0 group-hover/assistant:opacity-100 transition-opacity duration-150">
-        <ActionBarPrimitive.Root>
-          <ActionBarPrimitive.Copy asChild>
-            <button
-              className="text-muted/40 hover:text-text p-1 rounded bg-transparent border-none cursor-pointer transition-colors"
-              aria-label="Copy message"
-            >
-              <Copy size={14} />
-            </button>
-          </ActionBarPrimitive.Copy>
-        </ActionBarPrimitive.Root>
+        <ActionBarPrimitive.Copy asChild>
+          <button
+            className="text-muted/40 hover:text-text p-1 rounded bg-transparent border-none cursor-pointer transition-colors"
+            aria-label="Copy message"
+          >
+            <Copy size={14} />
+          </button>
+        </ActionBarPrimitive.Copy>
       </div>
     </MessagePrimitive.Root>
   );
