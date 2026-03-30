@@ -5,9 +5,9 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
-// Configurable ports via environment variables
-const FRONTEND_PORT = parseInt(process.env.VITE_PORT || '18011', 10)
-const BACKEND_PORT = parseInt(process.env.VITE_BACKEND_PORT || '18010', 10)
+// Dev server config
+const FRONTEND_PORT = parseInt(process.env.VITE_PORT || '5173', 10)
+const BACKEND_URL = process.env.VITE_BACKEND_URL || 'https://alpha.tail8bd569.ts.net'
 
 // Load HTTPS config if certs exist (for dev server), otherwise use false (for build)
 function getHttpsConfig() {
@@ -85,12 +85,12 @@ export default defineConfig({
     https: getHttpsConfig(),
     proxy: {
       '/api': {
-        target: `https://localhost:${BACKEND_PORT}`,
+        target: BACKEND_URL,
         changeOrigin: true,
-        secure: false,  // Accept self-signed Tailscale certs
+        secure: false,  // Accept self-signed / Tailscale certs
       },
       '/ws': {
-        target: `https://localhost:${BACKEND_PORT}`,
+        target: BACKEND_URL,
         changeOrigin: true,
         ws: true,
         secure: false,
