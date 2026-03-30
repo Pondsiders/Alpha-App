@@ -95,7 +95,7 @@ export function MemoryCard({ memory, flat = false }: MemoryCardProps) {
               className="w-full h-12 object-cover object-top rounded-sm mt-0.5 opacity-80"
             />
           ) : preview ? (
-            <div className="text-[12px] text-text/70 leading-tight line-clamp-2 h-12 overflow-hidden">
+            <div className="text-[12px] text-text/70 leading-tight line-clamp-3 h-12 overflow-hidden">
               {preview}
             </div>
           ) : null}
