@@ -130,6 +130,13 @@
   font-size: 0.85em;
 }
 
+/* Shiki-highlighted blocks: shiki sets its own background-color inline,
+   which overrides our CSS background above. The rest (padding, border-radius,
+   font, overflow) still applies. Reset the line-height to match shiki's spans. */
+.markdown-text .shiki {
+  line-height: 1.6;
+}
+
 .markdown-text pre code {
   font-family: inherit;
   font-size: inherit;

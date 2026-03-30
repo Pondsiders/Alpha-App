@@ -46,7 +46,8 @@ import type {
   ThreadMessageLike,
   AppendMessage,
 } from "@assistant-ui/react";
-import { MarkdownTextPrimitive } from "@assistant-ui/react-markdown";
+import { MarkdownTextPrimitive, memoizeMarkdownComponents } from "@assistant-ui/react-markdown";
+import { SyntaxHighlighter } from "../components/assistant-ui/shiki-highlighter";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -232,11 +233,16 @@ const ThinkingBlock = ({ text, status }: { text: string; status: unknown }) => {
 // An inline object literal in JSX is recreated every render, which breaks
 // Parts' internal memoization and forces child unmount/remount.
 // Native assistant-ui markdown text with smooth streaming + GFM
+const markdownComponents = memoizeMarkdownComponents({
+  SyntaxHighlighter,
+});
+
 const NativeMarkdownText = () => (
   <MarkdownTextPrimitive
     remarkPlugins={[remarkGfm]}
     className="markdown-text"
     smooth
+    components={markdownComponents}
   />
 );
 
