@@ -14,12 +14,17 @@ import base64
 import io
 
 from PIL import Image, ImageOps
+from pillow_heif import register_heif_opener
+
+register_heif_opener()
 
 _MAX_PIXELS = 1_000_000  # 1 megapixel threshold
 _JPEG_QUALITY = 85
 
 # Media types that should be JPEG-compressed even when under 1MP
-_LOSSLESS_MEDIA_TYPES = frozenset({"image/png", "image/gif", "image/webp", "image/bmp", "image/tiff"})
+_LOSSLESS_MEDIA_TYPES = frozenset(
+    {"image/png", "image/gif", "image/webp", "image/bmp", "image/tiff", "image/heic", "image/heif"}
+)
 
 
 def process_image_block(block: dict) -> dict:
