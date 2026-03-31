@@ -85,7 +85,6 @@ services:
     volumes:
       - /Pondside:/Pondside
       - /Pondside/Alpha-Home:/home/alpha
-      - /home/jefferyharrell/.config/gws:/home/alpha/.config/gws
       - /var/run/docker.sock:/var/run/docker.sock
       - ./backend/src:/app/backend/src:ro
       - ./frontend/dist:/app/frontend/dist:ro

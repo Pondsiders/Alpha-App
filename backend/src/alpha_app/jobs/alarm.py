@@ -46,17 +46,9 @@ async def run(app, **kwargs) -> None:
         chat.begin_turn(content)
         await chat.send(content)
 
-        if chat.on_broadcast:
-            # Live session — the callback handles everything.
-            # Just log that we sent it and walk away.
-            logfire.info("alarm: sent to live chat {chat_id}, callback handles response",
-                        chat_id=chat.id)
-        else:
-            # Headless — drain for observability
-            async for event in chat.events():
-                if isinstance(event, ResultEvent):
-                    break
-            logfire.info("alarm: sent to headless chat {chat_id}", chat_id=chat.id)
+        # Wait for Claude to finish responding
+        await chat._claude.wait_until_ready()
+        logfire.info("alarm: sent to chat {chat_id}", chat_id=chat.id)
 
 
 def _find_todays_most_recent_chat(app) -> Chat | None:

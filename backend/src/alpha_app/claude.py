@@ -429,9 +429,29 @@ class Claude:
         self._system_prompt_file: Path | None = None  # Temp file for large system prompts
         self._trace_context: dict | None = None  # Turn span context for stdout traces
 
+        # Ready latch — set when Claude is idle (ready for next input),
+        # cleared when Claude is working (saw init, no result yet).
+        # Callers use: await claude.wait_until_ready()
+        self._ready = asyncio.Event()
+        self._ready.set()  # starts ready
+
     @property
     def state(self) -> ClaudeState:
         return self._state
+
+    @property
+    def is_ready(self) -> bool:
+        """True when Claude is idle and ready for the next input."""
+        return self._ready.is_set()
+
+    async def wait_until_ready(self) -> None:
+        """Block until Claude finishes current work.
+
+        Safe to call when already ready (returns immediately).
+        Used by headless jobs (Dawn, Solitude, alarms) to sequence
+        steps without iterating the event stream.
+        """
+        await self._ready.wait()
 
     @property
     def session_id(self) -> str | None:
@@ -596,6 +616,7 @@ class Claude:
                 if raw is None:
                     # Subprocess exited
                     self._state = ClaudeState.STOPPED
+                    self._ready.set()  # Unblock any waiters
                     logfire.warn(
                         "claude.lifecycle: subprocess exited session={session}",
                         session=self._session_id or "?",
@@ -625,6 +646,12 @@ class Claude:
                         await self._handle_control_request(event)
                         continue
 
+                    # Ready latch: init = working, result = ready.
+                    if isinstance(event, SystemEvent) and event.subtype == "init":
+                        self._ready.clear()  # Claude is working
+                    elif isinstance(event, ResultEvent):
+                        self._ready.set()    # Claude is ready
+
                     # Capture session ID from first ResultEvent.
                     if isinstance(event, ResultEvent) and not self._session_id:
                         if event.session_id:
@@ -636,12 +663,14 @@ class Claude:
                         await self._on_event(event)
 
         except asyncio.CancelledError:
+            self._ready.set()  # Unblock any waiters
             logfire.debug(
                 "claude.lifecycle: drain cancelled session={session}",
                 session=self._session_id or "?",
             )
             return
         except Exception as e:
+            self._ready.set()  # Unblock any waiters
             logfire.error(
                 "claude.lifecycle: drain CRASHED session={session} error={error}",
                 session=self._session_id or "?",

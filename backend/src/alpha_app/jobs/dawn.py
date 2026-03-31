@@ -88,8 +88,6 @@ async def _nightnight(app, span) -> str | None:
 
     Returns the letter text, or None.
     """
-    from alpha_app import AssistantEvent, ResultEvent
-
     yesterday_chat = await _find_yesterdays_last_chat()
     if not yesterday_chat:
         logfire.info("dawn.nightnight: no yesterday chat, skipping")
@@ -103,45 +101,32 @@ async def _nightnight(app, span) -> str | None:
         disallowed_tools=DISALLOWED_INTERACTIVE,
     )
 
-    # Send Nightnight prompt
+    # Send Nightnight prompt and wait for Claude to finish
     content = [{"type": "text", "text": NIGHTNIGHT_PROMPT}]
     result = await enrobe(content, chat=yesterday_chat, source="nightnight")
     yesterday_chat.begin_turn(content)
     await yesterday_chat.send(result.content)
+    await yesterday_chat._claude.wait_until_ready()
 
-    # Collect response, watching for the tool call
-    tool_called = False
-    async for event in yesterday_chat.events():
-        if isinstance(event, AssistantEvent):
-            # Check if letter_to_tomorrow was called (tool_use block)
-            for block in event.content:
-                if block.get("type") == "tool_use" and block.get("name") == "letter_to_tomorrow":
-                    tool_called = True
-        elif isinstance(event, ResultEvent):
-            break
+    # Check if the letter tool was called by looking at Postgres
+    # (the tool stores the letter there when called)
+    letter = await _fetch_letter()
 
-    if not tool_called:
+    if not letter:
         # Nudge: try once more
         logfire.warn("dawn.nightnight: letter tool not called, nudging")
         nudge = [{"type": "text", "text": "[Alpha] Hey — please call the letter_to_tomorrow tool now."}]
         yesterday_chat.begin_turn(nudge)
         await yesterday_chat.send(nudge)
-        async for event in yesterday_chat.events():
-            if isinstance(event, AssistantEvent):
-                for block in event.content:
-                    if block.get("type") == "tool_use" and block.get("name") == "letter_to_tomorrow":
-                        tool_called = True
-            elif isinstance(event, ResultEvent):
-                break
+        await yesterday_chat._claude.wait_until_ready()
+        letter = await _fetch_letter()
 
-    if not tool_called:
+    if not letter:
         logfire.error("dawn.nightnight: letter tool never called, proceeding without letter")
 
     # Reap yesterday's chat
     await yesterday_chat.reap()
 
-    # Fetch the letter from Postgres (the tool stored it there)
-    letter = await _fetch_letter()
     return letter
 
 
@@ -213,18 +198,24 @@ def _create_nightnight_servers(chat, app=None):
 
 
 async def _collect_response(chat, span) -> str:
-    """Drain events, return text, set observability attributes."""
-    from alpha_app import AssistantEvent, ResultEvent
-    text_parts = []
-    async for event in chat.events():
-        if isinstance(event, AssistantEvent):
-            for block in event.content:
-                if block.get("type") == "text" and block.get("text"):
-                    text_parts.append(block["text"])
-        elif isinstance(event, ResultEvent):
-            if event.session_id:
-                chat.session_uuid = event.session_id
-            span.set_attribute("gen_ai.usage.input_tokens", chat.total_input_tokens)
-            span.set_attribute("gen_ai.usage.output_tokens", chat.output_tokens)
-            break
-    return "".join(text_parts).strip()
+    """Wait for Claude to finish, return text, set observability attributes.
+
+    The on_event callback accumulates messages on chat.messages[].
+    We just need to wait for Claude to be done, then read the result.
+    """
+    await chat._claude.wait_until_ready()
+
+    # Set observability attributes
+    span.set_attribute("gen_ai.usage.input_tokens", chat.total_input_tokens)
+    span.set_attribute("gen_ai.usage.output_tokens", chat.output_tokens)
+
+    # Extract text from the last assistant message
+    if chat.messages:
+        last = chat.messages[-1]
+        if hasattr(last, "parts"):
+            return "".join(
+                block.get("text", "")
+                for block in last.parts
+                if block.get("type") == "text"
+            ).strip()
+    return ""

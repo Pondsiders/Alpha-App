@@ -186,38 +186,24 @@ async def _get_next_dawn_time() -> pendulum.DateTime:
 
 
 async def _collect_response(chat, span) -> str:
-    """Drain events from chat, return text content.
+    """Wait for Claude to finish, set observability attributes.
 
-    If the chat has an on_broadcast callback (live WebSocket session),
-    we can't use events() — the callback handles delivery. We wait for
-    the turn to complete by polling state instead.
+    Works regardless of whether a WebSocket listener is attached —
+    wait_until_ready() uses the Claude-level _ready Event, not the
+    event stream or conversation state.
     """
-    if chat.on_broadcast:
-        # Live session — callback handles events. Wait for turn to finish.
-        # Poll state until we're back to READY (or COLD if something died).
-        import asyncio
-        for _ in range(600):  # 10 min max wait
-            await asyncio.sleep(1)
-            if chat.state in (ConversationState.READY, ConversationState.COLD):
-                break
-        # Can't capture text content in callback mode — return empty
-        span.set_attribute("gen_ai.usage.input_tokens", chat.total_input_tokens)
-        span.set_attribute("gen_ai.usage.output_tokens", chat.output_tokens)
-        return ""
+    await chat._claude.wait_until_ready()
 
-    text_parts = []
-    async for event in chat.events():
-        if isinstance(event, SystemEvent) and event.subtype == "compact_boundary":
-            chat._needs_orientation = True
-            chat._injected_topics = set()
-        elif isinstance(event, AssistantEvent):
-            for block in event.content:
-                if block.get("type") == "text" and block.get("text"):
-                    text_parts.append(block["text"])
-        elif isinstance(event, ResultEvent):
-            if event.session_id:
-                chat.session_uuid = event.session_id
-            span.set_attribute("gen_ai.usage.input_tokens", chat.total_input_tokens)
-            span.set_attribute("gen_ai.usage.output_tokens", chat.output_tokens)
-            break
-    return "".join(text_parts).strip()
+    span.set_attribute("gen_ai.usage.input_tokens", chat.total_input_tokens)
+    span.set_attribute("gen_ai.usage.output_tokens", chat.output_tokens)
+
+    # Extract text from the last assistant message
+    if chat.messages:
+        last = chat.messages[-1]
+        if hasattr(last, "parts"):
+            return "".join(
+                block.get("text", "")
+                for block in last.parts
+                if block.get("type") == "text"
+            ).strip()
+    return ""
