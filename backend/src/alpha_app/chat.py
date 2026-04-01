@@ -676,9 +676,26 @@ class Chat:
     # -- User echo events: tool results, message confirmations ---------------
 
     async def _handle_user_echo(self, event: UserEvent) -> None:
-        """Bookshelf: update tool-call parts with results.
-        Broadcast: send tool-result events."""
+        """Bookshelf: confirm pencil messages (pencil → ink), update tool results.
+        Broadcast: confirmed user-message events, tool-result events."""
         chat_id = self.id
+
+        # Pencil → ink: match the echo against unconfirmed UserMessages.
+        # Walk in order. First match wins. Unmatched messages stay pencil
+        # (orphaned — Claude never acknowledged them).
+        echo_content = event.content
+        for msg in self.messages:
+            if isinstance(msg, UserMessage) and not msg._confirmed:
+                if msg.to_content_blocks() == echo_content:
+                    msg._confirmed = True
+                    msg._dirty = True
+                    # Broadcast the confirmed message with full metadata
+                    await self._broadcast({
+                        "type": "user-message-confirmed",
+                        "chatId": chat_id,
+                        "data": msg.to_wire(),
+                    })
+                    break
 
         for block in event.content:
             if block.get("type") == "tool_result":

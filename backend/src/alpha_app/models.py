@@ -129,6 +129,7 @@ class UserMessage:
     topic_context: str | None = None          # Injected topic context
     topic_names: list[str] = field(default_factory=list)  # Which topics were injected
     _dirty: bool = field(default=True, repr=False)  # Born dirty — flush writes to Postgres
+    _confirmed: bool = field(default=False, repr=False)  # Pencil (False) until Claude echoes it (True)
 
     @staticmethod
     def _to_display_block(block: dict) -> dict:
