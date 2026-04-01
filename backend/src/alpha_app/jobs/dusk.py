@@ -45,11 +45,7 @@ async def run(app, **kwargs) -> None:
                 f"[Alpha] It's {now.format('h:mm A')}. "
                 "Solitude's waiting whenever you're ready. No rush. \U0001f986"
             }]
-            chat.begin_turn(content)
-            await chat.send(content)
-
-            # Wait for Claude to finish responding to the nudge
-            await chat._claude.wait_until_ready()
+            await chat.interject(content)
 
             # Reschedule Dusk for 30 min later
             await schedule_job(app, "dusk", now.add(minutes=30))

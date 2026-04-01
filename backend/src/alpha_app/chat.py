@@ -135,6 +135,30 @@ class SuggestState(Enum):
 ChatState = ConversationState
 
 
+class Turn:
+    """An exclusive turn on a Chat. Created by chat.turn() context manager.
+
+    The holder can send one or more messages (steering). Nobody else can
+    start a turn until this one ends. ResultEvent releases the lock.
+    """
+
+    def __init__(self, chat: "Chat") -> None:
+        self._chat = chat
+
+    async def send(self, content: list[dict]) -> None:
+        """Send a message within this turn. Can be called multiple times."""
+        self._chat.updated_at = time.time()
+        self._chat.state = ConversationState.RESPONDING
+        await self._chat._claude.send(content)
+
+    async def response(self) -> "AssistantMessage | None":
+        """Wait for Claude to finish. Returns the completed response."""
+        await self._chat._claude._ready.wait()
+        if self._chat.messages and isinstance(self._chat.messages[-1], AssistantMessage):
+            return self._chat.messages[-1]
+        return None
+
+
 class Chat:
     """A single conversation. Owns a claude subprocess and its lifecycle.
 
@@ -177,6 +201,10 @@ class Chat:
         # Signature: async (event_dict) -> None
         # Called for every WebSocket event to broadcast.
         self.on_broadcast: Callable[[dict], Awaitable[None]] | None = None
+
+        # Turn lock — exclusive access for turns.
+        self._turn_lock = asyncio.Lock()
+        self._active_turn: "Turn | None" = None
 
         # Cached token state — survives subprocess death
         self._cached_token_count: int = 0
@@ -464,6 +492,19 @@ class Chat:
             data["topics"] = topics
         data.update(overrides)
         return data
+
+    async def wait_until_ready(self) -> "AssistantMessage | None":
+        """Wait for Claude to finish, return the response.
+
+        The universal "ask the duck, wait for the duck, read what the
+        duck said" primitive. Claude owns the signal (_ready Event).
+        Chat owns the interpretation (return the AssistantMessage).
+        """
+        if self._claude:
+            await self._claude._ready.wait()
+        if self.messages and isinstance(self.messages[-1], AssistantMessage):
+            return self.messages[-1]
+        return None
 
     def set_trace_context(self, ctx: dict | None) -> None:
         """Set trace context so proxy spans nest under the consumer's trace."""
@@ -910,7 +951,48 @@ class Chat:
             return "yellow"
         return None
 
-    # -- Turn lifecycle -------------------------------------------------------
+    # -- Turn lock: exclusive access primitives --------------------------------
+
+    async def turn(self):
+        """Acquire an exclusive turn. Context manager.
+
+        Usage:
+            async with chat.turn() as t:
+                await t.send(msg)
+                response = await t.response()
+
+        The turn lock guarantees nobody else can send during your turn.
+        ResultEvent ends the turn (releases the lock). Multiple send()
+        calls within one turn are allowed (steering messages).
+        """
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def _turn_cm():
+            await self._claude._ready.wait()  # wait until Claude is free
+            await self._turn_lock.acquire()
+            t = Turn(self)
+            self._active_turn = t
+            try:
+                yield t
+            finally:
+                self._active_turn = None
+                self._turn_lock.release()
+
+        return _turn_cm()
+
+    async def interject(self, content: list[dict]) -> None:
+        """Fire-and-forget message. Bypasses turn lock.
+
+        No response tracking. Used for alarms, nudges, AutoRAG.
+        The message enters Claude's stdin queue and gets processed
+        between API calls.
+        """
+        if not self._claude:
+            raise RuntimeError(f"Chat {self.id} has no subprocess — can't interject")
+        await self._claude.send(content)
+
+    # -- Turn lifecycle (legacy — being replaced by turn lock) -----------------
 
     def begin_turn(self, content: list[dict] | None = None) -> None:
         """Begin a new turn. READY -> ENRICHING, suggest -> DISARMED.

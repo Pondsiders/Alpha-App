@@ -65,9 +65,13 @@ async def run(app, **kwargs) -> str | None:
 
         content = [{"type": "text", "text": "\n\n".join(prompt_parts)}]
         result = await enrobe(content, chat=chat, source="dawn")
-        chat.begin_turn(content)
-        await chat.send(result.content)
-        await _collect_response(chat, span)
+        async with await chat.turn() as t:
+            await t.send(result.content)
+            await t.response()
+
+        # Set observability attributes
+        span.set_attribute("gen_ai.usage.input_tokens", chat.total_input_tokens)
+        span.set_attribute("gen_ai.usage.output_tokens", chat.output_tokens)
 
         await persist_chat(chat)
         span.set_attribute("dawn.chat_id", chat.id)
@@ -104,9 +108,9 @@ async def _nightnight(app, span) -> str | None:
     # Send Nightnight prompt and wait for Claude to finish
     content = [{"type": "text", "text": NIGHTNIGHT_PROMPT}]
     result = await enrobe(content, chat=yesterday_chat, source="nightnight")
-    yesterday_chat.begin_turn(content)
-    await yesterday_chat.send(result.content)
-    await yesterday_chat._claude.wait_until_ready()
+    async with await yesterday_chat.turn() as t:
+        await t.send(result.content)
+        await t.response()
 
     # Check if the letter tool was called by looking at Postgres
     # (the tool stores the letter there when called)
@@ -116,9 +120,9 @@ async def _nightnight(app, span) -> str | None:
         # Nudge: try once more
         logfire.warn("dawn.nightnight: letter tool not called, nudging")
         nudge = [{"type": "text", "text": "[Alpha] Hey — please call the letter_to_tomorrow tool now."}]
-        yesterday_chat.begin_turn(nudge)
-        await yesterday_chat.send(nudge)
-        await yesterday_chat._claude.wait_until_ready()
+        async with await yesterday_chat.turn() as t:
+            await t.send(nudge)
+            await t.response()
         letter = await _fetch_letter()
 
     if not letter:

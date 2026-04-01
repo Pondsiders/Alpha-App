@@ -1,34 +1,24 @@
 """alarm.py — Custom one-shot alarm.
 
-Drops a message into today's most recent chat. Fire and forget.
+Drops a message into today's most recent chat via interject().
+Fire and forget — bypasses the turn lock because alarms are
+time-sensitive and can't wait for a 15-minute turn to finish.
 """
 
-import time
-
 import logfire
-import pendulum
 
-from alpha_app.chat import Chat, ConversationState
-from alpha_app import ResultEvent
+from alpha_app.chat import Chat, ConversationState, find_circadian_chat
 
 
 async def run(app, **kwargs) -> None:
-    """Alarm handler. Deliver the message to today's active chat.
-
-    If the chat has an on_event callback (live WebSocket session), we
-    just send and walk away — the callback handles the response and
-    broadcasts it to the frontend. We don't drain events ourselves.
-
-    If the chat has NO callback (headless, e.g. no browser open), we
-    drain events until ResultEvent for observability.
-    """
+    """Alarm handler. Interject the message into today's active chat."""
     message = kwargs.get("message", "\u23f0")
 
     with logfire.span("alpha.job.alarm", **{
         "job.name": "alarm",
         "job.message": message,
-    }) as span:
-        chat = _find_todays_most_recent_chat(app)
+    }):
+        chat = find_circadian_chat(getattr(app.state, "chats", {}))
         if not chat:
             logfire.warn("alarm: no chat today, message lost: {msg}", msg=message)
             return
@@ -43,22 +33,5 @@ async def run(app, **kwargs) -> None:
             )
 
         content = [{"type": "text", "text": f"[Alpha] {message}"}]
-        chat.begin_turn(content)
-        await chat.send(content)
-
-        # Wait for Claude to finish responding
-        await chat._claude.wait_until_ready()
-        logfire.info("alarm: sent to chat {chat_id}", chat_id=chat.id)
-
-
-def _find_todays_most_recent_chat(app) -> Chat | None:
-    today = pendulum.now().format("YYYY-MM-DD")
-    chats = getattr(app.state, "chats", {})
-    todays = [
-        c for c in chats.values()
-        if c.id != "solitude"
-        and pendulum.from_timestamp(c.created_at).format("YYYY-MM-DD") == today
-    ]
-    if not todays:
-        return None
-    return max(todays, key=lambda c: c.updated_at)
+        await chat.interject(content)
+        logfire.info("alarm: interjected to chat {chat_id}", chat_id=chat.id)
