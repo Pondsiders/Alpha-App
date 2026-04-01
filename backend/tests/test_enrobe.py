@@ -144,12 +144,24 @@ class TestEnrobeOrientation:
             assert result.content[-2]["type"] == "text"
 
     async def test_enrobe_returns_enrobe_result(self, user_content):
-        """enrobe returns an EnrobeResult with content and events."""
+        """enrobe returns an EnrobeResult with content."""
         chat = ChatStub(needs_orientation=True)
 
         result = await enrobe(user_content, chat=chat)
 
         assert isinstance(result, EnrobeResult)
         assert isinstance(result.content, list)
-        assert isinstance(result.events, list)
-        assert any(e["type"] == "user-message" for e in result.events)
+        # Events are now broadcast via callback, not returned in the list.
+        assert result.events == []
+
+    async def test_enrobe_broadcasts_via_callback(self, user_content):
+        """When broadcast_fn is provided, enrobe broadcasts at each step."""
+        chat = ChatStub(needs_orientation=True)
+        broadcasts = []
+
+        async def capture(event):
+            broadcasts.append(event)
+
+        await enrobe(user_content, chat=chat, broadcast_fn=capture)
+
+        assert any(e["type"] == "user-message" for e in broadcasts)

@@ -109,25 +109,21 @@ async def _run_human_turn(
     try:
         chat.set_trace_context(logfire.get_context())
 
-        # -- Enrobe -----------------------------------------------------------
+        # -- Enrobe (broadcasts progressively via callback) -------------------
+        async def _enrobe_broadcast(event: dict) -> None:
+            if broadcast_user_message:
+                await broadcast(connections, event)
+
         topic_registry = getattr(ws.app.state, "topic_registry", None)
         result = await enrobe(
             content, chat=chat, source=source, msg_id=msg_id,
             topics=topics, topic_registry=topic_registry,
+            broadcast_fn=_enrobe_broadcast,
         )
 
         # Update Logfire with enriched content
         enriched_messages = format_input_messages(result.content)
         span.set_attribute("gen_ai.input.messages", enriched_messages)
-
-        # -- Broadcast progressive enrichment events --------------------------
-        if broadcast_user_message:
-            for event in result.events:
-                await broadcast(connections, {
-                    "type": event["type"],
-                    "chatId": chat_id,
-                    "data": event["data"],
-                })
 
         # -- Send via Turn (auto-starts Claude if cold) -----------------------
         async with await chat.turn() as t:

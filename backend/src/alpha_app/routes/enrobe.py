@@ -84,26 +84,25 @@ async def enrobe(
     msg_id: str | None = None,
     topics: list[str] | None = None,
     topic_registry: "TopicRegistry | None" = None,
+    broadcast_fn: "Callable[[dict], Awaitable[None]] | None" = None,
 ) -> EnrobeResult:
     """Enrich a user message with context.
 
     Wraps the user's raw content blocks in enrichment: orientation,
-    recalled memories, intro suggestions, and timestamps. Returns an
-    EnrobeResult containing the UserMessage domain object, content blocks
-    for Claude, and progressive user-message events for the WebSocket.
-
-    Each enrichment step emits a user-message event containing the
-    COMPLETE current state via UserMessage.to_wire(). The frontend
-    matches by message ID and updates its state.
+    recalled memories, and timestamps. Each enrichment step broadcasts
+    immediately via broadcast_fn (if provided) — progressive enhancement,
+    not batched.
 
     Args:
         content: The raw user message content blocks.
         chat: The Chat instance (for token state, chat ID, etc.).
         source: Message source — "human", "buzzer", "intro", etc.
         msg_id: Optional message ID. Generated if not provided.
+        broadcast_fn: Optional async callback for progressive broadcast.
+            Called with a user-message event dict at each enrichment step.
 
     Returns:
-        EnrobeResult with UserMessage, content blocks, and events.
+        EnrobeResult with UserMessage and content blocks.
     """
     # Process images: resize to ≤1MP, compress to JPEG
     content = process_image_blocks(content)
@@ -116,14 +115,14 @@ async def enrobe(
     # Create the UserMessage domain object
     msg = UserMessage(id=msg_id, content=content, source=source)
 
-    events: list[dict] = []
-
-    def _snapshot() -> dict:
-        """Build a user-message event with the current enrichment state."""
-        return {
-            "type": "user-message",
-            "data": msg.to_wire(),
-        }
+    async def _broadcast_snapshot() -> None:
+        """Broadcast the current enrichment state immediately."""
+        if broadcast_fn:
+            await broadcast_fn({
+                "type": "user-message",
+                "chatId": chat.id,
+                "data": msg.to_wire(),
+            })
 
     # 1. Orientation — now lives in the system prompt (survives --resume
     #    truncation). The _needs_orientation flag is cleared on first message
@@ -134,12 +133,10 @@ async def enrobe(
     # 2. (Removed: intro injection. Suggest fires as own post-turn now.)
 
     # 3. Timestamp — computed instantly, broadcast immediately
-    #    User story: timestamp appears basically instantly after send.
     msg.timestamp = _format_timestamp()
-    events.append(_snapshot())
+    await _broadcast_snapshot()
 
     # 4. Memory recall — unified pipeline for text + images
-    #    User story: memories appear AFTER user message as "something to munch on."
     memories = await recall(content, session_id=chat.id)
     for mem in memories:
         msg.memories.append(RecalledMemory(
@@ -153,7 +150,7 @@ async def enrobe(
 
     # Broadcast memory snapshot if any memories were found
     if msg.memories:
-        events.append(_snapshot())
+        await _broadcast_snapshot()
 
     # 5. Topic context — inject if requested and not already in this window
     if topics and topic_registry:
@@ -168,9 +165,9 @@ async def enrobe(
             if context_parts:
                 msg.topic_context = "\n\n---\n\n".join(context_parts)
                 msg.topic_names = new_topics
-                events.append(_snapshot())
+                await _broadcast_snapshot()
 
     # Build final content blocks for Claude
     final_content = msg.to_content_blocks()
 
-    return EnrobeResult(message=msg, content=final_content, events=events)
+    return EnrobeResult(message=msg, content=final_content, events=[])
