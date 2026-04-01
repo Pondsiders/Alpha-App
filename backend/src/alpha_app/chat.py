@@ -13,6 +13,7 @@ See KERNEL.md for the full design.
 """
 
 import asyncio
+import contextvars
 import json
 import os
 import secrets
@@ -856,7 +857,13 @@ class Chat:
                 b.get("text", "") for b in last_user.content if b.get("type") == "text"
             )
             if user_text.strip():
-                asyncio.create_task(self._post_turn_suggest(user_text, finalized_msg.text))
+                # Empty context so the suggest span is a SIBLING of alpha.turn,
+                # not a child. asyncio.create_task() inherits the parent's trace
+                # context; an empty Context() starts clean.
+                asyncio.create_task(
+                    self._post_turn_suggest(user_text, finalized_msg.text),
+                    context=contextvars.Context(),
+                )
 
         # Broadcast updated state
         await self._broadcast({
