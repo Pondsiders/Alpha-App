@@ -1053,8 +1053,11 @@ class Chat:
                     source="suggest",
                 )
                 async with await self.turn() as t:
+                    # Set trace context so stdout drain and proxy attach to this span
+                    self.set_trace_context(logfire.get_context())
                     await t.send(msg)
                     response = await t.response()
+                    self.set_trace_context(None)  # Clean up after suggest
 
                 if response:
                     span.set_attribute("gen_ai.output.messages", [
