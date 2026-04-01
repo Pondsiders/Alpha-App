@@ -78,7 +78,7 @@ class TestFormatIntroBlock:
     def test_single_memorable(self):
         result = format_intro_block(["Jeffery said something funny"])
         assert result is not None
-        assert result.startswith("## Intro speaks")
+        assert result.startswith("[Narrator]")
         assert "- Jeffery said something funny" in result
 
     def test_multiple_memorables(self):
@@ -89,25 +89,30 @@ class TestFormatIntroBlock:
     def test_empty_list_returns_none(self):
         assert format_intro_block([]) is None
 
-    def test_block_starts_with_intro_speaks_header(self):
+    def test_block_starts_with_narrator_tag(self):
         result = format_intro_block(["moment"])
         assert result is not None
-        assert result.startswith("## Intro speaks\n\n")
+        assert result.startswith("[Narrator] Alpha, consider storing")
 
     def test_block_contains_instruction_line(self):
         result = format_intro_block(["moment"])
         assert result is not None
         assert "consider storing these from the previous turn:" in result
 
-    def test_format_matches_golden_reference_shape(self):
-        """Verify the output matches what enrobe.py and turn.py expect."""
+    def test_block_ends_with_do_not_speak(self):
+        """The prompt must instruct Alpha to only store, not respond with text."""
+        result = format_intro_block(["moment"])
+        assert result is not None
+        assert "Do not speak." in result
+
+    def test_format_matches_narrator_convention(self):
+        """Verify the output uses [Narrator] convention for post-turn suggest."""
         result = format_intro_block(
             ["Jeffery offered Alpha a hit of California citrus"]
         )
         assert result is not None
-        # enrobe.py checks: chat._pending_intro (truthy string)
-        # turn.py checks: text.startswith("## Intro speaks") for role tagging
-        assert result.startswith("## Intro speaks")
+        assert result.startswith("[Narrator]")
+        assert "Do not speak" in result
         assert len(result) > 0
 
 

@@ -132,7 +132,11 @@ def _parse_memorables(text: str) -> list[str]:
 
 
 def format_intro_block(memorables: list[str]) -> str | None:
-    """Format a list of memorables as an Intro speaks block.
+    """Format memorables as a Narrator prompt for the post-turn suggest turn.
+
+    Uses [Narrator] convention — a system voice, not Alpha talking to herself.
+    The "Do not speak" instruction prevents text output; Alpha should only
+    call cortex.store and nothing else.
 
     Returns None if the list is empty (nothing to say).
     """
@@ -141,9 +145,9 @@ def format_intro_block(memorables: list[str]) -> str | None:
 
     lines = "\n".join(f"- {m}" for m in memorables)
     return (
-        "## Intro speaks\n\n"
-        "Alpha, consider storing these from the previous turn:\n"
-        f"{lines}"
+        "[Narrator] Alpha, consider storing these from the previous turn:\n"
+        f"{lines}\n\n"
+        "[Narrator] Call the store tool for any items worth keeping. Do not speak."
     )
 
 
