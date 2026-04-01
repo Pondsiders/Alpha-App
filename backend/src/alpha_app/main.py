@@ -192,11 +192,11 @@ def run() -> None:
         _rebuild_frontend_if_stale(_LOCAL_DIST.parent)
 
     # SSL cert resolution.
-    # Docker (CONTAINER=1): use SSL_CERTFILE/SSL_KEYFILE from env.
+    # Docker: no SSL — tailscale serve handles TLS termination (443 → 18010).
     # Bare metal: derive from hostname → Tailscale cert in /Pondside.
     if os.getenv("CONTAINER"):
-        ssl_certfile = os.getenv("SSL_CERTFILE")
-        ssl_keyfile = os.getenv("SSL_KEYFILE")
+        ssl_certfile = None
+        ssl_keyfile = None
     else:
         import socket
         hostname = socket.gethostname()
