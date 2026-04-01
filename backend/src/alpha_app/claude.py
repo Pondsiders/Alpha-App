@@ -432,6 +432,16 @@ class Claude:
         self._ready = asyncio.Event()
         self._ready.set()  # starts ready
 
+        # Lifecycle lock — serializes start/stop/send.
+        # Prevents race: reap timer fires stop() while concurrent send() arrives.
+        self._lifecycle_lock = asyncio.Lock()
+
+        # Reap timer — idle timeout, self-managed.
+        # Every send() resets it. Timer fires -> stop(). Chat never notices.
+        self._reap_timeout: int = int(os.environ.get("_ALPHA_REAP_TIMEOUT", "3600"))
+        self._reap_task: asyncio.Task | None = None
+        self._on_reap: Callable[[], Awaitable[None]] | None = None  # Chat sets this
+
     @property
     def state(self) -> ClaudeState:
         return self._state
@@ -571,9 +581,11 @@ class Claude:
 
             # Start continuous stdout drain AFTER the init handshake.
             # From this point on, _drain_stdout owns the stdout pipe.
-            # events() is dead — all events flow through on_event callback.
             if self._on_event:
                 self._stdout_task = asyncio.create_task(self._drain_stdout())
+
+            # Start the idle reap timer. Every send() resets it.
+            self._start_reap_timer()
         except Exception as exc:
             logfire.error(
                 "claude.lifecycle: start FAILED {mode} session={session} error={error}",
@@ -591,13 +603,18 @@ class Claude:
         Always works after start(). Claude Code handles internal queueing —
         messages sent while it's busy get processed in order.
 
+        Serialized by _lifecycle_lock to prevent races with stop/reap.
+        Resets the reap timer on every send.
+
         Args:
             content: Messages API content blocks.
         """
-        if self._state not in (ClaudeState.RUNNING, ClaudeState.READY):
-            raise RuntimeError(f"Cannot send in state {self._state}")
+        async with self._lifecycle_lock:
+            if self._state not in (ClaudeState.RUNNING, ClaudeState.READY):
+                raise RuntimeError(f"Cannot send in state {self._state}")
 
-        await self._send_json(self._format_user_message(content))
+            self._start_reap_timer()
+            await self._send_json(self._format_user_message(content))
 
     async def _drain_stdout(self) -> None:
         """Continuously read stdout, handle control requests, emit events.
@@ -676,16 +693,52 @@ class Claude:
             self._state = ClaudeState.STOPPED
 
     async def stop(self) -> None:
-        """Gracefully shut down the claude process."""
-        if self._state == ClaudeState.STOPPED:
-            return
+        """Gracefully shut down the claude process.
 
-        logfire.info(
-            "claude.lifecycle: stop session={session}",
-            session=self._session_id or "?",
-        )
-        self._state = ClaudeState.STOPPED
+        Serialized by _lifecycle_lock to prevent races with send().
+        Cancels the reap timer (we're stopping, no need to reap).
+        """
+        self._cancel_reap_timer()
+
+        async with self._lifecycle_lock:
+            if self._state == ClaudeState.STOPPED:
+                return
+
+            logfire.info(
+                "claude.lifecycle: stop session={session}",
+                session=self._session_id or "?",
+            )
+            self._state = ClaudeState.STOPPED
         await self._cleanup()
+
+    # -- Reap timer (self-managed idle timeout) --------------------------------
+
+    def _start_reap_timer(self) -> None:
+        """Start (or restart) the idle reap timer."""
+        self._cancel_reap_timer()
+        self._reap_task = asyncio.create_task(self._reap_after(self._reap_timeout))
+
+    def _cancel_reap_timer(self) -> None:
+        """Cancel the reap timer if running."""
+        if self._reap_task:
+            # Don't cancel yourself. When _reap_after() calls stop() which
+            # calls us, we ARE the reap task. Self-cancellation raises
+            # CancelledError at the next await inside stop(), which prevents
+            # stop() from ever completing. The birthday bug.
+            if self._reap_task is not asyncio.current_task():
+                self._reap_task.cancel()
+            self._reap_task = None
+
+    async def _reap_after(self, seconds: float) -> None:
+        """Sleep then stop. Called as a background task."""
+        try:
+            await asyncio.sleep(seconds)
+            await self.stop()
+            # Notify Chat so it can broadcast the state change.
+            if self._on_reap:
+                await self._on_reap()
+        except asyncio.CancelledError:
+            pass
 
     # -- Protocol helpers (static, unit-testable) -----------------------------
 

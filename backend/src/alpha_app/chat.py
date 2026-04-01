@@ -166,7 +166,6 @@ class Chat:
 
         self._claude = claude
         self._system_prompt: str = ""  # Stored for resurrection
-        self._reap_task: asyncio.Task | None = None
 
         # -- Smart Chat: the canonical conversation --
         self.messages: list[UserMessage | AssistantMessage | SystemMessage] = []
@@ -500,7 +499,7 @@ class Chat:
             and self.state == ConversationState.READY
         ):
             self.state = ConversationState.RESPONDING
-            self._cancel_reap_timer()
+            # Reap timer handled by Claude internally — no need to cancel here.
 
             if not self._turn_span:
                 span = logfire.span(
@@ -703,7 +702,8 @@ class Chat:
         # State transitions
         self.state = ConversationState.READY
         self.suggest = SuggestState.ARMED
-        self._start_reap_timer()
+        # Reap timer: Claude starts its own timer on send(). After ResultEvent
+        # Claude is idle — the timer started on the last send() is ticking.
 
         # Fire suggest in the dead time after the turn completes
         if finalized_msg and finalized_msg.text.strip():
@@ -923,7 +923,7 @@ class Chat:
                 f"Chat {self.id} cannot begin turn in state {self.state.value}"
             )
 
-        self._cancel_reap_timer()
+        # Reap timer handled by Claude.send() internally.
         self.state = ConversationState.ENRICHING
         self.suggest = SuggestState.DISARMED
         self.updated_at = time.time()
@@ -956,7 +956,7 @@ class Chat:
         # or READY -> RESPONDING (direct send, backward compat)
         if self.state == ConversationState.READY:
             # Direct send without begin_turn() — backward compat path.
-            self._cancel_reap_timer()
+            # Reap timer handled by Claude.send() internally.
             self.updated_at = time.time()
             if not self.title:
                 for block in content:
@@ -971,9 +971,26 @@ class Chat:
         """Interrupt the current turn. * -> COLD."""
         await self.reap()
 
+    async def _on_claude_reap(self) -> None:
+        """Called by Claude's reap timer when it stops itself.
+
+        Claude has already stopped. Chat just needs to update its own state
+        and broadcast the change.
+        """
+        self._snapshot_token_state()
+        logfire.info(
+            "chat.lifecycle: claude self-reaped chat={chat_id} session={session}",
+            chat_id=self.id,
+            session=self.session_uuid or "?",
+        )
+        self._claude = None
+        self.state = ConversationState.COLD
+        self.suggest = SuggestState.DISARMED
+        if self.on_reap:
+            await self.on_reap(self.id)
+
     async def reap(self) -> None:
         """Kill the subprocess. * -> COLD, suggest -> DISARMED."""
-        self._cancel_reap_timer()
         if self._claude:
             self._snapshot_token_state()
             logfire.info(
@@ -1021,12 +1038,12 @@ class Chat:
                 disallowed_tools=disallowed_tools,
                 on_event=self._on_claude_event,  # Always wire — Chat owns its events
             )
+            self._claude._on_reap = self._on_claude_reap
             await self._claude.start(None)  # Fresh start, no resume
 
             self.state = ConversationState.READY
             self._needs_orientation = True
             self._injected_topics = set()
-            self._start_reap_timer()
             logfire.info(
                 "chat.lifecycle: wake complete chat={chat_id}",
                 chat_id=self.id,
@@ -1076,6 +1093,7 @@ class Chat:
                 disallowed_tools=disallowed_tools,
                 on_event=self._on_claude_event,  # Always wire — Chat owns its events
             )
+            self._claude._on_reap = self._on_claude_reap
             await self._claude.start(_uuid)
 
             self.state = ConversationState.READY
@@ -1084,7 +1102,6 @@ class Chat:
             self._needs_orientation = False
             # Don't reset _injected_topics — they persist across resurrections.
             # Only reset on wake() (new chat) and compact_boundary (new window).
-            self._start_reap_timer()
             logfire.info(
                 "chat.lifecycle: resurrect complete chat={chat_id} session={session}",
                 chat_id=self.id,
@@ -1113,35 +1130,16 @@ class Chat:
             if window > 0:
                 self._cached_context_window = window
 
-    # -- Reap timer -----------------------------------------------------------
+    # -- Reap timer (delegated to Claude) --------------------------------------
+    # Claude self-manages its idle timer. These are convenience wrappers
+    # for the transition period. Chat calls them; they delegate to Claude.
 
     def _start_reap_timer(self) -> None:
-        self._cancel_reap_timer()
-        logfire.debug(
-            "chat.lifecycle: reap timer started chat={chat_id} timeout={timeout}s",
-            chat_id=self.id,
-            timeout=REAP_TIMEOUT,
-        )
-        self._reap_task = asyncio.create_task(self._reap_after(REAP_TIMEOUT))
+        if self._claude:
+            self._claude._start_reap_timer()
 
     def _cancel_reap_timer(self) -> None:
-        if self._reap_task:
-            # Don't cancel yourself. When _reap_after() calls reap() which
-            # calls us, we ARE the reap task. Self-cancellation raises
-            # CancelledError at the next await inside reap(), which prevents
-            # reap() from ever setting state = COLD. The birthday bug.
-            if self._reap_task is not asyncio.current_task():
-                self._reap_task.cancel()
-            self._reap_task = None
-
-    async def _reap_after(self, seconds: float) -> None:
-        try:
-            await asyncio.sleep(seconds)
-            await self.reap()
-            # Broadcast the state change so all clients update their sidebar dots.
-            if self.on_reap:
-                await self.on_reap(self.id)
-        except asyncio.CancelledError:
-            pass
+        if self._claude:
+            self._claude._cancel_reap_timer()
 
 
