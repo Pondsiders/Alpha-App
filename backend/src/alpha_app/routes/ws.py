@@ -71,15 +71,17 @@ async def _run_human_turn(
     msg_id: str | None = None,
     topics: list[str] | None = None,
 ) -> None:
-    """Handle a human send: resurrect if COLD, enrobe, send via turn lock.
+    """Handle a human send: enrobe, send via turn lock.
 
-    Fire-and-forget from the WebSocket handler. Claude's response flows
-    through Chat._on_claude_event to the WebSocket via broadcast.
-
-    Replaces turn_smart.py — the Turn class owns the lifecycle now.
+    CHAT-V2: Claude auto-starts if cold (via _ensure_claude in Turn.send).
+    No explicit resurrect. Fire-and-forget from the WebSocket handler.
     """
     chat_id = chat.id
     prompt_preview = build_prompt_preview(content)
+
+    # Store the system prompt on Chat so _ensure_claude can use it
+    chat._system_prompt = getattr(ws.app.state, "system_prompt", "")
+    chat._topic_registry = getattr(ws.app.state, "topic_registry", None)
 
     # Open Logfire span (covers enrobe + send + Claude response).
     # Closes in _handle_result on ResultEvent, or in the error paths below.
@@ -105,38 +107,6 @@ async def _run_human_turn(
     chat._turn_span = span
 
     try:
-        # -- Resurrect if COLD ------------------------------------------------
-        if chat.state == ConversationState.COLD:
-            topic_registry = getattr(ws.app.state, "topic_registry", None)
-            mcp_servers = {"alpha": create_alpha_server(
-                chat=chat,
-                topic_registry=topic_registry,
-                session_id=chat.id,
-            )}
-
-            await broadcast(connections, {
-                "type": "chat-state",
-                "chatId": chat_id,
-                "data": chat.wire_state(state="starting"),
-            })
-
-            if not chat.session_uuid:
-                await chat.wake(
-                    system_prompt=ws.app.state.system_prompt,
-                    mcp_servers=mcp_servers,
-                )
-            else:
-                await chat.resurrect(
-                    system_prompt=ws.app.state.system_prompt,
-                    mcp_servers=mcp_servers,
-                )
-
-            await broadcast(connections, {
-                "type": "chat-state",
-                "chatId": chat_id,
-                "data": chat.wire_state(),
-            })
-
         chat.set_trace_context(logfire.get_context())
 
         # -- Enrobe -----------------------------------------------------------
@@ -159,11 +129,10 @@ async def _run_human_turn(
                     "data": event["data"],
                 })
 
-        # -- Send via Turn ----------------------------------------------------
+        # -- Send via Turn (auto-starts Claude if cold) -----------------------
         async with await chat.turn() as t:
             await t.send(result.message)
             # Don't await t.response() — human watches via broadcast.
-            # Turn ends when ResultEvent fires in _handle_result.
 
         await broadcast(connections, {
             "type": "chat-state",

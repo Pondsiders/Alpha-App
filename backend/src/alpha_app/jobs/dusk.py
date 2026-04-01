@@ -38,8 +38,8 @@ async def run(app, **kwargs) -> None:
             logfire.info("dusk: chat active {s:.0f}s ago, nudging", s=idle_seconds)
             span.set_attribute("dusk.action", "nudge")
 
-            if chat.state == ConversationState.COLD:
-                await chat.resurrect(system_prompt=app.state.system_prompt)
+            # Store system prompt so _ensure_claude (auto-start) can use it
+            chat._system_prompt = app.state.system_prompt
 
             content = [{"type": "text", "text":
                 f"[Alpha] It's {now.format('h:mm A')}. "

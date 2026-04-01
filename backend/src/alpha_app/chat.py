@@ -150,8 +150,10 @@ class Turn:
 
         Accepts either a UserMessage (preferred — handles persistence and
         broadcast) or raw content blocks (backward compat / steering).
+        Auto-starts Claude if not alive.
         """
         chat = self._chat
+        await chat._ensure_claude()
         chat.updated_at = time.time()
         chat.state = ConversationState.RESPONDING
 
@@ -515,6 +517,58 @@ class Chat:
             data["topics"] = topics
         data.update(overrides)
         return data
+
+    async def _ensure_claude(self) -> None:
+        """Auto-start Claude if not alive. The CHAT-V2 auto-start primitive.
+
+        Creates a fresh Claude subprocess with the current system prompt
+        and MCP servers (both generated fresh — not cached). If the chat
+        has a session_uuid, resumes it; otherwise starts fresh.
+
+        Callers (Turn.send, interject) call this instead of checking
+        is_alive themselves. wake() and resurrect() become internal.
+        """
+        if self._claude and self._claude.state not in ("stopped",):
+            return  # Already alive
+
+        from alpha_app.tools import create_alpha_server
+
+        # Get the current system prompt from wherever the app stores it
+        # (set externally by the WS handler or job runner)
+        system_prompt = self._system_prompt
+
+        # Create MCP servers fresh
+        topic_registry = self._topic_registry
+        mcp_servers = {"alpha": create_alpha_server(
+            chat=self,
+            topic_registry=topic_registry,
+            session_id=self.id,
+        )}
+
+        self._claude = _make_claude(
+            model=MODEL,
+            system_prompt=system_prompt or None,
+            permission_mode="bypassPermissions",
+            mcp_servers=mcp_servers,
+            on_event=self._on_claude_event,
+        )
+        self._claude._on_reap = self._on_claude_reap
+
+        session_id = self.session_uuid  # None for fresh, UUID for resume
+        await self._claude.start(session_id)
+
+        self.state = ConversationState.READY
+        if not session_id:
+            # Fresh start — need orientation on first message
+            self._needs_orientation = True
+            self._injected_topics = set()
+
+        logfire.info(
+            "chat.lifecycle: auto-start chat={chat_id} session={session} mode={mode}",
+            chat_id=self.id,
+            session=session_id or "(new)",
+            mode="resume" if session_id else "fresh",
+        )
 
     async def wait_until_ready(self) -> "AssistantMessage | None":
         """Wait for Claude to finish, return the response.
@@ -1040,6 +1094,7 @@ class Chat:
 
         @asynccontextmanager
         async def _turn_cm():
+            await self._ensure_claude()  # auto-start if needed
             await self._claude._ready.wait()  # wait until Claude is free
             await self._turn_lock.acquire()
             t = Turn(self)
@@ -1057,10 +1112,9 @@ class Chat:
 
         No response tracking. Used for alarms, nudges, AutoRAG.
         The message enters Claude's stdin queue and gets processed
-        between API calls.
+        between API calls. Auto-starts Claude if not alive.
         """
-        if not self._claude:
-            raise RuntimeError(f"Chat {self.id} has no subprocess — can't interject")
+        await self._ensure_claude()
         await self._claude.send(content)
 
     # -- Turn lifecycle (legacy — being replaced by turn lock) -----------------

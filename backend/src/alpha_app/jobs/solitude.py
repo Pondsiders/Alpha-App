@@ -106,13 +106,8 @@ async def breathe(app, **kwargs) -> str | None:
             logfire.info("solitude: no chat today, skipping")
             return None
 
-        if chat.state == ConversationState.COLD:
-            mcp_servers = _create_mcp_servers(chat, app=app)
-            await chat.resurrect(
-                system_prompt=app.state.system_prompt,
-                mcp_servers=mcp_servers,
-                disallowed_tools=DISALLOWED_INTERACTIVE,
-            )
+        # Store system prompt so _ensure_claude (auto-start) can use it
+        chat._system_prompt = app.state.system_prompt
 
         # Run each prompt in the timeslot sequentially
         output_parts = []
