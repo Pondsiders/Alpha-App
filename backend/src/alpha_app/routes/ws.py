@@ -134,14 +134,18 @@ async def websocket_chat(ws: WebSocket) -> None:
                         await ws.send_json({"type": "error", "chatId": chat_id, "data": "Chat not found"})
                         continue
 
-                # Smart Chat path: send returns immediately, response flows via callback.
-                # Modal UI: no interjections. If Claude is busy, the message waits
-                # in Claude Code's internal queue.
-                task = asyncio.create_task(
-                    handle_send_smart(ws, connections, chat, content,
-                                     msg_id=message_id, topics=topics)
-                )
-                streaming_tasks[chat_id] = task
+                # Smart Chat: send returns immediately, response flows via callback.
+                # If a turn is active (we're mid-response), this is a steering
+                # message — push it into the existing turn. Otherwise start new.
+                if chat._active_turn:
+                    # Steering message within existing turn
+                    await chat._active_turn.send(content)
+                else:
+                    task = asyncio.create_task(
+                        handle_send_smart(ws, connections, chat, content,
+                                         msg_id=message_id, topics=topics)
+                    )
+                    streaming_tasks[chat_id] = task
 
             elif msg_type == "buzz":
                 # The nonverbal hello. No user message — just a stage direction
