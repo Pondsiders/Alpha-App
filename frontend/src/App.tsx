@@ -869,6 +869,18 @@ function Layout() {
         // Load messages into store
         actions.loadMessages(eChatId, storeMessages);
 
+        // Late-joiner support: if the chat is mid-response (state=busy) and
+        // the last loaded message is an assistant message, seed the assistant
+        // ID map so incoming streaming deltas append to it instead of creating
+        // a new placeholder message.
+        const md0 = chatData.metadata;
+        if (md0.state === "busy" && storeMessages.length > 0) {
+          const lastMsg = storeMessages[storeMessages.length - 1];
+          if (lastMsg.role === "assistant") {
+            assistantIdMapRef.current[eChatId] = lastMsg.id;
+          }
+        }
+
         // Ensure the chat exists in the store, then update with metadata.
         // chat-data often arrives BEFORE chat-list, so the chat may not
         // exist in state.chats yet. addChat creates it if missing.
