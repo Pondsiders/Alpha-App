@@ -303,20 +303,29 @@ An interjection mid-turn could confuse Claude. If Alpha is analyzing CHAT-V2 and
 
 ### Suggest: post-turn pipeline
 
-Suggest runs as the first turn after each human turn. When ResultEvent fires and the turn lock releases, suggest immediately acquires the lock:
+Suggest fires **only after human-initiated turns.** Not after suggest turns, not after job turns, not after interjections. The guard is in `_handle_result`, not in `_post_turn_suggest` — suggest simply doesn't get called unless the turn was human-initiated.
 
 ```python
 # In _handle_result, after turn cleanup:
-if user_text and assistant_text:
-    asyncio.create_task(self._post_turn_suggest(user_text, assistant_text))
+# Find the last UserMessage and check its source.
+last_user = next((m for m in reversed(self.messages) if isinstance(m, UserMessage)), None)
+if (
+    finalized_msg
+    and finalized_msg.text.strip()
+    and last_user
+    and last_user.source in ("human", "buzzer")
+):
+    asyncio.create_task(self._post_turn_suggest(last_user.text, finalized_msg.text))
 
 async def _post_turn_suggest(self, user_text, assistant_text):
     suggestions = await _run_qwen_suggest(user_text, assistant_text)
     if suggestions:
         async with self.turn() as t:
             await t.send(format_suggestions(suggestions))
-            await t.response()  # Alpha stores memories via tool calls
+            await t.response()  # Alpha stores memories via tool calls, NO text response
 ```
+
+The suggest prompt must instruct Alpha to **only call cortex.store** — no text output, no acknowledgment, no conversation. Alpha responds to Jeffery, not to Intro. The suggest turn should be invisible to the human.
 
 This replaces the `_pending_intro → enrobe injection` flow. Suggest is no longer injected into the next human message — it's its own turn in the dead time between the human's last message and their next one. The human never waits.
 
