@@ -331,7 +331,7 @@ def create_alpha_server(
                 return "Error storing memory — handoff aborted"
             memory_id = result.get("id", "?")
 
-            await _chat.send([{"type": "text", "text": f"/compact {instructions}"}])
+            await _chat.interject([{"type": "text", "text": f"/compact {instructions}"}])
 
             wake_up = (
                 "You've just been through a context compaction. "
@@ -339,7 +339,7 @@ def create_alpha_server(
                 "Orient yourself — read the summary above, check in, "
                 "ask questions if anything's unclear."
             )
-            await _chat.send([{"type": "text", "text": wake_up}])
+            await _chat.interject([{"type": "text", "text": wake_up}])
 
             return (
                 f"Memory #{memory_id} stored. "

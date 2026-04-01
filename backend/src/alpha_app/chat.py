@@ -101,20 +101,20 @@ def find_circadian_chat(
 _CONVERSATION_WIRE = {
     "starting": "starting",
     "ready": "idle",
-    "enriching": "busy",
     "responding": "busy",
     "cold": "dead",
 }
 
 
 class ConversationState(Enum):
-    """First dimension of the state vector: the conversation lifecycle.
+    """Conversation lifecycle. Claudes aren't alive or dead. They're warm or cold.
 
-    Claudes aren't alive or dead. They're warm or cold.
+    CHAT-V2: ENRICHING removed (enrobe is external). Three meaningful states:
+    COLD (no subprocess), READY (idle), RESPONDING (working).
+    STARTING is transitional (during wake/resurrect).
     """
     STARTING = "starting"
     READY = "ready"
-    ENRICHING = "enriching"
     RESPONDING = "responding"
     COLD = "cold"
 
@@ -189,18 +189,12 @@ class Turn:
 class Chat:
     """A single conversation. Owns a claude subprocess and its lifecycle.
 
-    State vector: (conversation, suggest)
-      conversation: STARTING / READY / ENRICHING / RESPONDING / COLD
-      suggest:      DISARMED / ARMED / FIRING
+    CHAT-V2 architecture: Turn class owns the send lifecycle.
+    Chat provides turn() context manager and interject() primitive.
+    Claude auto-starts via _ensure_claude() when needed.
 
-    Lifecycle:
-        wake()          -> COLD -> STARTING -> READY (fresh start)
-        begin_turn()    -> READY -> ENRICHING, suggest -> DISARMED
-        send()          -> ENRICHING/READY -> RESPONDING (or interjection)
-        ResultEvent     -> RESPONDING -> READY, suggest -> ARMED
-        interrupt()     -> * -> COLD, suggest -> DISARMED
-        reap()          -> * -> COLD, suggest -> DISARMED
-        resurrect()     -> COLD -> STARTING -> READY (resume existing session)
+    State: COLD (no subprocess) / STARTING / READY / RESPONDING.
+    Suggest: DISARMED / ARMED / FIRING.
     """
 
     def __init__(self, *, id: str, claude: Claude | None = None) -> None:
@@ -1117,62 +1111,9 @@ class Chat:
         await self._ensure_claude()
         await self._claude.send(content)
 
-    # -- Turn lifecycle (legacy — being replaced by turn lock) -----------------
-
-    def begin_turn(self, content: list[dict] | None = None) -> None:
-        """Begin a new turn. READY -> ENRICHING, suggest -> DISARMED.
-
-        Cancels the reap timer, extracts title from original (pre-enrobe)
-        content, and transitions to ENRICHING. Called before enrobe().
-        """
-        if self.state in (ConversationState.COLD, ConversationState.STARTING):
-            raise RuntimeError(
-                f"Chat {self.id} cannot begin turn in state {self.state.value}"
-            )
-
-        # Reap timer handled by Claude.send() internally.
-        self.state = ConversationState.ENRICHING
-        self.suggest = SuggestState.DISARMED
-        self.updated_at = time.time()
-
-        # Title from original content (before enrobe adds enrichment blocks)
-        if content and not self.title:
-            for block in content:
-                if block.get("type") == "text" and block.get("text"):
-                    self.title = block["text"][:80]
-                    break
-
-    async def send(self, content: list[dict]) -> None:
-        """Send a message to claude. ENRICHING/READY -> RESPONDING, or interjection.
-
-        Full duplex: claude reads stdin between tool calls. Sending while
-        RESPONDING feeds the message to the subprocess, which absorbs it
-        into the current turn. No state change — just write to stdin.
-        """
-        if self.state == ConversationState.COLD:
-            raise RuntimeError(f"Chat {self.id} is COLD — resurrect first")
-        if self.state == ConversationState.STARTING:
-            raise RuntimeError(f"Chat {self.id} is still STARTING")
-
-        if self.state == ConversationState.RESPONDING:
-            # Interjection — feed to subprocess, no state change.
-            await self._claude.send(content)
-            return
-
-        # New turn: ENRICHING -> RESPONDING (after enrobe)
-        # or READY -> RESPONDING (direct send, backward compat)
-        if self.state == ConversationState.READY:
-            # Direct send without begin_turn() — backward compat path.
-            # Reap timer handled by Claude.send() internally.
-            self.updated_at = time.time()
-            if not self.title:
-                for block in content:
-                    if block.get("type") == "text" and block.get("text"):
-                        self.title = block["text"][:80]
-                        break
-
-        self.state = ConversationState.RESPONDING
-        await self._claude.send(content)
+    # -- Legacy send/begin_turn removed -----------------------------------------
+    # All callers now use Turn.send() or Chat.interject().
+    # See CHAT-V2.md for the new architecture.
 
     async def interrupt(self) -> None:
         """Interrupt the current turn. * -> COLD."""

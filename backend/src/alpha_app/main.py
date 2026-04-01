@@ -111,7 +111,7 @@ async def health() -> dict:
     """Health check endpoint."""
     chats: dict[str, Chat] = app.state.chats
     alive = [c for c in chats.values() if c.state != ConversationState.COLD]
-    busy = [c for c in chats.values() if c.state in (ConversationState.ENRICHING, ConversationState.RESPONDING)]
+    busy = [c for c in chats.values() if c.state == ConversationState.RESPONDING]
     return {
         "status": "healthy",
         "chats_total": len(chats),

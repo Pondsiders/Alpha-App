@@ -42,7 +42,7 @@ def create_handoff_server(chat) -> FastMCP:
 
         # Queue /compact on stdin. Chat is RESPONDING during tool dispatch,
         # so send() goes through the interjection path (write to stdin, no state change).
-        await chat.send([{"type": "text", "text": f"/compact {instructions}"}])
+        await chat.interject([{"type": "text", "text": f"/compact {instructions}"}])
 
         # Queue the wake-up message. It survives the compaction boundary —
         # the summary gets buffered and piggybacks on this message.
@@ -52,7 +52,7 @@ def create_handoff_server(chat) -> FastMCP:
             "Orient yourself — read the summary above, check in, "
             "ask questions if anything's unclear."
         )
-        await chat.send([{"type": "text", "text": wake_up}])
+        await chat.interject([{"type": "text", "text": wake_up}])
 
         return (
             f"Memory #{memory_id} stored. "
