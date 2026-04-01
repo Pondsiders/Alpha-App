@@ -16,7 +16,7 @@ import pendulum
 import yaml
 
 from alpha_app import AssistantEvent, ResultEvent, SystemEvent
-from alpha_app.chat import Chat, ConversationState, generate_chat_id
+from alpha_app.chat import Chat, ConversationState, find_circadian_chat, generate_chat_id
 from alpha_app.db import get_pool
 from alpha_app.routes.enrobe import enrobe
 from alpha_app.tools import create_alpha_server
@@ -100,8 +100,8 @@ async def breathe(app, **kwargs) -> str | None:
     }) as span:
 
         # -- Do the breath FIRST (work before schedule) --
-        # Find today's chat — the same one Dawn created, same context window
-        chat = _find_todays_chat(app)
+        # Find the circadian day's chat (6 AM to 6 AM, not midnight to midnight)
+        chat = find_circadian_chat(getattr(app.state, "chats", {}))
         if not chat:
             logfire.info("solitude: no chat today, skipping")
             return None
@@ -144,18 +144,7 @@ async def breathe(app, **kwargs) -> str | None:
         return output
 
 
-def _find_todays_chat(app) -> Chat | None:
-    """Find today's most recent non-solitude chat (the one Dawn created)."""
-    today = pendulum.now().format("YYYY-MM-DD")
-    chats = getattr(app.state, "chats", {})
-    todays = [
-        c for c in chats.values()
-        if c.id != "solitude"
-        and pendulum.from_timestamp(c.created_at).format("YYYY-MM-DD") == today
-    ]
-    if not todays:
-        return None
-    return max(todays, key=lambda c: c.updated_at)
+    # _find_todays_chat removed — replaced by find_circadian_chat() in chat.py
 
 
 def _next_occurrence(hour: int) -> pendulum.DateTime:

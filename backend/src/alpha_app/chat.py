@@ -58,6 +58,44 @@ def generate_chat_id() -> str:
     return secrets.token_urlsafe(9)
 
 
+def find_circadian_chat(
+    chats: dict[str, "Chat"],
+    *,
+    dawn_hour: int = 6,
+    now: float | None = None,
+) -> "Chat | None":
+    """Find the most recent non-solitude chat from the current circadian day.
+
+    The circadian day runs from dawn_hour to dawn_hour (default 6 AM to 6 AM),
+    NOT midnight to midnight. A chat created at 3 PM on March 31 still belongs
+    to that circadian day at 1 AM on April 1.
+
+    Returns the most recently updated matching chat, or None.
+    """
+    import pendulum
+
+    if now is None:
+        now = time.time()
+
+    # Use local time — the circadian day is defined in wall-clock time
+    now_dt = pendulum.from_timestamp(now, tz=pendulum.local_timezone())
+    dawn_today = now_dt.replace(hour=dawn_hour, minute=0, second=0, microsecond=0)
+    if now_dt < dawn_today:
+        # Before 6 AM — circadian day started yesterday at 6 AM
+        dawn_today = dawn_today.subtract(days=1)
+
+    dawn_ts = dawn_today.timestamp()
+
+    candidates = [
+        c for c in chats.values()
+        if c.id != "solitude"
+        and c.created_at >= dawn_ts
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda c: c.updated_at)
+
+
 # -- State vector dimensions --------------------------------------------------
 
 # Wire value mapping: internal state names -> backward-compatible WebSocket values.

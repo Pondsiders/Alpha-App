@@ -11,7 +11,7 @@ import time
 import logfire
 import pendulum
 
-from alpha_app.chat import Chat, ConversationState
+from alpha_app.chat import Chat, ConversationState, find_circadian_chat
 from alpha_app.scheduler import schedule_job
 
 IDLE_THRESHOLD = 600  # 10 minutes in seconds
@@ -25,7 +25,7 @@ async def run(app, **kwargs) -> None:
         "job.name": "dusk",
         "job.trigger": kwargs.get("trigger", "scheduled"),
     }) as span:
-        chat = _find_todays_most_recent_chat(app)
+        chat = find_circadian_chat(getattr(app.state, "chats", {}))
 
         if not chat:
             logfire.error("dusk: no chat today — Dawn didn't run?")
@@ -61,15 +61,4 @@ async def run(app, **kwargs) -> None:
             await start(app)
 
 
-def _find_todays_most_recent_chat(app) -> Chat | None:
-    """Find today's most recent non-solitude chat from app.state.chats."""
-    today = pendulum.now().format("YYYY-MM-DD")
-    chats = getattr(app.state, "chats", {})
-    todays = [
-        c for c in chats.values()
-        if c.id != "solitude"
-        and pendulum.from_timestamp(c.created_at).format("YYYY-MM-DD") == today
-    ]
-    if not todays:
-        return None
-    return max(todays, key=lambda c: c.updated_at)
+    # _find_todays_most_recent_chat removed — replaced by find_circadian_chat() in chat.py
