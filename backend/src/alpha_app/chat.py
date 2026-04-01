@@ -1011,38 +1011,55 @@ class Chat:
         Alpha processes the memorables via cortex.store tool calls.
         No text response — Alpha responds to Jeffery, not to Intro.
         Only called after human-initiated turns (guard in _handle_result).
+
+        Own Logfire span (sibling to the turn span) with gen_ai attributes.
         """
         from alpha_app.suggest import suggest, format_intro_block
         self.suggest = SuggestState.FIRING
-        try:
-            memorables = await suggest(user_text, assistant_text)
-            block = format_intro_block(memorables)
-            if not block:
-                return
 
-            logfire.info(
-                "suggest: {count} memorables, sending as post-turn",
-                count=len(memorables),
-                memorables=memorables,
-                chat_id=self.id,
-            )
+        with logfire.span("alpha.suggest", **{
+            "gen_ai.operation.name": "chat",
+            "gen_ai.system": "anthropic",
+            "chat.id": self.id,
+            "suggest.user_text_len": len(user_text),
+            "suggest.assistant_text_len": len(assistant_text),
+        }) as span:
+            try:
+                memorables = await suggest(user_text, assistant_text)
+                block = format_intro_block(memorables)
+                if not block:
+                    span.set_attribute("suggest.memorables", 0)
+                    return
 
-            # Send as own turn with source="suggest" so the source guard
-            # in _handle_result sees it and does NOT fire suggest again.
-            from alpha_app.models import UserMessage as UM
-            msg = UM(
-                id=f"suggest-{uuid.uuid4().hex[:8]}",
-                content=[{"type": "text", "text": block}],
-                source="suggest",
-            )
-            async with await self.turn() as t:
-                await t.send(msg)
-                await t.response()
+                span.set_attribute("suggest.memorables", len(memorables))
+                span.set_attribute("gen_ai.input.messages", [
+                    {"role": "user", "content": user_text[:200]},
+                    {"role": "assistant", "content": assistant_text[:200]},
+                ])
 
-        except Exception as e:
-            logfire.debug("suggest turn failed: {error}", error=str(e))
-        finally:
-            self.suggest = SuggestState.DISARMED
+                # Send as own turn with source="suggest" so the source guard
+                # in _handle_result sees it and does NOT fire suggest again.
+                from alpha_app.models import UserMessage as UM
+                msg = UM(
+                    id=f"suggest-{uuid.uuid4().hex[:8]}",
+                    content=[{"type": "text", "text": block}],
+                    source="suggest",
+                )
+                async with await self.turn() as t:
+                    await t.send(msg)
+                    response = await t.response()
+
+                if response:
+                    span.set_attribute("gen_ai.output.messages", [
+                        {"role": "assistant", "content": response.text[:200] if response.text else ""}
+                    ])
+                    span.set_attribute("gen_ai.usage.output_tokens", self.output_tokens)
+
+            except Exception as e:
+                span.set_attribute("error.type", type(e).__name__)
+                logfire.debug("suggest turn failed: {error}", error=str(e))
+            finally:
+                self.suggest = SuggestState.DISARMED
 
     # -- Approach light -------------------------------------------------------
 
