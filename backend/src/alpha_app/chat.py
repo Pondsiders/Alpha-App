@@ -473,27 +473,30 @@ class Chat:
         if self._claude:
             self._claude.set_trace_context(ctx)
 
-    # -- Smart Chat: event callback -------------------------------------------
+    # -- Smart Chat: event dispatch --------------------------------------------
+    #
+    # Dispatch dict replaces the elif waterfall. Each handler has two concerns:
+    #   1. Bookshelf — what does this event mean for messages[]?
+    #   2. Broadcast — what should the browsers know?
+    #
+    # See CHAT-V2.md for the full design.
+
+    _EVENT_HANDLERS: dict[type, str] = {
+        StreamEvent: "_handle_stream",
+        AssistantEvent: "_handle_assistant",
+        UserEvent: "_handle_user_echo",
+        ResultEvent: "_handle_result",
+        SystemEvent: "_handle_system",
+        ErrorEvent: "_handle_error",
+    }
 
     async def _on_claude_event(self, event: Event) -> None:
         """Handle an event from Claude's continuous stdout drain.
 
-        This replaces stream_chat_events(). Every event from Claude flows
-        through here. The method classifies the event, broadcasts the
-        appropriate WebSocket message, and accumulates the AssistantMessage.
-
+        Dispatches to focused handler methods via _EVENT_HANDLERS.
         Called by the Claude._drain_stdout background task.
         """
-        chat_id = self.id
-
-        async def _broadcast(evt: dict) -> None:
-            if self.on_broadcast:
-                await self.on_broadcast(evt)
-
         # -- Detect spontaneous responses (background task, system-initiated) --
-        # If Claude starts producing content while we're READY (not RESPONDING),
-        # it means Claude initiated a response without a user message.
-        # Transition to RESPONDING and broadcast so the frontend goes modal.
         if (
             isinstance(event, (StreamEvent, AssistantEvent))
             and self.state == ConversationState.READY
@@ -501,14 +504,13 @@ class Chat:
             self.state = ConversationState.RESPONDING
             self._cancel_reap_timer()
 
-            # Open a lightweight span for observability
             if not self._turn_span:
                 span = logfire.span(
                     "alpha.system-turn: spontaneous response",
                     **{
                         "gen_ai.operation.name": "chat",
                         "gen_ai.system": "anthropic",
-                        "chat.id": chat_id,
+                        "chat.id": self.id,
                         "chat.trigger": "system",
                     },
                 )
@@ -516,306 +518,340 @@ class Chat:
                 self._turn_span = span
                 self.set_trace_context(logfire.get_context())
 
-            await _broadcast({
+            await self._broadcast({
                 "type": "chat-state",
-                "chatId": chat_id,
+                "chatId": self.id,
                 "data": self.wire_state(),
             })
 
-        if isinstance(event, StreamEvent):
-            # -- Streaming deltas: broadcast live, accumulate into message --
-            if event.delta_type == "text_delta":
-                text = event.delta_text
-                if text:
-                    await _broadcast({
-                        "type": "text-delta", "chatId": chat_id, "data": text,
-                    })
-                    self._ensure_assistant()
-                    if self._current_assistant.parts and self._current_assistant.parts[-1]["type"] == "text":
-                        self._current_assistant.parts[-1]["text"] += text
-                    else:
-                        self._current_assistant.parts.append({"type": "text", "text": text})
+        # -- Dispatch to focused handler --
+        handler_name = self._EVENT_HANDLERS.get(type(event))
+        if handler_name:
+            handler = getattr(self, handler_name)
+            await handler(event)
 
-            elif event.delta_type == "thinking_delta":
-                text = event.delta_text
-                if text:
-                    await _broadcast({
-                        "type": "thinking-delta", "chatId": chat_id, "data": text,
-                    })
-                    self._ensure_assistant()
-                    if self._current_assistant.parts and self._current_assistant.parts[-1]["type"] == "thinking":
-                        self._current_assistant.parts[-1]["thinking"] += text
-                    else:
-                        self._current_assistant.parts.append({"type": "thinking", "thinking": text})
+    async def _broadcast(self, evt: dict) -> None:
+        """Send a WebSocket event to all connected browsers."""
+        if self.on_broadcast:
+            await self.on_broadcast(evt)
 
-            elif event.delta_type == "input_json_delta":
-                partial = event.delta_partial_json
-                if partial:
-                    await _broadcast({
-                        "type": "tool-use-delta",
-                        "chatId": chat_id,
-                        "data": {"index": event.index, "partialJson": partial},
-                    })
+    # -- Stream events: text/thinking deltas, tool-use starts ----------------
 
-            elif event.event_type == "content_block_start" and event.block_type == "tool_use":
-                await _broadcast({
-                    "type": "tool-use-start",
+    async def _handle_stream(self, event: StreamEvent) -> None:
+        """Bookshelf: accumulate deltas on AssistantMessage.
+        Broadcast: send deltas live for streaming UX."""
+        chat_id = self.id
+
+        if event.delta_type == "text_delta":
+            text = event.delta_text
+            if text:
+                await self._broadcast({
+                    "type": "text-delta", "chatId": chat_id, "data": text,
+                })
+                self._ensure_assistant()
+                if self._current_assistant.parts and self._current_assistant.parts[-1]["type"] == "text":
+                    self._current_assistant.parts[-1]["text"] += text
+                else:
+                    self._current_assistant.parts.append({"type": "text", "text": text})
+
+        elif event.delta_type == "thinking_delta":
+            text = event.delta_text
+            if text:
+                await self._broadcast({
+                    "type": "thinking-delta", "chatId": chat_id, "data": text,
+                })
+                self._ensure_assistant()
+                if self._current_assistant.parts and self._current_assistant.parts[-1]["type"] == "thinking":
+                    self._current_assistant.parts[-1]["thinking"] += text
+                else:
+                    self._current_assistant.parts.append({"type": "thinking", "thinking": text})
+
+        elif event.delta_type == "input_json_delta":
+            partial = event.delta_partial_json
+            if partial:
+                await self._broadcast({
+                    "type": "tool-use-delta",
                     "chatId": chat_id,
-                    "data": {
-                        "toolCallId": event.block_id,
-                        "toolName": event.block_name,
-                        "index": event.index,
-                    },
+                    "data": {"index": event.index, "partialJson": partial},
                 })
 
-        elif isinstance(event, AssistantEvent):
-            # -- Complete content blocks from Claude --
-            # Accumulate raw Messages API blocks for Logfire gen_ai.output.messages
-            self._output_parts.extend(event.content)
-            for block in event.content:
-                if block.get("type") == "tool_use":
-                    tool_data = {
-                        "toolCallId": block.get("id", ""),
-                        "toolName": block.get("name", ""),
-                        "args": block.get("input", {}),
-                        "argsText": json.dumps(block.get("input", {})),
-                    }
-                    await _broadcast({
-                        "type": "tool-call",
-                        "chatId": chat_id,
-                        "data": tool_data,
-                    })
-                    self._ensure_assistant()
-                    self._current_assistant.parts.append({"type": "tool-call", **tool_data})
+        elif event.event_type == "content_block_start" and event.block_type == "tool_use":
+            await self._broadcast({
+                "type": "tool-use-start",
+                "chatId": chat_id,
+                "data": {
+                    "toolCallId": event.block_id,
+                    "toolName": event.block_name,
+                    "index": event.index,
+                },
+            })
 
-        elif isinstance(event, UserEvent):
-            # -- User echoes: tool results and message echoes --
-            for block in event.content:
-                if block.get("type") == "tool_result":
-                    tool_use_id = block.get("tool_use_id", "")
-                    content = block.get("content", "")
-                    if isinstance(content, list):
-                        result_text = "\n".join(
-                            b.get("text", "") for b in content if b.get("type") == "text"
-                        )
-                    else:
-                        result_text = str(content)
+    # -- Assistant events: complete content blocks ---------------------------
 
-                    await _broadcast({
-                        "type": "tool-result",
-                        "chatId": chat_id,
-                        "data": {
-                            "toolCallId": tool_use_id,
-                            "result": result_text,
-                            "isError": block.get("is_error", False),
-                        },
-                    })
+    async def _handle_assistant(self, event: AssistantEvent) -> None:
+        """Bookshelf: accumulate tool_use blocks on AssistantMessage.
+        Broadcast: send tool-call events for the frontend."""
+        chat_id = self.id
 
-                    # Update the tool-call part in the accumulator
-                    if self._current_assistant:
-                        for part in self._current_assistant.parts:
-                            if part.get("type") == "tool-call" and part.get("toolCallId") == tool_use_id:
-                                part["result"] = result_text
-                                part["isError"] = block.get("is_error", False)
-                                break
+        # Accumulate raw Messages API blocks for Logfire gen_ai.output.messages
+        self._output_parts.extend(event.content)
 
-        elif isinstance(event, ResultEvent):
-            # -- Turn complete: finalize, persist, reset --
-            if event.session_id:
-                self.session_uuid = event.session_id
-
-            # Finalize the assistant message
-            if self._current_assistant and self._current_assistant.parts:
-                msg = self._current_assistant
-                msg.input_tokens = self.total_input_tokens
-                msg.output_tokens = self.output_tokens
-                msg.cache_creation_tokens = self.cache_creation_tokens
-                msg.cache_read_tokens = self.cache_read_tokens
-                msg.context_window = self.context_window
-                msg.model = self.response_model
-                msg.stop_reason = self.stop_reason
-                msg.cost_usd = event.cost_usd
-                msg.duration_ms = event.duration_ms
-                msg.inference_count = event.num_turns
-
-                # Message already in messages[] (appended by _ensure_assistant).
-                # Mark dirty so metadata gets flushed.
-                msg._dirty = True
-
-                # Broadcast the coalesced assistant-message
-                await _broadcast({
-                    "type": "assistant-message",
+        for block in event.content:
+            if block.get("type") == "tool_use":
+                tool_data = {
+                    "toolCallId": block.get("id", ""),
+                    "toolName": block.get("name", ""),
+                    "args": block.get("input", {}),
+                    "argsText": json.dumps(block.get("input", {})),
+                }
+                await self._broadcast({
+                    "type": "tool-call",
                     "chatId": chat_id,
-                    "data": msg.to_wire(),
+                    "data": tool_data,
                 })
+                self._ensure_assistant()
+                self._current_assistant.parts.append({"type": "tool-call", **tool_data})
 
-                # Persist all dirty messages (including this one) to Postgres
-                await self.flush()
+    # -- User echo events: tool results, message confirmations ---------------
 
-            # Close the turn span with response attributes
-            finalized_msg = self._current_assistant  # May be None if empty result
-            self._current_assistant = None
+    async def _handle_user_echo(self, event: UserEvent) -> None:
+        """Bookshelf: update tool-call parts with results.
+        Broadcast: send tool-result events."""
+        chat_id = self.id
 
-            if self._turn_span:
-                if finalized_msg:
-                    from alpha_app.routes.spans import set_turn_span_response
-                    set_turn_span_response(
-                        self._turn_span, finalized_msg, self, self._output_parts
+        for block in event.content:
+            if block.get("type") == "tool_result":
+                tool_use_id = block.get("tool_use_id", "")
+                content = block.get("content", "")
+                if isinstance(content, list):
+                    result_text = "\n".join(
+                        b.get("text", "") for b in content if b.get("type") == "text"
                     )
-                self._turn_span.__exit__(None, None, None)
-                self._turn_span = None
-            self._output_parts = []
-            # Clear trace context so stdout traces between turns don't
-            # attach to the now-closed span.
-            self.set_trace_context(None)
+                else:
+                    result_text = str(content)
 
-            # State transitions
-            self.state = ConversationState.READY
-            self.suggest = SuggestState.ARMED
-            self._start_reap_timer()
+                await self._broadcast({
+                    "type": "tool-result",
+                    "chatId": chat_id,
+                    "data": {
+                        "toolCallId": tool_use_id,
+                        "result": result_text,
+                        "isError": block.get("is_error", False),
+                    },
+                })
 
-            # Fire suggest in the dead time after the turn completes
-            if finalized_msg and finalized_msg.text.strip():
-                # Extract user text from the last UserMessage
-                user_text = ""
-                for m in reversed(self.messages):
-                    if isinstance(m, UserMessage):
-                        user_text = " ".join(
-                            b.get("text", "") for b in m.content if b.get("type") == "text"
-                        )
-                        break
-                if user_text.strip():
-                    asyncio.create_task(self._run_suggest(user_text, finalized_msg.text))
+                # Update the tool-call part in the accumulator
+                if self._current_assistant:
+                    for part in self._current_assistant.parts:
+                        if part.get("type") == "tool-call" and part.get("toolCallId") == tool_use_id:
+                            part["result"] = result_text
+                            part["isError"] = block.get("is_error", False)
+                            break
 
-            # Broadcast updated state
-            await _broadcast({
-                "type": "chat-state",
+    # -- Result event: turn complete -----------------------------------------
+
+    async def _handle_result(self, event: ResultEvent) -> None:
+        """Bookshelf: finalize AssistantMessage with metadata, flush.
+        Broadcast: assistant-message + chat-state + exceptions.
+        Side effects: Logfire span closure, suggest pipeline."""
+        chat_id = self.id
+
+        if event.session_id:
+            self.session_uuid = event.session_id
+
+        # Finalize the assistant message
+        if self._current_assistant and self._current_assistant.parts:
+            msg = self._current_assistant
+            msg.input_tokens = self.total_input_tokens
+            msg.output_tokens = self.output_tokens
+            msg.cache_creation_tokens = self.cache_creation_tokens
+            msg.cache_read_tokens = self.cache_read_tokens
+            msg.context_window = self.context_window
+            msg.model = self.response_model
+            msg.stop_reason = self.stop_reason
+            msg.cost_usd = event.cost_usd
+            msg.duration_ms = event.duration_ms
+            msg.inference_count = event.num_turns
+
+            # Message already in messages[] (appended by _ensure_assistant).
+            # Mark dirty so metadata gets flushed.
+            msg._dirty = True
+
+            # Broadcast the coalesced assistant-message
+            await self._broadcast({
+                "type": "assistant-message",
                 "chatId": chat_id,
-                "data": self.wire_state(),
+                "data": msg.to_wire(),
             })
 
-            # Context truncation detection
-            _TRUNCATION_THRESHOLD = 50_000
-            current_tokens = self.total_input_tokens
-            if (
-                self._cached_token_count > 0
-                and current_tokens > 0
-                and (self._cached_token_count - current_tokens) > _TRUNCATION_THRESHOLD
-            ):
-                from alpha_app.memories.recall import clear_seen
-                clear_seen(chat_id)
-                await _broadcast({
-                    "type": "exception",
-                    "chatId": chat_id,
-                    "data": {
-                        "exceptionType": "context-loss-detected",
-                        "metadata": {
-                            "previousTokens": self._cached_token_count,
-                            "currentTokens": current_tokens,
-                            "tokensLost": self._cached_token_count - current_tokens,
-                        },
-                    },
-                })
+            # Persist all dirty messages (including this one) to Postgres
+            await self.flush()
 
-            # API error detection
-            api_error = self.pop_api_error()
-            if api_error:
-                await _broadcast({
-                    "type": "exception",
-                    "chatId": chat_id,
-                    "data": {
-                        "exceptionType": "api-error",
-                        "metadata": {
-                            "status": api_error.get("status", 0),
-                            "body": api_error.get("body", "")[:200],
-                        },
-                    },
-                })
+        # Close the turn span with response attributes
+        finalized_msg = self._current_assistant  # May be None if empty result
+        self._current_assistant = None
 
-        elif isinstance(event, SystemEvent):
-            if event.subtype == "compact_boundary":
-                self._needs_orientation = True
-                self._injected_topics = set()
-                from alpha_app.memories.recall import clear_seen
-                clear_seen(chat_id)
-                logfire.info("compact_boundary detected", chat_id=chat_id)
-
-            elif event.subtype == "task_started":
-                # Agent spawned — broadcast so frontend can open an AgentGroup
-                await _broadcast({
-                    "type": "agent-started",
-                    "chatId": chat_id,
-                    "data": {
-                        "taskId": event.raw.get("task_id", ""),
-                        "toolUseId": event.raw.get("tool_use_id", ""),
-                        "description": event.raw.get("description", ""),
-                        "prompt": (event.raw.get("prompt", "") or "")[:200],
-                        "taskType": event.raw.get("task_type", ""),
-                    },
-                })
-
-            elif event.subtype == "task_progress":
-                # Agent working — broadcast so frontend can grow the AgentGroup
-                usage = event.raw.get("usage", {})
-                await _broadcast({
-                    "type": "agent-progress",
-                    "chatId": chat_id,
-                    "data": {
-                        "taskId": event.raw.get("task_id", ""),
-                        "toolUseId": event.raw.get("tool_use_id", ""),
-                        "description": event.raw.get("description", ""),
-                        "lastToolName": event.raw.get("last_tool_name", ""),
-                        "toolUses": usage.get("tool_uses", 0),
-                        "durationMs": usage.get("duration_ms", 0),
-                    },
-                })
-
-            elif event.subtype == "task_notification":
-                import pendulum
-                summary = event.raw.get("summary", "Background task completed")
-                task_id = event.raw.get("task_id", "")
-                status = event.raw.get("status", "completed")
-                usage = event.raw.get("usage", {})
-
-                # Broadcast agent-done so frontend can close the AgentGroup
-                await _broadcast({
-                    "type": "agent-done",
-                    "chatId": chat_id,
-                    "data": {
-                        "taskId": task_id,
-                        "toolUseId": event.raw.get("tool_use_id", ""),
-                        "status": status,
-                        "summary": summary,
-                        "totalTokens": usage.get("total_tokens", 0),
-                        "toolUses": usage.get("tool_uses", 0),
-                        "durationMs": usage.get("duration_ms", 0),
-                    },
-                })
-
-                # Create, persist, and broadcast the system message card
-                sys_msg = SystemMessage(
-                    id=f"sys-{uuid.uuid4().hex[:12]}",
-                    text=summary,
-                    source="task_notification",
-                    timestamp=pendulum.now("America/Los_Angeles").format(
-                        "ddd MMM D YYYY, h:mm A"
-                    ),
+        if self._turn_span:
+            if finalized_msg:
+                from alpha_app.routes.spans import set_turn_span_response
+                set_turn_span_response(
+                    self._turn_span, finalized_msg, self, self._output_parts
                 )
-                self.messages.append(sys_msg)
+            self._turn_span.__exit__(None, None, None)
+            self._turn_span = None
+        self._output_parts = []
+        self.set_trace_context(None)
 
-                # Persist system message to Postgres
-                await self.flush()
+        # State transitions
+        self.state = ConversationState.READY
+        self.suggest = SuggestState.ARMED
+        self._start_reap_timer()
 
-                await _broadcast({
-                    "type": "system-message",
-                    "chatId": chat_id,
-                    "data": sys_msg.to_wire(),
-                })
+        # Fire suggest in the dead time after the turn completes
+        if finalized_msg and finalized_msg.text.strip():
+            user_text = ""
+            for m in reversed(self.messages):
+                if isinstance(m, UserMessage):
+                    user_text = " ".join(
+                        b.get("text", "") for b in m.content if b.get("type") == "text"
+                    )
+                    break
+            if user_text.strip():
+                asyncio.create_task(self._run_suggest(user_text, finalized_msg.text))
 
-        elif isinstance(event, ErrorEvent):
-            await _broadcast({
-                "type": "error", "chatId": chat_id, "data": event.message,
+        # Broadcast updated state
+        await self._broadcast({
+            "type": "chat-state",
+            "chatId": chat_id,
+            "data": self.wire_state(),
+        })
+
+        # Context truncation detection
+        _TRUNCATION_THRESHOLD = 50_000
+        current_tokens = self.total_input_tokens
+        if (
+            self._cached_token_count > 0
+            and current_tokens > 0
+            and (self._cached_token_count - current_tokens) > _TRUNCATION_THRESHOLD
+        ):
+            from alpha_app.memories.recall import clear_seen
+            clear_seen(chat_id)
+            await self._broadcast({
+                "type": "exception",
+                "chatId": chat_id,
+                "data": {
+                    "exceptionType": "context-loss-detected",
+                    "metadata": {
+                        "previousTokens": self._cached_token_count,
+                        "currentTokens": current_tokens,
+                        "tokensLost": self._cached_token_count - current_tokens,
+                    },
+                },
             })
+
+        # API error detection
+        api_error = self.pop_api_error()
+        if api_error:
+            await self._broadcast({
+                "type": "exception",
+                "chatId": chat_id,
+                "data": {
+                    "exceptionType": "api-error",
+                    "metadata": {
+                        "status": api_error.get("status", 0),
+                        "body": api_error.get("body", "")[:200],
+                    },
+                },
+            })
+
+    # -- System events: compact, task lifecycle ------------------------------
+
+    async def _handle_system(self, event: SystemEvent) -> None:
+        """Bookshelf: compact_boundary resets orientation/topics/seen cache.
+        Broadcast: agent lifecycle events, system message cards."""
+        chat_id = self.id
+
+        if event.subtype == "compact_boundary":
+            self._needs_orientation = True
+            self._injected_topics = set()
+            from alpha_app.memories.recall import clear_seen
+            clear_seen(chat_id)
+            logfire.info("compact_boundary detected", chat_id=chat_id)
+
+        elif event.subtype == "task_started":
+            await self._broadcast({
+                "type": "agent-started",
+                "chatId": chat_id,
+                "data": {
+                    "taskId": event.raw.get("task_id", ""),
+                    "toolUseId": event.raw.get("tool_use_id", ""),
+                    "description": event.raw.get("description", ""),
+                    "prompt": (event.raw.get("prompt", "") or "")[:200],
+                    "taskType": event.raw.get("task_type", ""),
+                },
+            })
+
+        elif event.subtype == "task_progress":
+            usage = event.raw.get("usage", {})
+            await self._broadcast({
+                "type": "agent-progress",
+                "chatId": chat_id,
+                "data": {
+                    "taskId": event.raw.get("task_id", ""),
+                    "toolUseId": event.raw.get("tool_use_id", ""),
+                    "description": event.raw.get("description", ""),
+                    "lastToolName": event.raw.get("last_tool_name", ""),
+                    "toolUses": usage.get("tool_uses", 0),
+                    "durationMs": usage.get("duration_ms", 0),
+                },
+            })
+
+        elif event.subtype == "task_notification":
+            import pendulum
+            summary = event.raw.get("summary", "Background task completed")
+            task_id = event.raw.get("task_id", "")
+            status = event.raw.get("status", "completed")
+            usage = event.raw.get("usage", {})
+
+            await self._broadcast({
+                "type": "agent-done",
+                "chatId": chat_id,
+                "data": {
+                    "taskId": task_id,
+                    "toolUseId": event.raw.get("tool_use_id", ""),
+                    "status": status,
+                    "summary": summary,
+                    "totalTokens": usage.get("total_tokens", 0),
+                    "toolUses": usage.get("tool_uses", 0),
+                    "durationMs": usage.get("duration_ms", 0),
+                },
+            })
+
+            # Create, persist, and broadcast the system message card
+            sys_msg = SystemMessage(
+                id=f"sys-{uuid.uuid4().hex[:12]}",
+                text=summary,
+                source="task_notification",
+                timestamp=pendulum.now("America/Los_Angeles").format(
+                    "ddd MMM D YYYY, h:mm A"
+                ),
+            )
+            self.messages.append(sys_msg)
+            await self.flush()
+
+            await self._broadcast({
+                "type": "system-message",
+                "chatId": chat_id,
+                "data": sys_msg.to_wire(),
+            })
+
+    # -- Error events --------------------------------------------------------
+
+    async def _handle_error(self, event: ErrorEvent) -> None:
+        """Bookshelf: nothing. Broadcast: error event."""
+        await self._broadcast({
+            "type": "error", "chatId": self.id, "data": event.message,
+        })
 
     def _ensure_assistant(self) -> None:
         """Lazily create the current assistant message accumulator.
