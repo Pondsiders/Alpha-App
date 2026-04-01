@@ -241,8 +241,6 @@ class Chat:
 
         # Intro memorables — set by the suggest pipeline after a turn,
         # consumed by enrobe on the next turn.
-        self._pending_intro: str | None = None
-
         # Approach light thresholds — each fires exactly once per session.
         # Reset on resurrect (context shrinks after compaction).
         self._crossed_yellow: bool = False
@@ -774,17 +772,24 @@ class Chat:
         if self._turn_lock.locked():
             self._turn_lock.release()
 
-        # Fire suggest in the dead time after the turn completes
-        if finalized_msg and finalized_msg.text.strip():
-            user_text = ""
-            for m in reversed(self.messages):
-                if isinstance(m, UserMessage):
-                    user_text = " ".join(
-                        b.get("text", "") for b in m.content if b.get("type") == "text"
-                    )
-                    break
+        # Fire suggest — ONLY after human-initiated turns.
+        # The guard is HERE, not in _post_turn_suggest. Suggest simply
+        # doesn't get called unless the turn was human-initiated.
+        last_user = next(
+            (m for m in reversed(self.messages) if isinstance(m, UserMessage)),
+            None,
+        )
+        if (
+            finalized_msg
+            and finalized_msg.text.strip()
+            and last_user
+            and last_user.source in ("human", "buzzer")
+        ):
+            user_text = " ".join(
+                b.get("text", "") for b in last_user.content if b.get("type") == "text"
+            )
             if user_text.strip():
-                asyncio.create_task(self._run_suggest(user_text, finalized_msg.text))
+                asyncio.create_task(self._post_turn_suggest(user_text, finalized_msg.text))
 
         # Broadcast updated state
         await self._broadcast({
@@ -933,23 +938,36 @@ class Chat:
             )
             self.messages.append(self._current_assistant)
 
-    async def _run_suggest(self, user_text: str, assistant_text: str) -> None:
-        """Fire-and-forget suggest pipeline. Populates self._pending_intro."""
+    async def _post_turn_suggest(self, user_text: str, assistant_text: str) -> None:
+        """Post-turn suggest: Qwen analyzes, then sends memorables as own turn.
+
+        Alpha processes the memorables via cortex.store tool calls.
+        No text response — Alpha responds to Jeffery, not to Intro.
+        Only called after human-initiated turns (guard in _handle_result).
+        """
         from alpha_app.suggest import suggest, format_intro_block
         self.suggest = SuggestState.FIRING
         try:
             memorables = await suggest(user_text, assistant_text)
             block = format_intro_block(memorables)
-            if block:
-                self._pending_intro = block
-                logfire.info(
-                    "suggest: {count} memorables",
-                    count=len(memorables),
-                    memorables=memorables,
-                    chat_id=self.id,
-                )
-        except Exception:
-            pass
+            if not block:
+                return
+
+            logfire.info(
+                "suggest: {count} memorables, sending as post-turn",
+                count=len(memorables),
+                memorables=memorables,
+                chat_id=self.id,
+            )
+
+            # Send as own turn. Alpha stores via tool calls, no text output.
+            content = [{"type": "text", "text": block}]
+            async with await self.turn() as t:
+                await t.send(content)
+                await t.response()
+
+        except Exception as e:
+            logfire.debug("suggest turn failed: {error}", error=str(e))
         finally:
             self.suggest = SuggestState.DISARMED
 

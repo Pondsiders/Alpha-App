@@ -12,33 +12,12 @@ import asyncio
 import logfire
 from fastapi import WebSocket
 
-from alpha_app.chat import MODEL, Chat, ConversationState, SuggestState
+from alpha_app.chat import MODEL, Chat, ConversationState
 from alpha_app.db import persist_chat
 from alpha_app.routes.broadcast import broadcast
 from alpha_app.routes.enrobe import enrobe
 from alpha_app.routes.spans import build_prompt_preview, format_input_messages
-from alpha_app.suggest import suggest, format_intro_block
 from alpha_app.tools import create_alpha_server
-
-
-async def _run_suggest(chat: Chat, user_text: str, assistant_text: str) -> None:
-    """Fire-and-forget suggest pipeline. Populates chat._pending_intro."""
-    chat.suggest = SuggestState.FIRING
-    try:
-        memorables = await suggest(user_text, assistant_text)
-        block = format_intro_block(memorables)
-        if block:
-            chat._pending_intro = block
-            logfire.info(
-                "suggest: {count} memorables",
-                count=len(memorables),
-                memorables=memorables,
-                chat_id=chat.id,
-            )
-    except Exception:
-        pass
-    finally:
-        chat.suggest = SuggestState.DISARMED
 
 
 async def handle_send(
@@ -94,16 +73,9 @@ async def handle_send(
     try:
             # -- Resurrect if COLD ----------------------------------------
             if chat.state == ConversationState.COLD:
-                def _clear() -> int:
-                    if chat._pending_intro:
-                        chat._pending_intro = None
-                        return 1
-                    return 0
-
                 topic_registry = getattr(ws.app.state, "topic_registry", None)
                 mcp_servers = {"alpha": create_alpha_server(
                     chat=chat,
-                    clear_memorables=_clear,
                     topic_registry=topic_registry,
                     session_id=chat.id,
                 )}

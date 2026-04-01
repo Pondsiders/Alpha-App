@@ -295,16 +295,9 @@ async def websocket_chat(ws: WebSocket) -> None:
                         session=chat.session_uuid[:12],
                     )
 
-                    def _clear() -> int:
-                        if chat._pending_intro:
-                            chat._pending_intro = None
-                            return 1
-                        return 0
-
                     topic_registry = getattr(ws.app.state, "topic_registry", None)
                     mcp_servers = {"alpha": create_alpha_server(
                         chat=chat,
-                        clear_memorables=_clear,
                         topic_registry=topic_registry,
                         session_id=chat.id,
                     )}

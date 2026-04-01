@@ -9,9 +9,9 @@ is the truffle center; everything we add is the shell.
 Implements:
   1. Orientation (full data: capsules, letter, today, here, context,
      events, todos — fetched from Postgres, Redis, and filesystem)
-  2. Intro memorables from previous turn (read from chat._pending_intro)
-  3. Memory recall (dual-strategy search, session dedup, formatted blocks)
-  4. Timestamp injection (PSO-8601 format)
+  2. Memory recall (dual-strategy search, session dedup, formatted blocks)
+  3. Timestamp injection (PSO-8601 format)
+  (Intro memorables removed — suggest fires as own post-turn via Chat.)
 
 Returns a UserMessage domain object with two serializations:
   - to_wire()           → labeled JSON for the frontend
@@ -131,10 +131,7 @@ async def enrobe(
     if chat._needs_orientation:
         chat._needs_orientation = False
 
-    # 2. Intro memorables from previous turn
-    if chat._pending_intro:
-        msg.intro = chat._pending_intro
-        chat._pending_intro = None
+    # 2. (Removed: intro injection. Suggest fires as own post-turn now.)
 
     # 3. Timestamp — computed instantly, broadcast immediately
     #    User story: timestamp appears basically instantly after send.

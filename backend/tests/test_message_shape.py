@@ -155,19 +155,19 @@ class TestFirstTurnShape:
 
 
 class TestNormalTurnShape:
-    """Normal (non-first) turn — intro, memories, timestamp, user message.
+    """Normal (non-first) turn — memories, timestamp, user message.
 
-    Expected block order (6 blocks):
-        intro -> timestamp -> user message -> memories(3)
+    Expected block order (5 blocks):
+        timestamp -> user message -> memories(3)
 
-    No orientation blocks. Memories come after user message.
+    No orientation blocks. No intro (suggest fires as own post-turn).
     """
 
     @pytest.fixture
     def enrobe_normal_turn(self):
         """Run enrobe for a normal-turn message with deterministic mocks."""
         async def _run():
-            chat = ChatStub(needs_orientation=False, pending_intro=INTRO_SPEAKS)
+            chat = ChatStub(needs_orientation=False)
             content = [{"type": "text", "text": USER_MESSAGE_NORMAL}]
 
             with (
