@@ -145,11 +145,36 @@ class Turn:
     def __init__(self, chat: "Chat") -> None:
         self._chat = chat
 
-    async def send(self, content: list[dict]) -> None:
-        """Send a message within this turn. Can be called multiple times."""
-        self._chat.updated_at = time.time()
-        self._chat.state = ConversationState.RESPONDING
-        await self._chat._claude.send(content)
+    async def send(self, msg_or_content) -> None:
+        """Send a message within this turn. Can be called multiple times.
+
+        Accepts either a UserMessage (preferred — handles persistence and
+        broadcast) or raw content blocks (backward compat / steering).
+        """
+        chat = self._chat
+        chat.updated_at = time.time()
+        chat.state = ConversationState.RESPONDING
+
+        if isinstance(msg_or_content, UserMessage):
+            msg = msg_or_content
+            # Extract title from first message if needed
+            if not chat.title:
+                for block in msg.content:
+                    if block.get("type") == "text" and block.get("text"):
+                        chat.title = block["text"][:80]
+                        break
+            chat.messages.append(msg)  # Born dirty
+            await chat.flush()
+            await chat._broadcast({
+                "type": "user-message",
+                "chatId": chat.id,
+                "data": msg.to_wire(),
+            })
+            chat.reset_output_tokens()
+            await chat._claude.send(msg.to_content_blocks())
+        else:
+            # Raw content blocks — steering messages, backward compat
+            await chat._claude.send(msg_or_content)
 
     async def response(self) -> "AssistantMessage | None":
         """Wait for Claude to finish. Returns the completed response."""

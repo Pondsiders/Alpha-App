@@ -125,7 +125,7 @@ async def breathe(app, **kwargs) -> str | None:
             content = [{"type": "text", "text": prompt}]
             result = await enrobe(content, chat=chat, source="solitude")
             async with await chat.turn() as t:
-                await t.send(result.content)
+                await t.send(result.message)
                 response = await t.response()
             output_parts.append(response.text if response else "")
 

@@ -66,7 +66,7 @@ async def run(app, **kwargs) -> str | None:
         content = [{"type": "text", "text": "\n\n".join(prompt_parts)}]
         result = await enrobe(content, chat=chat, source="dawn")
         async with await chat.turn() as t:
-            await t.send(result.content)
+            await t.send(result.message)
             await t.response()
 
         # Set observability attributes
@@ -109,7 +109,7 @@ async def _nightnight(app, span) -> str | None:
     content = [{"type": "text", "text": NIGHTNIGHT_PROMPT}]
     result = await enrobe(content, chat=yesterday_chat, source="nightnight")
     async with await yesterday_chat.turn() as t:
-        await t.send(result.content)
+        await t.send(result.message)
         await t.response()
 
     # Check if the letter tool was called by looking at Postgres
