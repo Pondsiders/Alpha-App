@@ -1,15 +1,14 @@
 """mock_claude.py — Drop-in replacement for Claude in tests.
 
-Same interface as Claude (start, send, events, stop) but no subprocess,
-no proxy, no network. Records what it receives via send() so tests can
-assert on the content blocks that arrived.
+Same interface as Claude (start, send, stop, on_event callback) but no
+subprocess, no proxy, no network. Records what it receives via send()
+so tests can assert on the content blocks that arrived.
 
 Usage:
     claude = MockClaude(system_prompt="You are a frog.")
+    claude.on_event = my_handler     # events flow through callback
     await claude.start()
     await claude.send([{"type": "text", "text": "Hello!"}])
-    async for event in claude.events():
-        ...  # yields canned AssistantEvent + ResultEvent
 
     # Inspect what was sent:
     claude.sent_messages  # list of content block lists
@@ -21,7 +20,6 @@ import uuid
 
 from alpha_app.constants import CONTEXT_WINDOW
 from dataclasses import dataclass, field
-from typing import AsyncIterator
 
 from .claude import (
     AssistantEvent,
@@ -157,28 +155,6 @@ class MockClaude:
 
         # Record the content blocks — this is what tests assert on
         self.sent_messages.append(content)
-
-    async def events(self) -> AsyncIterator[Event]:
-        if self._state != ClaudeState.READY:
-            raise RuntimeError(f"Cannot read events in state {self._state}")
-
-        # Yield a canned assistant response
-        yield AssistantEvent(
-            raw={"type": "assistant", "message": {"content": [
-                {"type": "text", "text": self._canned_response}
-            ]}},
-            content=[{"type": "text", "text": self._canned_response}],
-        )
-
-        # Yield end-of-turn result
-        yield ResultEvent(
-            raw={"type": "result"},
-            session_id=self._session_id or "",
-            cost_usd=0.0,
-            num_turns=len(self.sent_messages),
-            duration_ms=50,
-            is_error=False,
-        )
 
     async def stop(self) -> None:
         self._state = ClaudeState.STOPPED

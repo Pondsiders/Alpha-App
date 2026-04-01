@@ -3,16 +3,13 @@
 The only stateful object in the SDK. Wraps the claude binary over
 newline-delimited JSON stdio, with an HTTP proxy for token counting.
 
-Usage:
+Usage (callback mode — the only mode):
     claude = Claude(system_prompt="You are a frog.")
-    await claude.start()            # New session
-    await claude.start("abc-123")   # Resume session
+    claude.on_event = my_handler     # events flow through callback
+    await claude.start()             # New session
+    await claude.start("abc-123")    # Resume session
     await claude.send([{"type": "text", "text": "Hello!"}])
-    async for event in claude.events():
-        if isinstance(event, AssistantEvent):
-            print(event.text)
-        elif isinstance(event, ResultEvent):
-            break
+    await claude._ready.wait()       # Wait for turn to complete
     await claude.stop()
 """
 
@@ -677,45 +674,6 @@ class Claude:
                 error=str(e),
             )
             self._state = ClaudeState.STOPPED
-
-    async def events(self) -> AsyncIterator[Event]:
-        """DEPRECATED: Use the on_event callback instead.
-
-        Kept temporarily for backward compatibility during migration.
-        Only works when on_event is NOT set (old pull-based mode).
-        """
-        if self._on_event:
-            raise RuntimeError(
-                "Cannot use events() when on_event callback is set. "
-                "Events flow through the callback, not the generator."
-            )
-
-        if self._state not in (ClaudeState.RUNNING, ClaudeState.READY):
-            raise RuntimeError(f"Cannot read events in state {self._state}")
-
-        while True:
-            raw = await self._read_json()
-
-            if raw is None:
-                self._state = ClaudeState.STOPPED
-                yield ErrorEvent(raw={}, message="claude process exited unexpectedly")
-                return
-
-            event = self._parse_event(raw)
-            _trace_stdout(raw)
-
-            if isinstance(event, _ControlRequestEvent):
-                await self._handle_control_request(event)
-                continue
-
-            if isinstance(event, ResultEvent) and not self._session_id:
-                if event.session_id:
-                    self._session_id = event.session_id
-
-            yield event
-
-            if isinstance(event, ResultEvent):
-                return
 
     async def stop(self) -> None:
         """Gracefully shut down the claude process."""

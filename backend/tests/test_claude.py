@@ -322,12 +322,6 @@ class TestStateGuards:
         with pytest.raises(RuntimeError, match="Cannot send"):
             await claude.send([{"type": "text", "text": "hello"}])
 
-    async def test_cannot_read_events_before_start(self):
-        claude = Claude()
-        with pytest.raises(RuntimeError, match="Cannot read events"):
-            async for _ in claude.events():
-                pass
-
     async def test_stop_from_idle_is_fine(self):
         """Stopping without starting is a no-op, not an error."""
         claude = Claude()

@@ -6,10 +6,8 @@ State is a vector with two orthogonal dimensions:
   - Conversation: STARTING / READY / ENRICHING / RESPONDING / COLD
   - Suggest:      DISARMED / ARMED / FIRING
 
-Each dimension evolves independently. Off-diagonal couplings:
-  - begin_turn() disarms suggest (new turn resets the cycle)
-  - ResultEvent arms suggest (turn complete, ready for analysis)
-  - conversation -> COLD -> suggest -> DISARMED (cleanup)
+Events from Claude flow through _on_claude_event(), which dispatches to
+focused handler methods via _EVENT_HANDLERS (see CHAT-V2.md).
 
 See KERNEL.md for the full design.
 """
@@ -22,7 +20,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable
 from enum import Enum
-from typing import Any, AsyncIterator
+from typing import Any
 
 import logfire
 
@@ -148,7 +146,7 @@ class Chat:
         wake()          -> COLD -> STARTING -> READY (fresh start)
         begin_turn()    -> READY -> ENRICHING, suggest -> DISARMED
         send()          -> ENRICHING/READY -> RESPONDING (or interjection)
-        events()        -> RESPONDING -> READY, suggest -> ARMED
+        ResultEvent     -> RESPONDING -> READY, suggest -> ARMED
         interrupt()     -> * -> COLD, suggest -> DISARMED
         reap()          -> * -> COLD, suggest -> DISARMED
         resurrect()     -> COLD -> STARTING -> READY (resume existing session)
@@ -968,33 +966,6 @@ class Chat:
 
         self.state = ConversationState.RESPONDING
         await self._claude.send(content)
-
-    async def events(self) -> AsyncIterator[Event]:
-        """Stream events until the turn completes.
-
-        On ResultEvent: conversation -> READY, suggest -> ARMED.
-        """
-        if not self._claude:
-            raise RuntimeError(f"Chat {self.id} has no subprocess")
-
-        try:
-            async for event in self._claude.events():
-                if isinstance(event, ResultEvent):
-                    if event.session_id:
-                        self.session_uuid = event.session_id
-                    # State vector transition: turn complete
-                    self.state = ConversationState.READY
-                    self.suggest = SuggestState.ARMED
-                    self._start_reap_timer()
-                    yield event
-                    return
-                yield event
-        except Exception:
-            self._snapshot_token_state()
-            self.state = ConversationState.COLD
-            self.suggest = SuggestState.DISARMED
-            self._claude = None
-            raise
 
     async def interrupt(self) -> None:
         """Interrupt the current turn. * -> COLD."""
