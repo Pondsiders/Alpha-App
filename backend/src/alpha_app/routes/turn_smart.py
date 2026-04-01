@@ -63,8 +63,13 @@ async def handle_send(
     chat_id = chat.id
     prompt_preview = build_prompt_preview(content)
 
+    # Acquire the turn lock — prevents jobs/alarms from sending during our turn.
+    # Released when ResultEvent fires in _handle_result (via _active_turn cleanup).
+    await chat._turn_lock.acquire()
+    from alpha_app.chat import Turn
+    chat._active_turn = Turn(chat)
+
     # Open the turn span manually — it closes in the callback on ResultEvent.
-    # This span lives across the full turn: user input → Claude response.
     span = logfire.span(
         "alpha.turn: {prompt_preview}",
         **{
@@ -181,6 +186,10 @@ async def handle_send(
         if chat._turn_span:
             chat._turn_span.__exit__(None, None, None)
             chat._turn_span = None
+        # Release turn lock
+        chat._active_turn = None
+        if chat._turn_lock.locked():
+            chat._turn_lock.release()
     except Exception as e:
         logfire.error("turn failed: {error}", error=str(e))
         # Close the span with error info
@@ -188,6 +197,10 @@ async def handle_send(
             chat._turn_span.set_attribute("error.type", type(e).__name__)
             chat._turn_span.__exit__(type(e), e, e.__traceback__)
             chat._turn_span = None
+        # Release turn lock
+        chat._active_turn = None
+        if chat._turn_lock.locked():
+            chat._turn_lock.release()
         try:
             await broadcast(connections, {"type": "error", "chatId": chat_id, "data": str(e)})
         except Exception:

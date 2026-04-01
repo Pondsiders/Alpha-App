@@ -743,8 +743,11 @@ class Chat:
         # State transitions
         self.state = ConversationState.READY
         self.suggest = SuggestState.ARMED
-        # Reap timer: Claude starts its own timer on send(). After ResultEvent
-        # Claude is idle — the timer started on the last send() is ticking.
+
+        # Release the turn lock — this turn is over. Jobs/suggest can proceed.
+        self._active_turn = None
+        if self._turn_lock.locked():
+            self._turn_lock.release()
 
         # Fire suggest in the dead time after the turn completes
         if finalized_msg and finalized_msg.text.strip():
