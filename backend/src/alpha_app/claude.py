@@ -613,6 +613,7 @@ class Claude:
             if self._state not in (ClaudeState.RUNNING, ClaudeState.READY):
                 raise RuntimeError(f"Cannot send in state {self._state}")
 
+            self._ready.clear()  # We're about to be busy — don't let stale ready leak
             self._start_reap_timer()
             await self._send_json(self._format_user_message(content))
 
