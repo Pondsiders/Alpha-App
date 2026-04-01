@@ -689,9 +689,11 @@ class Chat:
                 if msg.to_content_blocks() == echo_content:
                     msg._confirmed = True
                     msg._dirty = True
-                    # Broadcast the confirmed message with full metadata
+                    # Re-broadcast as user-message with full metadata.
+                    # Same event type as the initial send — progressive
+                    # enhancement. Frontend reconciles by message ID.
                     await self._broadcast({
-                        "type": "user-message-confirmed",
+                        "type": "user-message",
                         "chatId": chat_id,
                         "data": msg.to_wire(),
                     })
