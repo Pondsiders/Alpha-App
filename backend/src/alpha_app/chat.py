@@ -960,10 +960,16 @@ class Chat:
                 chat_id=self.id,
             )
 
-            # Send as own turn. Alpha stores via tool calls, no text output.
-            content = [{"type": "text", "text": block}]
+            # Send as own turn with source="suggest" so the source guard
+            # in _handle_result sees it and does NOT fire suggest again.
+            from alpha_app.models import UserMessage as UM
+            msg = UM(
+                id=f"suggest-{uuid.uuid4().hex[:8]}",
+                content=[{"type": "text", "text": block}],
+                source="suggest",
+            )
             async with await self.turn() as t:
-                await t.send(content)
+                await t.send(msg)
                 await t.response()
 
         except Exception as e:
