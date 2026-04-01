@@ -99,11 +99,12 @@ class TestFormatIntroBlock:
         assert result is not None
         assert "consider storing these from the previous turn:" in result
 
-    def test_block_ends_with_do_not_speak(self):
+    def test_block_ends_with_no_output_instruction(self):
         """The prompt must instruct Alpha to only store, not respond with text."""
         result = format_intro_block(["moment"])
         assert result is not None
-        assert "Do not speak." in result
+        assert "Do not produce any text output" in result
+        assert "ONLY output should be store tool calls" in result
 
     def test_format_matches_narrator_convention(self):
         """Verify the output uses [Narrator] convention for post-turn suggest."""
@@ -112,7 +113,7 @@ class TestFormatIntroBlock:
         )
         assert result is not None
         assert result.startswith("[Narrator]")
-        assert "Do not speak" in result
+        assert "Do not produce any text output" in result
         assert len(result) > 0
 
 

@@ -147,7 +147,10 @@ def format_intro_block(memorables: list[str]) -> str | None:
     return (
         "[Narrator] Alpha, consider storing these from the previous turn:\n"
         f"{lines}\n\n"
-        "[Narrator] Call the store tool for any items worth keeping. Do not speak."
+        "[Narrator] Call the store tool for any items worth keeping, then stop.\n"
+        "Do not produce any text output. Do not acknowledge. Do not respond.\n"
+        "Your ONLY output should be store tool calls. If nothing is worth\n"
+        "storing, produce no output at all."
     )
 
 
