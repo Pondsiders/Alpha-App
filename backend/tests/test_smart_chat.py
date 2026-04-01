@@ -189,13 +189,14 @@ class TestSmartChatCallback:
         # Accumulate some text
         await chat._on_claude_event(_text_delta("Hello!"))
 
-        # No messages yet
-        assert len(chat.messages) == 0
+        # Message is in messages[] immediately (for late-joiner support)
+        assert len(chat.messages) == 1
+        assert chat.messages[0] is chat._current_assistant
 
         # ResultEvent finalizes
         await chat._on_claude_event(_result_event())
 
-        # Message should be in the list now
+        # Still one message — same object, now with metadata
         assert len(chat.messages) == 1
         msg = chat.messages[0]
         assert isinstance(msg, AssistantMessage)

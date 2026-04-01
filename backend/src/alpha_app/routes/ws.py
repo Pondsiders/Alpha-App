@@ -238,8 +238,12 @@ async def websocket_chat(ws: WebSocket) -> None:
                     session=chat.session_uuid[:12] if chat and chat.session_uuid else "none",
                 )
 
-                # Load all messages from app.messages
-                messages = await load_messages(chat_id)
+                # Load messages: prefer in-memory (includes in-progress
+                # AssistantMessage with latest deltas), fall back to Postgres.
+                if in_memory and chat:
+                    messages = chat.messages_to_wire()
+                else:
+                    messages = await load_messages(chat_id)
 
                 # Build the payload
                 metadata = chat.wire_state() if chat else {

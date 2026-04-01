@@ -638,7 +638,9 @@ class Chat:
                 msg.duration_ms = event.duration_ms
                 msg.inference_count = event.num_turns
 
-                self.messages.append(msg)
+                # Message already in messages[] (appended by _ensure_assistant).
+                # Mark dirty so metadata gets flushed.
+                msg._dirty = True
 
                 # Broadcast the coalesced assistant-message
                 await _broadcast({
@@ -816,11 +818,17 @@ class Chat:
             })
 
     def _ensure_assistant(self) -> None:
-        """Lazily create the current assistant message accumulator."""
+        """Lazily create the current assistant message accumulator.
+
+        Appends to messages[] immediately so late-joiners (second browser
+        tab, page reload) see the in-progress response via join-chat.
+        Deltas accumulate on this same object in-place.
+        """
         if self._current_assistant is None:
             self._current_assistant = AssistantMessage(
                 id=f"msg-{uuid.uuid4().hex[:12]}"
             )
+            self.messages.append(self._current_assistant)
 
     async def _run_suggest(self, user_text: str, assistant_text: str) -> None:
         """Fire-and-forget suggest pipeline. Populates self._pending_intro."""
