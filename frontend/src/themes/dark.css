@@ -1,7 +1,7 @@
 /**
  * Alpha dark theme — warm amber/gold accent, workshop lamplight.
  */
-:root {
+[data-theme="alpha"] {
   --theme-background: #1c1c1c;
   --theme-surface: #282828;
   --theme-composer: #282828;

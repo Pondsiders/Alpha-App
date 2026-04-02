@@ -106,6 +106,16 @@ from alpha_app.routes.schedule_api import router as schedule_router
 app.include_router(schedule_router)
 
 
+@app.get("/api/theme")
+async def get_theme():
+    """Serve the identity's theme CSS from JE_NE_SAIS_QUOI/theme.css."""
+    theme_path = JE_NE_SAIS_QUOI / "theme.css"
+    if theme_path.is_file():
+        return FileResponse(theme_path, media_type="text/css")
+    from fastapi.responses import Response
+    return Response(status_code=404, content="/* no theme.css in identity directory */")
+
+
 @app.get("/health")
 async def health() -> dict:
     """Health check endpoint."""

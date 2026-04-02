@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate, useParams, useNavigate } from "
 import { useCallback, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import ChatPage from "./pages/ChatPage";
+import Chat2Page from "./pages/Chat2Page";
 import DevContextMeter from "./pages/DevContextMeter";
 import DevStatusBar from "./pages/DevStatusBar";
 import DevTopics from "./pages/DevTopics";
@@ -1059,6 +1060,7 @@ function App() {
         <Route path="/" element={<RootRedirect />} />
         <Route path="/chat" element={<Layout />} />
         <Route path="/chat/:chatId" element={<Layout />} />
+        <Route path="/chat2/:chatId" element={<Chat2Page />} />
         <Route path="/dev/context-meter" element={<DevContextMeter />} />
         <Route path="/dev/status-bar" element={<DevStatusBar />} />
         <Route path="/dev/topics" element={<DevTopics />} />

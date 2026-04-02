@@ -2,30 +2,81 @@
 @import "tailwindcss";
 @import "./themes/dark.css";
 
+@custom-variant dark (&:is(.dark *));
+
+/**
+ * Shadcn defaults — bare minimum for stock components to render.
+ * These are the standard shadcn dark theme values from their registry.
+ * Our alpha theme (data-theme="alpha") overrides --theme-* variables
+ * on ChatPage only. Chat2 uses these defaults.
+ */
+:root {
+  --radius: 0.625rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.141 0.005 285.823);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.141 0.005 285.823);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.141 0.005 285.823);
+  --primary: oklch(0.21 0.006 285.885);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.967 0.001 286.375);
+  --secondary-foreground: oklch(0.21 0.006 285.885);
+  --muted: oklch(0.967 0.001 286.375);
+  --muted-foreground: oklch(0.552 0.016 285.938);
+  --accent: oklch(0.967 0.001 286.375);
+  --accent-foreground: oklch(0.21 0.006 285.885);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.92 0.004 286.32);
+  --input: oklch(0.92 0.004 286.32);
+  --ring: oklch(0.705 0.015 286.067);
+}
+
+.dark {
+  --background: oklch(0.141 0.005 285.823);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.21 0.006 285.885);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.21 0.006 285.885);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.92 0.004 286.32);
+  --primary-foreground: oklch(0.21 0.006 285.885);
+  --secondary: oklch(0.274 0.006 286.033);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.274 0.006 286.033);
+  --muted-foreground: oklch(0.705 0.015 286.067);
+  --accent: oklch(0.274 0.006 286.033);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.552 0.016 285.938);
+}
+
 /**
  * Theme bridge — Maps theme variables to Tailwind's @theme system.
  */
 @theme {
   /* Surfaces */
-  --color-background: var(--theme-background);
-  --color-surface: var(--theme-surface);
-  --color-composer: var(--theme-composer);
+  --color-background: var(--theme-background, var(--background));
+  --color-surface: var(--theme-surface, var(--card));
+  --color-composer: var(--theme-composer, var(--card));
 
   /* Text */
-  --color-text: var(--theme-text);
-  --color-muted: var(--theme-muted);
+  --color-text: var(--theme-text, var(--foreground));
+  --color-muted: var(--theme-muted, var(--muted-foreground));
 
   /* Accent */
-  --color-primary: var(--theme-primary);
+  --color-primary: var(--theme-primary, var(--primary));
 
   /* Components */
-  --color-user-bubble: var(--theme-user-bubble);
-  --color-code-bg: var(--theme-code-bg);
-  --color-border: var(--theme-border);
+  --color-user-bubble: var(--theme-user-bubble, var(--secondary));
+  --color-code-bg: var(--theme-code-bg, var(--card));
+  --color-border: var(--theme-border, var(--border));
 
   /* Semantic */
-  --color-success: var(--theme-success);
-  --color-error: var(--theme-error);
+  --color-success: var(--theme-success, #22c55e);
+  --color-error: var(--theme-error, var(--destructive));
 
   /* Sidebar */
   --color-sidebar: var(--sidebar-background);
@@ -52,8 +103,8 @@
   body {
     margin: 0;
     font-family: var(--font-sans);
-    background-color: var(--theme-background);
-    color: var(--theme-text);
+    background-color: var(--background);
+    color: var(--foreground);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }

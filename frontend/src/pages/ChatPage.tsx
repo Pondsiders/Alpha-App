@@ -633,7 +633,7 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <div className="h-full flex flex-col bg-background">
+      <div data-theme="alpha" className="h-full flex flex-col bg-background">
         <StatusBar />
         {isReplaying ? (
           /* During replay, don't render messages — the store mutates silently.
