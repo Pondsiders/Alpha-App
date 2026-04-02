@@ -24,7 +24,9 @@ from alpha_app.scheduler import schedule_job
 
 PROGRAM_PATH = "/Pondside/Alpha-Home/Alpha/prompts/solitude/program.yaml"
 PROMPTS_DIR = "/Pondside/Alpha-Home/Alpha/prompts/solitude"
-DISALLOWED_INTERACTIVE = ["EnterPlanMode", "ExitPlanMode", "AskUserQuestion"]
+# Base DISALLOWED_TOOLS from constants.py already covers EnterPlanMode,
+# ExitPlanMode, AskUserQuestion. No extra disallowed tools needed for Solitude.
+DISALLOWED_INTERACTIVE: list[str] = []
 
 
 @dataclass

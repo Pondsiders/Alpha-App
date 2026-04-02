@@ -36,3 +36,20 @@ CONTEXT_WINDOW = 1_000_000
 OLLAMA_EMBED_MODEL = "qwen3-embedding:4b"
 OLLAMA_CHAT_MODEL = "qwen3.5:4b"
 OLLAMA_NUM_CTX = 16384  # Same for recall, suggest, AND reading — prevents model reloads
+
+# -- Disallowed tools ---------------------------------------------------------
+# Claude Code tools that don't apply in Alpha-App. Removed from the model's
+# context entirely via --disallowedTools. Everything else stays available —
+# "I don't want allowed tools to exist as a concept" (Feb 21, 2026).
+DISALLOWED_TOOLS = [
+    "EnterPlanMode",       # Got us stuck Feb 12 — no plan-mode UI
+    "ExitPlanMode",        # Meaningless without plan mode
+    "AskUserQuestion",     # Multi-choice widget doesn't render in our frontend
+    "EnterWorktree",       # CC terminal feature, never used
+    "ExitWorktree",        # Same
+    "CronCreate",          # CC's in-memory cron — NOT our scheduler, confusing
+    "CronDelete",          # Same
+    "CronList",            # Same
+    "RemoteTrigger",       # Claude.ai remote control, irrelevant
+    "NotebookEdit",        # No notebooks — add back if needed
+]

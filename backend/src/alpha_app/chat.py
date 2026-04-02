@@ -540,11 +540,14 @@ class Chat:
             session_id=self.id,
         )}
 
+        from alpha_app.constants import DISALLOWED_TOOLS
+
         self._claude = _make_claude(
             model=MODEL,
             system_prompt=system_prompt or None,
             permission_mode="bypassPermissions",
             mcp_servers=mcp_servers,
+            disallowed_tools=DISALLOWED_TOOLS,
             on_event=self._on_claude_event,
         )
         self._claude._on_reap = self._on_claude_reap
@@ -1206,12 +1209,15 @@ class Chat:
         )
 
         try:
+            from alpha_app.constants import DISALLOWED_TOOLS
+            merged_disallowed = list(set(DISALLOWED_TOOLS + (disallowed_tools or [])))
+
             self._claude = _make_claude(
                 model=MODEL,
                 system_prompt=prompt or None,
                 permission_mode="bypassPermissions",
                 mcp_servers=mcp_servers,
-                disallowed_tools=disallowed_tools,
+                disallowed_tools=merged_disallowed,
                 on_event=self._on_claude_event,  # Always wire — Chat owns its events
             )
             self._claude._on_reap = self._on_claude_reap
@@ -1261,12 +1267,15 @@ class Chat:
         )
 
         try:
+            from alpha_app.constants import DISALLOWED_TOOLS
+            merged_disallowed = list(set(DISALLOWED_TOOLS + (disallowed_tools or [])))
+
             self._claude = _make_claude(
                 model=MODEL,
                 system_prompt=prompt or None,
                 permission_mode="bypassPermissions",
                 mcp_servers=mcp_servers,
-                disallowed_tools=disallowed_tools,
+                disallowed_tools=merged_disallowed,
                 on_event=self._on_claude_event,  # Always wire — Chat owns its events
             )
             self._claude._on_reap = self._on_claude_reap

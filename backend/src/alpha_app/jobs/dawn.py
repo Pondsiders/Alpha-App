@@ -28,7 +28,9 @@ This is the bridge between today and tomorrow. Make it count.
 
 \U0001f986"""
 
-DISALLOWED_INTERACTIVE = ["EnterPlanMode", "ExitPlanMode", "AskUserQuestion"]
+# Base DISALLOWED_TOOLS from constants.py already covers EnterPlanMode,
+# ExitPlanMode, AskUserQuestion. No extra disallowed tools needed for Dawn.
+DISALLOWED_INTERACTIVE: list[str] = []
 
 
 async def run(app, **kwargs) -> str | None:
