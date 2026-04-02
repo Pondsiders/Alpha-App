@@ -153,12 +153,6 @@ export default function Chat2Page() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
-  // --- Dark mode ---
-  useEffect(() => {
-    document.documentElement.classList.add("dark");
-    return () => document.documentElement.classList.remove("dark");
-  }, []);
-
   // --- WebSocket connection ---
   useEffect(() => {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
