@@ -127,13 +127,14 @@ async def store_memory(
     async with pool.acquire() as conn:
         memory_id = await conn.fetchval(
             """
-            INSERT INTO cortex.memories (content, embedding_qwen, metadata)
-            VALUES ($1, $2, $3)
+            INSERT INTO cortex.memories (content, embedding_qwen, metadata, created_at)
+            VALUES ($1, $2, $3, $4)
             RETURNING id
             """,
             content,
             json.dumps(embedding),  # pgvector accepts JSON array
             metadata,
+            created_at,
         )
         return memory_id, created_at
 
@@ -172,12 +173,12 @@ async def search_memories(
             param_idx += 1
 
         if after:
-            conditions.append(f"(metadata->>'created_at')::timestamptz >= ${param_idx}")
+            conditions.append(f"created_at >= ${param_idx}")
             params.append(after)
             param_idx += 1
 
         if before:
-            conditions.append(f"(metadata->>'created_at')::timestamptz < ${param_idx}")
+            conditions.append(f"created_at < ${param_idx}")
             params.append(before)
             param_idx += 1
 
@@ -315,7 +316,7 @@ async def search_memories_by_embedding(
                     FROM cortex.memories
                     WHERE {where_clause}
                 )
-                SELECT id, content, metadata, score
+                SELECT id, content, metadata, created_at, created_at, score
                 FROM scored
                 WHERE score >= ${param_idx + 1}
                 ORDER BY score DESC
@@ -393,10 +394,10 @@ async def search_memories_by_name(
         where_clause = " AND ".join(conditions)
 
         query = f"""
-            SELECT id, content, metadata
+            SELECT id, content, metadata, created_at
             FROM cortex.memories
             WHERE {where_clause}
-            ORDER BY (metadata->>'created_at')::timestamptz DESC
+            ORDER BY created_at DESC
             LIMIT ${param_idx}
         """
         params.append(limit)
@@ -425,11 +426,11 @@ async def get_recent_memories(
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT id, content, metadata
+            SELECT id, content, metadata, created_at
             FROM cortex.memories
             WHERE NOT forgotten
-              AND (metadata->>'created_at')::timestamptz >= $1
-            ORDER BY (metadata->>'created_at')::timestamptz DESC
+              AND created_at >= $1
+            ORDER BY created_at DESC
             LIMIT $2
             """,
             cutoff,
@@ -453,7 +454,7 @@ async def get_memory(memory_id: int) -> dict[str, Any] | None:
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            SELECT id, content, metadata
+            SELECT id, content, metadata, created_at
             FROM cortex.memories
             WHERE id = $1 AND NOT forgotten
             """,

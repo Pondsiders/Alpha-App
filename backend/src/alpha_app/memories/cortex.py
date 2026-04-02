@@ -133,7 +133,7 @@ async def search(
             mem = {
                 "id": item["id"],
                 "content": item["content"],
-                "created_at": metadata.get("created_at", ""),
+                "created_at": item.get("created_at", metadata.get("created_at", "")),
                 "score": item.get("score"),
             }
             if metadata.get("image_path"):
@@ -184,7 +184,7 @@ async def search_by_embedding(
             mem = {
                 "id": item["id"],
                 "content": item["content"],
-                "created_at": metadata.get("created_at", ""),
+                "created_at": item.get("created_at", metadata.get("created_at", "")),
                 "score": item.get("score"),
             }
             if metadata.get("garage_key"):
@@ -225,7 +225,7 @@ async def search_by_name(
             mem = {
                 "id": item["id"],
                 "content": item["content"],
-                "created_at": metadata.get("created_at", ""),
+                "created_at": item.get("created_at", metadata.get("created_at", "")),
                 "score": item.get("score"),
             }
             if metadata.get("garage_key"):
@@ -258,7 +258,7 @@ async def recent(limit: int = 10, hours: int = 24) -> list[dict[str, Any]]:
             mem = {
                 "id": item["id"],
                 "content": item["content"],
-                "created_at": metadata.get("created_at", ""),
+                "created_at": item.get("created_at", metadata.get("created_at", "")),
             }
             if metadata.get("image_path"):
                 mem["image_path"] = metadata["image_path"]
@@ -288,7 +288,7 @@ async def get(memory_id: int) -> dict[str, Any] | None:
         mem = {
             "id": result["id"],
             "content": result["content"],
-            "created_at": metadata.get("created_at", ""),
+            "created_at": item.get("created_at", metadata.get("created_at", "")),
             "tags": metadata.get("tags"),
         }
         if metadata.get("image_path"):

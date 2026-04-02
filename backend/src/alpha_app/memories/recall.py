@@ -495,9 +495,10 @@ async def _process_image_part(
             doc_embedding = await embed_document(caption)
             if doc_embedding:
                 from datetime import datetime, timezone
+                created_at_utc = datetime.now(timezone.utc)
                 vec_str = "[" + ",".join(str(x) for x in doc_embedding) + "]"
                 metadata = {
-                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "created_at": created_at_utc.isoformat(),
                     "garage_key": garage_key,
                     "source": source,
                     "content_hash": content_hash,
@@ -506,13 +507,14 @@ async def _process_image_part(
                 try:
                     row = await pool.fetchrow(
                         """
-                        INSERT INTO cortex.memories (content, embedding_qwen, metadata)
-                        VALUES ($1, $2::vector, $3)
+                        INSERT INTO cortex.memories (content, embedding_qwen, metadata, created_at)
+                        VALUES ($1, $2::vector, $3, $4)
                         RETURNING id
                         """,
                         caption,
                         vec_str,
                         json.dumps(metadata),
+                        created_at_utc,
                     )
                     if row:
                         logfire.info(

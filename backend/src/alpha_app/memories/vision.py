@@ -200,8 +200,9 @@ async def _store_image_memory(
         # db.py._init_connection) calls json.dumps for us. Pre-serializing
         # here would cause double-encoding: json.dumps(json.dumps(dict))
         # producing a JSONB string instead of a JSONB object.
+        created_at = datetime.now(timezone.utc)
         metadata = {
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": created_at.isoformat(),
             "garage_key": garage_key,
             "source": source,
             "content_hash": content_hash,
@@ -211,13 +212,14 @@ async def _store_image_memory(
         try:
             row = await pool.fetchrow(
                 """
-                INSERT INTO cortex.memories (content, embedding_qwen, metadata)
-                VALUES ($1, $2::vector, $3)
+                INSERT INTO cortex.memories (content, embedding_qwen, metadata, created_at)
+                VALUES ($1, $2::vector, $3, $4)
                 RETURNING id
                 """,
                 caption,
                 vec_str,
                 metadata,
+                created_at,
             )
             memory_id = row["id"] if row else None
             if memory_id:
