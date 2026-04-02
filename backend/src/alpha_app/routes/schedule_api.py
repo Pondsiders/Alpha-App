@@ -41,11 +41,6 @@ class OverrideRequest(BaseModel):
     dawn_time: str  # ISO 8601 datetime with timezone
 
 
-class SolitudeRequest(BaseModel):
-    time: str          # ISO 8601 datetime, e.g. "2026-04-01T22:00:00"
-    entry_index: int = 0  # which program entry to start from
-
-
 class AlarmRequest(BaseModel):
     time: str      # ISO 8601 datetime
     message: str   # prompt text to inject
@@ -74,15 +69,6 @@ async def set_override(request: Request, body: OverrideRequest):
     dt = _parse_local(body.dawn_time)
     await set_state("dawn_override", {"time": str(dt)})
     return {"override_set": str(dt)}
-
-
-@router.post("/solitude")
-async def post_solitude(request: Request, body: SolitudeRequest):
-    """Schedule a Solitude breath. For bootstrapping the night chain."""
-    from alpha_app.scheduler import schedule_job
-    dt = _parse_local(body.time)
-    job_id = await schedule_job(request.app, "solitude", dt, entry_index=body.entry_index)
-    return {"scheduled": "solitude", "time": str(dt), "entry_index": body.entry_index, "job_id": job_id}
 
 
 @router.post("/alarm")
