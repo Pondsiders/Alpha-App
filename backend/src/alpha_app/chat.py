@@ -1124,7 +1124,8 @@ class Chat:
                 yield t
             finally:
                 self._active_turn = None
-                self._turn_lock.release()
+                if self._turn_lock.locked():
+                    self._turn_lock.release()
 
         return _turn_cm()
 
