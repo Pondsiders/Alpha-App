@@ -292,19 +292,21 @@ const AssistantMessage = () => {
       <div className="text-text leading-relaxed flex flex-col gap-5">
         <MessagePrimitive.Parts components={ASSISTANT_PARTS_COMPONENTS} />
       </div>
-      {/* Copy button — inside the message root so hover zone is contiguous. */}
-      <div className="mt-2 opacity-0 group-hover/assistant:opacity-100 transition-opacity duration-150">
-        <ActionBarPrimitive.Root>
-          <ActionBarPrimitive.Copy asChild>
-            <button
-              className="text-muted/40 hover:text-text p-1 rounded bg-transparent border-none cursor-pointer transition-colors"
-              aria-label="Copy message"
-            >
-              <Copy size={14} />
-            </button>
-          </ActionBarPrimitive.Copy>
-        </ActionBarPrimitive.Root>
-      </div>
+      {/* Copy button — autohide="never" disables the library's own hover tracking so
+          our CSS group-hover/assistant is the sole controller of visibility. */}
+      <ActionBarPrimitive.Root
+        autohide="never"
+        className="mt-2 opacity-0 group-hover/assistant:opacity-100 transition-opacity duration-150"
+      >
+        <ActionBarPrimitive.Copy asChild>
+          <button
+            className="text-muted/40 hover:text-text p-1 rounded bg-transparent border-none cursor-pointer transition-colors"
+            aria-label="Copy message"
+          >
+            <Copy size={14} />
+          </button>
+        </ActionBarPrimitive.Copy>
+      </ActionBarPrimitive.Root>
     </MessagePrimitive.Root>
   );
 };
