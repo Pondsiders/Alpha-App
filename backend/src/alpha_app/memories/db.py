@@ -217,6 +217,7 @@ async def search_memories(
                         id,
                         content,
                         metadata,
+                        created_at,
                         -- Exact match: 1.0 if query appears with word boundaries
                         CASE WHEN content ~* ('\\m' || ${param_idx + 1} || '\\M')
                              THEN 1.0 ELSE 0.0 END as exact_score,
@@ -235,6 +236,7 @@ async def search_memories(
                     id,
                     content,
                     metadata,
+                    created_at,
                     GREATEST(exact_score, 0.3 * LEAST(fts_score, 1.0) + 0.7 * sem_score) as score
                 FROM scored
                 WHERE 1=1
@@ -253,6 +255,7 @@ async def search_memories(
                 "id": row["id"],
                 "content": row["content"],
                 "metadata": row["metadata"],
+                "created_at": str(row["created_at"]) if row.get("created_at") else "",
                 "score": float(row["score"]),
             }
             for row in rows
@@ -312,11 +315,12 @@ async def search_memories_by_embedding(
                         id,
                         content,
                         metadata,
+                        created_at,
                         1 - (embedding_qwen::halfvec(2560) <=> ${param_idx}::halfvec(2560)) as score
                     FROM cortex.memories
                     WHERE {where_clause}
                 )
-                SELECT id, content, metadata, created_at, created_at, score
+                SELECT id, content, metadata, created_at, score
                 FROM scored
                 WHERE score >= ${param_idx + 1}
                 ORDER BY score DESC
@@ -333,6 +337,7 @@ async def search_memories_by_embedding(
                 "id": row["id"],
                 "content": row["content"],
                 "metadata": row["metadata"],
+                "created_at": str(row["created_at"]) if row.get("created_at") else "",
                 "score": float(row["score"]),
             }
             for row in rows
