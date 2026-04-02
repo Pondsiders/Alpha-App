@@ -11,7 +11,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo, useLayoutEffect } from "react";
 import { motion, useSpring, useMotionValue } from "framer-motion";
-import { ArrowUp, Square, Copy } from "lucide-react";
+import { ArrowUp, Square, Copy, CheckIcon, DownloadIcon } from "lucide-react";
 import { ToolFallback } from "../components/ToolFallback";
 import { MemoryTray } from "../components/MemoryTray";
 import { MemoryCard } from "../components/MemoryCard";
@@ -39,6 +39,7 @@ import {
   ComposerPrimitive,
   MessagePrimitive,
   ActionBarPrimitive,
+  AuiIf,
   useMessage,
   SimpleImageAttachmentAdapter,
 } from "@assistant-ui/react";
@@ -288,25 +289,38 @@ const StreamingCursor = () => {
 const AssistantMessage = () => {
 
   return (
-    <MessagePrimitive.Root data-testid="assistant-message" className="relative pl-2 pr-12 mb-8 group/assistant">
+    <MessagePrimitive.Root data-testid="assistant-message" className="relative pl-2 pr-12 mb-8 group">
       <div className="text-text leading-relaxed flex flex-col gap-5">
         <MessagePrimitive.Parts components={ASSISTANT_PARTS_COMPONENTS} />
       </div>
-      {/* Copy button — autohide="never" disables the library's own hover tracking so
-          our CSS group-hover/assistant is the sole controller of visibility. */}
-      <ActionBarPrimitive.Root
-        autohide="never"
-        className="mt-2 opacity-0 group-hover/assistant:opacity-100 transition-opacity duration-150"
-      >
-        <ActionBarPrimitive.Copy asChild>
-          <button
-            className="text-muted/40 hover:text-text p-1 rounded bg-transparent border-none cursor-pointer transition-colors"
-            aria-label="Copy message"
-          >
-            <Copy size={14} />
-          </button>
-        </ActionBarPrimitive.Copy>
-      </ActionBarPrimitive.Root>
+      {/* Action bar footer — min-h-6 reserves space so the bar can appear/disappear
+          without shifting layout. autohide="not-last" = always visible on last message,
+          removed from DOM on older messages but the footer holds the space. */}
+      <div className="mt-1 flex min-h-6 items-center">
+        <ActionBarPrimitive.Root
+          hideWhenRunning
+          autohide="not-last"
+          className="flex gap-1 text-muted-foreground"
+        >
+          <ActionBarPrimitive.Copy asChild>
+            <button
+              className="group/copy p-1 rounded hover:bg-white/10 cursor-pointer"
+              aria-label="Copy message"
+            >
+              <Copy size={14} className="group-data-[copied]/copy:hidden" />
+              <CheckIcon size={14} className="hidden group-data-[copied]/copy:block" />
+            </button>
+          </ActionBarPrimitive.Copy>
+          <ActionBarPrimitive.ExportMarkdown asChild>
+            <button
+              className="p-1 rounded hover:bg-white/10 cursor-pointer"
+              aria-label="Export as Markdown"
+            >
+              <DownloadIcon size={14} />
+            </button>
+          </ActionBarPrimitive.ExportMarkdown>
+        </ActionBarPrimitive.Root>
+      </div>
     </MessagePrimitive.Root>
   );
 };
