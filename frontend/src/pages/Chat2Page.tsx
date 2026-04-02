@@ -320,6 +320,23 @@ export default function Chat2Page() {
     [chatId]
   );
 
+  // --- Scroll to bottom on initial load ---
+  // ExternalStore doesn't fire thread.initialize, so we scroll manually.
+  // useEffect fires after React commits the render with messages.
+  const hasScrolledRef = useRef(false);
+  useEffect(() => {
+    if (isLoading || messages.length === 0 || hasScrolledRef.current) return;
+    hasScrolledRef.current = true;
+    // Wait for the Thread component to render all messages
+    const timer = setTimeout(() => {
+      const viewport = document.querySelector(".aui-thread-viewport");
+      if (viewport) {
+        viewport.scrollTo({ top: viewport.scrollHeight, behavior: "instant" });
+      }
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [isLoading, messages.length]);
+
   // --- Runtime ---
   const runtime = useExternalStoreRuntime({
     messages,
