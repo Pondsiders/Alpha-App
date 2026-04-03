@@ -130,15 +130,17 @@ async def persist_chat(chat: Chat) -> None:
     try:
         pool = get_pool()
         updated = datetime.fromtimestamp(chat.updated_at, tz=timezone.utc)
+        created = datetime.fromtimestamp(chat.created_at, tz=timezone.utc)
         await pool.execute(
             """
-            INSERT INTO app.chats (id, updated_at, data)
-            VALUES ($1, $2, $3)
+            INSERT INTO app.chats (id, created_at, updated_at, data)
+            VALUES ($1, $2, $3, $4)
             ON CONFLICT (id) DO UPDATE
                 SET updated_at = EXCLUDED.updated_at,
                     data = EXCLUDED.data
             """,
             chat.id,
+            created,
             updated,
             chat.to_data(),
         )
@@ -152,9 +154,9 @@ async def list_chats() -> list[dict]:
         pool = get_pool()
         rows = await pool.fetch(
             """
-            SELECT id, updated_at, data
+            SELECT id, created_at, updated_at, data
             FROM app.chats
-            ORDER BY updated_at DESC
+            ORDER BY created_at DESC
             LIMIT 100
             """
         )
@@ -166,7 +168,7 @@ async def list_chats() -> list[dict]:
                 "title": data.get("title", ""),
                 "state": "dead",
                 "updatedAt": row["updated_at"].timestamp(),
-                "createdAt": data.get("created_at", 0) or row["updated_at"].timestamp(),
+                "createdAt": row["created_at"].timestamp(),
                 "sessionUuid": data.get("session_uuid", ""),
                 "tokenCount": data.get("token_count", 0) or 0,
                 "contextWindow": data.get("context_window", 0) or CONTEXT_WINDOW,

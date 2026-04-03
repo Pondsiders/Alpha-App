@@ -162,14 +162,14 @@ async def _find_yesterdays_last_chat() -> Chat:
     row = await pool.fetchrow("""
         SELECT id, data->>'session_uuid' as session_uuid
         FROM app.chats
-        WHERE (data->>'created_at')::float >= $1
-          AND (data->>'created_at')::float < $2
+        WHERE created_at >= $1
+          AND created_at < $2
           AND data->>'session_uuid' IS NOT NULL
           AND data->>'session_uuid' != ''
           AND id != 'solitude'
-        ORDER BY (data->>'created_at')::float DESC
+        ORDER BY created_at DESC
         LIMIT 1
-    """, yesterday_dawn.timestamp(), today_dawn.timestamp())
+    """, yesterday_dawn, today_dawn)
 
     if not row:
         raise RuntimeError(
