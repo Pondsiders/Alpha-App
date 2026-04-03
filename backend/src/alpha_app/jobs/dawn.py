@@ -94,10 +94,8 @@ async def _nightnight(app, span) -> str | None:
 
     Returns the letter text, or None.
     """
+    # Raises RuntimeError if no yesterday chat — fail fast and loud
     yesterday_chat = await _find_yesterdays_last_chat()
-    if not yesterday_chat:
-        logfire.info("dawn.nightnight: no yesterday chat, skipping")
-        return None
 
     # Resume with letter_to_tomorrow tool available
     mcp_servers = _create_nightnight_servers(yesterday_chat, app=app)
@@ -136,24 +134,38 @@ async def _nightnight(app, span) -> str | None:
     return letter
 
 
-async def _find_yesterdays_last_chat() -> Chat | None:
-    """Find the most recent non-solitude chat before today's dawn."""
-    pool = get_pool()
-    today_dawn = pendulum.now().replace(hour=6, minute=0, second=0, microsecond=0)
+async def _find_yesterdays_last_chat() -> Chat:
+    """Find the last chat created during yesterday's circadian day (6 AM to 6 AM).
 
+    Raises RuntimeError if no chat found — fail fast and loud.
+    """
+    pool = get_pool()
+    now = pendulum.now()
+    today_dawn = now.replace(hour=6, minute=0, second=0, microsecond=0)
+    if now < today_dawn:
+        # Before 6 AM — "today's dawn" is actually earlier today, "yesterday's" is yesterday's
+        today_dawn = today_dawn.subtract(days=1)
+    yesterday_dawn = today_dawn.subtract(days=1)
+
+    # created_at is stored as a Unix timestamp in JSONB data
     row = await pool.fetchrow("""
         SELECT id, data->>'session_uuid' as session_uuid
         FROM app.chats
-        WHERE updated_at < $1
+        WHERE (data->>'created_at')::float >= $1
+          AND (data->>'created_at')::float < $2
           AND data->>'session_uuid' IS NOT NULL
           AND data->>'session_uuid' != ''
           AND id != 'solitude'
-        ORDER BY updated_at DESC
+        ORDER BY (data->>'created_at')::float DESC
         LIMIT 1
-    """, today_dawn.naive())
+    """, yesterday_dawn.timestamp(), today_dawn.timestamp())
 
     if not row:
-        return None
+        raise RuntimeError(
+            f"dawn._find_yesterdays_last_chat: no chat found for yesterday's "
+            f"circadian day ({yesterday_dawn} to {today_dawn}). "
+            f"Cannot run nightnight without a yesterday chat."
+        )
 
     chat = Chat(id=row["id"])
     chat.session_uuid = row["session_uuid"]
