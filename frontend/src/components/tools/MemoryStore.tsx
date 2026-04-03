@@ -79,11 +79,11 @@ export const MemoryStore: ToolCallMessagePartComponent = ({
 
   // Colors
   const dotColor = isStreaming || isRunning
-    ? "var(--theme-primary)"
-    : isError ? "var(--theme-error)" : "var(--theme-success)";
+    ? "var(--primary)"
+    : isError ? "var(--destructive)" : "var(--success)";
   const iconColor = isStreaming || isRunning
-    ? "var(--theme-primary)"
-    : isError ? "var(--theme-error)" : undefined;
+    ? "var(--primary)"
+    : isError ? "var(--destructive)" : undefined;
 
   return (
     <div

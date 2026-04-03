@@ -88,15 +88,15 @@ export const ReadResult: ToolCallMessagePartComponent = ({
     : null;
 
   const dotColor = isRunning
-    ? "var(--theme-primary)"
+    ? "var(--primary)"
     : isError
-    ? "var(--theme-error)"
-    : "var(--theme-success)";
+    ? "var(--destructive)"
+    : "var(--success)";
 
   const iconColor = isRunning
-    ? "var(--theme-primary)"
+    ? "var(--primary)"
     : isError
-    ? "var(--theme-error)"
+    ? "var(--destructive)"
     : undefined;
 
   return (
@@ -155,7 +155,7 @@ export const ReadResult: ToolCallMessagePartComponent = ({
             className="m-0 px-3 py-2 text-xs font-mono overflow-auto leading-relaxed whitespace-pre-wrap break-words"
             style={{
               maxHeight: expanded ? "600px" : "320px",
-              color: isError ? "var(--theme-error)" : undefined,
+              color: isError ? "var(--destructive)" : undefined,
             }}
           >
             {displayText}

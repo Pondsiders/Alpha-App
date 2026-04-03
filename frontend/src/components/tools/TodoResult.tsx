@@ -53,7 +53,7 @@ export const TodoResult: ToolCallMessagePartComponent = ({
             className="h-full rounded-full transition-all duration-300"
             style={{
               width: total > 0 ? `${(completed / total) * 100}%` : "0%",
-              backgroundColor: "var(--theme-success)",
+              backgroundColor: "var(--success)",
             }}
           />
         </div>
@@ -61,10 +61,10 @@ export const TodoResult: ToolCallMessagePartComponent = ({
           className={`w-2 h-2 rounded-full shrink-0 ${isRunning ? "animate-pulse-dot" : ""}`}
           style={{
             backgroundColor: isRunning
-              ? "var(--theme-primary)"
+              ? "var(--primary)"
               : completed === total
-              ? "var(--theme-success)"
-              : "var(--theme-primary)",
+              ? "var(--success)"
+              : "var(--primary)",
           }}
         />
       </div>
@@ -84,13 +84,13 @@ export const TodoResult: ToolCallMessagePartComponent = ({
                 <Check
                   size={14}
                   className="mt-[2px] shrink-0"
-                  style={{ color: "var(--theme-success)" }}
+                  style={{ color: "var(--success)" }}
                 />
               ) : todo.status === "in_progress" ? (
                 <Circle
                   size={14}
                   className="mt-[2px] shrink-0 animate-pulse-dot"
-                  style={{ color: "var(--theme-primary)" }}
+                  style={{ color: "var(--primary)" }}
                   fill="currentColor"
                 />
               ) : (

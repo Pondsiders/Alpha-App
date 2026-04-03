@@ -32,9 +32,9 @@ function getConnectionColor(
   connected: boolean,
   isRunning: boolean
 ): string {
-  if (isRunning) return "var(--theme-success)";
-  if (!connected) return "var(--theme-muted)";
-  return "var(--theme-primary)";
+  if (isRunning) return "var(--success)";
+  if (!connected) return "var(--muted-foreground)";
+  return "var(--primary)";
 }
 
 function MockStatusBar({
@@ -122,10 +122,10 @@ function PopoverDemo({
   tokenLimit: number;
 }) {
   const status = !connected
-    ? { text: "Disconnected", color: "var(--theme-muted)" }
+    ? { text: "Disconnected", color: "var(--muted-foreground)" }
     : isRunning
-      ? { text: "Connected \u00b7 Streaming", color: "var(--theme-success)" }
-      : { text: "Connected \u00b7 Idle", color: "var(--theme-primary)" };
+      ? { text: "Connected \u00b7 Streaming", color: "var(--success)" }
+      : { text: "Connected \u00b7 Idle", color: "var(--primary)" };
 
   const formatTokens = (n: number): string => {
     if (n === 0) return "0";

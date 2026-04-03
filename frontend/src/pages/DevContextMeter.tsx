@@ -50,7 +50,7 @@ export default function DevContextMeter() {
               {/* Connection dot */}
               <span
                 className="inline-block w-[7px] h-[7px] rounded-full"
-                style={{ backgroundColor: "var(--theme-primary)" }}
+                style={{ backgroundColor: "var(--primary)" }}
               />
               {/* Session ID */}
               <span className="font-mono text-[11px] text-muted">a1b2c3d4</span>
@@ -70,7 +70,7 @@ export default function DevContextMeter() {
             <div className="flex items-center gap-2.5">
               <span
                 className="inline-block w-[7px] h-[7px] rounded-full animate-pulse-dot"
-                style={{ backgroundColor: "var(--theme-success)" }}
+                style={{ backgroundColor: "var(--success)" }}
               />
               <span className="font-mono text-[11px] text-muted">f9e8d7c6</span>
             </div>
@@ -87,7 +87,7 @@ export default function DevContextMeter() {
             <div className="flex items-center gap-2.5">
               <span
                 className="inline-block w-[7px] h-[7px] rounded-full"
-                style={{ backgroundColor: "var(--theme-primary)" }}
+                style={{ backgroundColor: "var(--primary)" }}
               />
               <span className="font-mono text-[11px] text-muted">deadbeef</span>
             </div>

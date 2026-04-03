@@ -278,7 +278,7 @@ const StreamingCursor = () => {
     >
       <span
         className={`w-2 h-2 rounded-full ${isBusy ? "animate-pulse-dot" : ""}`}
-        style={{ backgroundColor: "var(--theme-primary)" }}
+        style={{ backgroundColor: "var(--primary)" }}
       />
     </div>
   );
@@ -633,7 +633,7 @@ function ThreadView({ send, connected, assistantIdMapRef }: ChatPageProps) {
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <div data-theme="alpha" className="h-full flex flex-col bg-background">
+      <div className="h-full flex flex-col bg-background">
         <StatusBar />
         {isReplaying ? (
           /* During replay, don't render messages — the store mutates silently.

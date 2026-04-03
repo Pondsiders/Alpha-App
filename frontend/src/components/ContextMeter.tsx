@@ -27,9 +27,9 @@ interface ContextMeterProps {
 }
 
 function getMeterColor(percent: number): string {
-  if (percent >= 75) return "var(--theme-error)";
-  if (percent >= 65) return "var(--theme-primary)";
-  return "var(--theme-muted)";
+  if (percent >= 75) return "var(--destructive)";
+  if (percent >= 65) return "var(--primary)";
+  return "var(--muted-foreground)";
 }
 
 function formatTokens(count: number): string {
@@ -52,7 +52,7 @@ export function ContextMeter({ percent, model, tokenCount, tokenLimit }: Context
           {/* Progress bar track */}
           <div
             className="w-20 h-1 rounded-full overflow-hidden"
-            style={{ backgroundColor: "var(--theme-border)" }}
+            style={{ backgroundColor: "var(--border)" }}
           >
             <div
               className="h-full rounded-full transition-all duration-500 ease-out"

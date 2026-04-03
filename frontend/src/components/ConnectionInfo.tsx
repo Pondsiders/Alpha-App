@@ -38,9 +38,9 @@ function getStatusLabel(
   connected: boolean,
   isRunning: boolean
 ): { text: string; color: string } {
-  if (!connected) return { text: "Disconnected", color: "var(--theme-muted)" };
-  if (isRunning) return { text: "Connected \u00b7 Streaming", color: "var(--theme-success)" };
-  return { text: "Connected \u00b7 Idle", color: "var(--theme-primary)" };
+  if (!connected) return { text: "Disconnected", color: "var(--muted-foreground)" };
+  if (isRunning) return { text: "Connected \u00b7 Streaming", color: "var(--success)" };
+  return { text: "Connected \u00b7 Idle", color: "var(--primary)" };
 }
 
 function formatTokens(count: number): string {

@@ -13,13 +13,13 @@ import type { ApproachLight as ApproachLightType } from "@/store";
 
 const LEVEL_STYLES: Record<string, { color: string; borderColor: string; label: string }> = {
   yellow: {
-    color: "var(--theme-primary)",       // amber #d4a574
-    borderColor: "var(--theme-primary)",
+    color: "var(--primary)",       // amber #d4a574
+    borderColor: "var(--primary)",
     label: "yellow",
   },
   red: {
-    color: "var(--theme-error)",         // corrupted red #C4504A
-    borderColor: "var(--theme-error)",
+    color: "var(--destructive)",         // corrupted red #C4504A
+    borderColor: "var(--destructive)",
     label: "red",
   },
 };

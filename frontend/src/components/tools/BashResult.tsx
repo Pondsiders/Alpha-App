@@ -65,16 +65,16 @@ export const BashResult: ToolCallMessagePartComponent = ({
   // Theme colors
   const dotColor =
     isRunning || isStreaming
-      ? "var(--theme-primary)"
+      ? "var(--primary)"
       : isError
-        ? "var(--theme-error)"
-        : "var(--theme-success)";
+        ? "var(--destructive)"
+        : "var(--success)";
 
   const iconColor =
     isRunning || isStreaming
-      ? "var(--theme-primary)"
+      ? "var(--primary)"
       : isError
-        ? "var(--theme-error)"
+        ? "var(--destructive)"
         : undefined;
 
   // Title: description if available, else "Bash"
@@ -139,7 +139,7 @@ export const BashResult: ToolCallMessagePartComponent = ({
             }`}
             style={{
               ...(expanded ? { maxHeight: `${MAX_EXPANDED_HEIGHT}px` } : {}),
-              color: isError ? "var(--theme-error)" : undefined,
+              color: isError ? "var(--destructive)" : undefined,
             }}
           >
             {outputText}

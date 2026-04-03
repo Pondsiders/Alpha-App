@@ -86,15 +86,15 @@ export const ToolFallback: ToolCallMessagePartComponent = ({
 
   // Theme colors — match named components
   const dotColor = isStreaming || isRunning
-    ? "var(--theme-primary)"
+    ? "var(--primary)"
     : isError
-    ? "var(--theme-error)"
-    : "var(--theme-success)";
+    ? "var(--destructive)"
+    : "var(--success)";
 
   const iconColor = isStreaming || isRunning
-    ? "var(--theme-primary)"
+    ? "var(--primary)"
     : isError
-    ? "var(--theme-error)"
+    ? "var(--destructive)"
     : undefined; // default muted for success
 
   return (
@@ -138,7 +138,7 @@ export const ToolFallback: ToolCallMessagePartComponent = ({
             className="m-0 px-3 py-2 text-xs font-mono overflow-auto leading-relaxed whitespace-pre-wrap break-words"
             style={{
               maxHeight: outputExpanded ? "600px" : "320px",
-              color: isError ? "var(--theme-error)" : undefined,
+              color: isError ? "var(--destructive)" : undefined,
             }}
           >
             {displayOutput}

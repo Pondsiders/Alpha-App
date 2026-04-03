@@ -1,8 +1,0 @@
-/**
- * Chat2 supplemental stylesheet.
- *
- * All theme variables, color definitions, and dark mode live in index.css.
- * This file only adds what Chat2 components need beyond that.
- */
-
-@import "tw-animate-css";

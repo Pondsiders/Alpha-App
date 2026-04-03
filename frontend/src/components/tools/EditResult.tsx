@@ -59,15 +59,15 @@ export const EditResult: ToolCallMessagePartComponent = ({
   );
 
   const dotColor = isRunning
-    ? "var(--theme-primary)"
+    ? "var(--primary)"
     : isError
-    ? "var(--theme-error)"
-    : "var(--theme-success)";
+    ? "var(--destructive)"
+    : "var(--success)";
 
   const iconColor = isRunning
-    ? "var(--theme-primary)"
+    ? "var(--primary)"
     : isError
-    ? "var(--theme-error)"
+    ? "var(--destructive)"
     : undefined;
 
   // Truncation logic for old/new strings
@@ -138,7 +138,7 @@ export const EditResult: ToolCallMessagePartComponent = ({
             <pre
               className="m-0 px-3 py-1.5 text-xs font-mono leading-relaxed whitespace-pre-wrap break-words"
               style={{
-                color: "var(--theme-error)",
+                color: "var(--destructive)",
                 backgroundColor: "rgba(196, 80, 74, 0.08)",
               }}
             >
@@ -157,7 +157,7 @@ export const EditResult: ToolCallMessagePartComponent = ({
             <pre
               className="m-0 px-3 py-1.5 text-xs font-mono leading-relaxed whitespace-pre-wrap break-words"
               style={{
-                color: "var(--theme-success)",
+                color: "var(--success)",
                 backgroundColor: "rgba(122, 140, 66, 0.08)",
               }}
             >
@@ -193,7 +193,7 @@ export const EditResult: ToolCallMessagePartComponent = ({
           {isError && resultText && (
             <div
               className="px-3 py-1.5 text-xs border-t border-border"
-              style={{ color: "var(--theme-error)" }}
+              style={{ color: "var(--destructive)" }}
             >
               {resultText}
             </div>

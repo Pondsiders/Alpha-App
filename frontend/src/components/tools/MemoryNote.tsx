@@ -83,7 +83,7 @@ export const MemoryNote: ToolCallMessagePartComponent = ({
             className="absolute bottom-0 left-0 right-0 h-5 pointer-events-none"
             style={{
               background:
-                "linear-gradient(to top, var(--theme-background), transparent)",
+                "linear-gradient(to top, var(--background), transparent)",
             }}
           />
         )}

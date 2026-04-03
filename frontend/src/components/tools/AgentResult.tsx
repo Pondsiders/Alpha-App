@@ -83,7 +83,7 @@ export const AgentResult: ToolCallMessagePartComponent = ({
     : "Agent";
 
   // Dot color
-  const dotColor = isDone ? "var(--theme-success)" : "var(--theme-primary)";
+  const dotColor = isDone ? "var(--success)" : "var(--primary)";
 
   // Truncation helpers
   const truncate = (text: string, maxLines: number) => {
@@ -108,7 +108,7 @@ export const AgentResult: ToolCallMessagePartComponent = ({
         <Bot
           size={14}
           className="shrink-0 text-muted/60"
-          style={isRunning ? { color: "var(--theme-primary)" } : undefined}
+          style={isRunning ? { color: "var(--primary)" } : undefined}
         />
         <div className="min-w-0 flex-1 flex items-center gap-2">
           <span className="text-[13px] text-text font-medium">{title}</span>

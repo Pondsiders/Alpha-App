@@ -66,10 +66,10 @@ export const GrepResult: ToolCallMessagePartComponent = ({
     : outputLines;
 
   const dotColor = isRunning
-    ? "var(--theme-primary)"
+    ? "var(--primary)"
     : isError || isEmpty
-    ? "var(--theme-error)"
-    : "var(--theme-success)";
+    ? "var(--destructive)"
+    : "var(--success)";
 
   const runningLabel = "Searching...";
 
@@ -83,7 +83,7 @@ export const GrepResult: ToolCallMessagePartComponent = ({
         <Search
           size={14}
           className="shrink-0 text-muted/60"
-          style={isRunning ? { color: "var(--theme-primary)" } : undefined}
+          style={isRunning ? { color: "var(--primary)" } : undefined}
         />
         <div className="min-w-0 flex-1 flex items-baseline gap-2">
           <code className="text-[13px] text-text font-semibold">
@@ -162,7 +162,7 @@ export const GrepResult: ToolCallMessagePartComponent = ({
       {isError && outputText && (
         <div
           className="px-3 py-1.5 text-xs border-t border-border"
-          style={{ color: "var(--theme-error)" }}
+          style={{ color: "var(--destructive)" }}
         >
           {outputText}
         </div>

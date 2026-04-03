@@ -2,7 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate, useParams, useNavigate } from "
 import { useCallback, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import ChatPage from "./pages/ChatPage";
-import Chat2Page from "./pages/Chat2Page";
+
 import DevContextMeter from "./pages/DevContextMeter";
 import DevStatusBar from "./pages/DevStatusBar";
 import DevTopics from "./pages/DevTopics";
@@ -244,6 +244,12 @@ function processReplayBuffer(events: ServerEvent[]): ReplayResult {
 
 const FONT_SIZES = [16, 17, 18] as const;
 
+/**
+ * Color scheme: "dark" = always dark, "light" = always light, "auto" = follow OS.
+ * TODO: Read from JNSQ theme config via /api/theme. Hardcoded for now.
+ */
+const COLOR_SCHEME: "dark" | "light" | "auto" = "dark";
+
 function Layout() {
   const navigate = useNavigate();
   const { chatId } = useParams<{ chatId?: string }>();
@@ -267,6 +273,19 @@ function Layout() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
+  }, []);
+
+  // Color scheme — "dark" always, "light" always, or "auto" follows OS
+  useEffect(() => {
+    const el = document.documentElement;
+    if (COLOR_SCHEME === "auto") {
+      const mq = window.matchMedia("(prefers-color-scheme: dark)");
+      const update = () => el.classList.toggle("dark", mq.matches);
+      update();
+      mq.addEventListener("change", update);
+      return () => mq.removeEventListener("change", update);
+    }
+    el.classList.toggle("dark", COLOR_SCHEME === "dark");
   }, []);
 
   // Stable refs for use inside the event callback
@@ -1060,7 +1079,7 @@ function App() {
         <Route path="/" element={<RootRedirect />} />
         <Route path="/chat" element={<Layout />} />
         <Route path="/chat/:chatId" element={<Layout />} />
-        <Route path="/chat2/:chatId" element={<Chat2Page />} />
+
         <Route path="/dev/context-meter" element={<DevContextMeter />} />
         <Route path="/dev/status-bar" element={<DevStatusBar />} />
         <Route path="/dev/topics" element={<DevTopics />} />

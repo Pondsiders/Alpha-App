@@ -102,7 +102,7 @@ export function ToolGroup({
         className="tool-group-inner w-full rounded-xl
                    shadow-[inset_0_0.125rem_0.625rem_rgba(0,0,0,0.4)]
                    flex flex-col gap-3 p-5"
-        style={{ backgroundColor: "var(--theme-surface)" }}
+        style={{ backgroundColor: "var(--surface)" }}
       >
         {children}
       </div>

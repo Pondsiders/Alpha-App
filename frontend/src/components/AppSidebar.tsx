@@ -194,8 +194,8 @@ export function AppSidebar({ onNewChat }: AppSidebarProps) {
           <span
             className="flex items-center justify-center w-8 h-8 rounded-lg shrink-0"
             style={{
-              backgroundColor: "var(--theme-primary)",
-              color: "var(--theme-bg)",
+              backgroundColor: "var(--primary)",
+              color: "var(--background)",
             }}
           >
             <Plus size={16} strokeWidth={2.5} />
@@ -224,7 +224,7 @@ export function AppSidebar({ onNewChat }: AppSidebarProps) {
                               isActive={chatId === chat.id}
                               className="text-[13px]"
                               style={chatId === chat.id ? {
-                                borderLeft: "2px solid var(--theme-primary)",
+                                borderLeft: "2px solid var(--primary)",
                                 paddingLeft: "8px",
                               } : undefined}
                             >
