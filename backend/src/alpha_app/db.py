@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import asyncpg
+import logfire
 
 from alpha_app.chat import Chat
 from alpha_app.constants import CONTEXT_WINDOW
@@ -144,8 +145,13 @@ async def persist_chat(chat: Chat) -> None:
             updated,
             chat.to_data(),
         )
-    except Exception:
-        pass  # Non-fatal
+    except Exception as e:
+        logfire.error(
+            "persist_chat FAILED: {error} chat={chat_id}",
+            error=str(e),
+            chat_id=chat.id,
+            exc_info=True,
+        )
 
 
 async def list_chats() -> list[dict]:
@@ -174,7 +180,8 @@ async def list_chats() -> list[dict]:
                 "contextWindow": data.get("context_window", 0) or CONTEXT_WINDOW,
             })
         return result
-    except Exception:
+    except Exception as e:
+        logfire.error("list_chats FAILED: {error}", error=str(e), exc_info=True)
         return []
 
 
@@ -196,8 +203,13 @@ async def store_event(chat_id: str, event: dict, seq: int) -> None:
             event,
             seq,
         )
-    except Exception:
-        pass  # Non-fatal — don't break streaming if the INSERT fails
+    except Exception as e:
+        logfire.error(
+            "store_event FAILED: {error} chat={chat_id}",
+            error=str(e),
+            chat_id=chat_id,
+            exc_info=True,
+        )
 
 
 async def replay_events(chat_id: str) -> list[dict]:
@@ -232,8 +244,14 @@ async def store_message(chat_id: str, ordinal: int, role: str, data: dict) -> No
             role,
             data,
         )
-    except Exception:
-        pass  # Non-fatal
+    except Exception as e:
+        logfire.error(
+            "store_message FAILED: {error} chat={chat_id} ordinal={ordinal}",
+            error=str(e),
+            chat_id=chat_id,
+            ordinal=ordinal,
+            exc_info=True,
+        )
 
 
 async def load_messages(chat_id: str) -> list[dict]:
@@ -285,7 +303,8 @@ async def load_chat(chat_id: str) -> Chat | None:
             await chat.load_messages()
             return chat
         return None
-    except Exception:
+    except Exception as e:
+        logfire.error("load_chat FAILED: {error} chat={chat_id}", error=str(e), chat_id=chat_id, exc_info=True)
         return None
 
 
