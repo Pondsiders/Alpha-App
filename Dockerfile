@@ -88,14 +88,14 @@ RUN uv pip install --system duckdb httpx rich ipython
 # Copy built frontend from stage 1
 COPY --from=frontend-build /build/dist/ /app/frontend/dist/
 
-# Non-root user — UIDs match Primer's host accounts.
-# UID 1001 = alpha on Primer. GID 1003 = pondside (shared group).
-# GID 126 = docker group on Primer (for Docker socket access).
-# GID 984 = ollama group on Primer.
+# Non-root user — UID 1000 matches jefferyharrell on Primer so bind-mounted
+# files have the same ownership inside and outside the container. Username is
+# "alpha" inside the container but the UID is what the kernel cares about.
+# GID 1003 = pondside (shared group). GID 126 = docker. GID 984 = ollama.
 RUN groupadd -g 1003 pondside \
     && groupadd -g 126 docker \
     && groupadd -g 984 ollama \
-    && useradd --uid 1001 --create-home --shell /bin/bash \
+    && useradd --uid 1000 --create-home --shell /bin/bash \
                --groups pondside,docker,ollama alpha \
     && echo 'alpha ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/alpha \
     && chmod 0440 /etc/sudoers.d/alpha
