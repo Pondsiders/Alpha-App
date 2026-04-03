@@ -26,7 +26,7 @@ import { RuntimeProvider } from "./RuntimeProvider";
 function AppSidebar() {
   return (
     <Sidebar>
-      <SidebarHeader className="flex h-14 items-center justify-start px-4">
+      <SidebarHeader className="h-14 !flex-row !items-center justify-start px-4">
         <div className="flex items-center gap-2 font-medium text-sm">
           <span className="text-xl">🦆</span>
           <span className="text-foreground/90">Alpha</span>
