@@ -10,4 +10,14 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  server: {
+    host: true,
+    allowedHosts: ["primer.tail8bd569.ts.net"],
+    proxy: {
+      "/api": "http://alpha.tail8bd569.ts.net:18010",
+    },
+    headers: {
+      "Cache-Control": "no-store",
+    },
+  },
 })

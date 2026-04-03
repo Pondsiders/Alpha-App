@@ -117,6 +117,13 @@ async def get_theme():
     return Response(status_code=404, content="/* no theme.css in identity directory */")
 
 
+@app.get("/api/threads")
+async def get_threads():
+    """Thread list for frontend-v2 sidebar."""
+    from alpha_app.db import list_chats
+    return await list_chats()
+
+
 @app.get("/health")
 async def health() -> dict:
     """Health check endpoint."""
