@@ -9,7 +9,7 @@ The duck that gets up before you. Three steps:
 import pendulum
 import logfire
 
-from alpha_app.chat import Chat, ConversationState, generate_chat_id
+from alpha_app.chat import Chat, ConversationState, generate_chat_id, _make_claude
 from alpha_app.db import get_pool, persist_chat
 from alpha_app.routes.enrobe import enrobe
 from alpha_app.tools import create_alpha_server
@@ -49,13 +49,9 @@ async def run(app, **kwargs) -> str | None:
 
         # -- Step 2: Create today's chat --
         chat = Chat(id=generate_chat_id())
-        chat._system_prompt = app.state.system_prompt
-        mcp_servers = _create_mcp_servers(chat, app=app)
-        await chat.wake(
-            system_prompt=app.state.system_prompt,
-            mcp_servers=mcp_servers,
-            disallowed_tools=DISALLOWED_INTERACTIVE,
-        )
+        chat._system_prompt = await app.state.get_system_prompt()
+        chat._topic_registry = getattr(app.state, "topic_registry", None)
+        # _ensure_claude will auto-start on first send — no explicit wake needed
         app.state.chats[chat.id] = chat
 
         # -- Step 3: Dawn prompt (letter + wake-up) --
@@ -97,15 +93,30 @@ async def _nightnight(app, span) -> str | None:
     # Raises RuntimeError if no yesterday chat — fail fast and loud
     yesterday_chat = await _find_yesterdays_last_chat()
 
-    # Resume with letter_to_tomorrow tool available
+    # Start Claude on yesterday's chat with the letter_to_tomorrow tool.
+    # Uses wake() with custom MCP servers that include the letter tool.
+    # wake() starts fresh by default, but we need --resume for continuity.
+    # Set session_uuid so _make_claude picks it up for resume.
     mcp_servers = _create_nightnight_servers(yesterday_chat, app=app)
-    await yesterday_chat.resurrect(
-        system_prompt=app.state.system_prompt,
-        mcp_servers=mcp_servers,
-        disallowed_tools=DISALLOWED_INTERACTIVE,
-    )
+    yesterday_chat._system_prompt = await app.state.get_system_prompt()
 
-    # Send Nightnight prompt and wait for Claude to finish
+    # Manually start Claude with resume — wake() can't resume, _ensure_claude
+    # doesn't support custom MCP servers. This is the one place we need explicit
+    # lifecycle control because nightnight has a special tool.
+    from alpha_app.constants import DISALLOWED_TOOLS, MODEL
+    yesterday_chat._claude = _make_claude(
+        model=MODEL,
+        system_prompt=await app.state.get_system_prompt(),
+        permission_mode="bypassPermissions",
+        mcp_servers=mcp_servers,
+        disallowed_tools=DISALLOWED_TOOLS,
+        on_event=yesterday_chat._on_claude_event,
+    )
+    yesterday_chat._claude._on_reap = yesterday_chat._on_claude_reap
+    await yesterday_chat._claude.start(yesterday_chat.session_uuid)
+    yesterday_chat.state = ConversationState.READY
+
+    # Send Nightnight prompt
     content = [{"type": "text", "text": NIGHTNIGHT_PROMPT}]
     result = await enrobe(content, chat=yesterday_chat, source="nightnight")
     async with await yesterday_chat.turn() as t:

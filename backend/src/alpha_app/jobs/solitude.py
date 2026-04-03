@@ -109,7 +109,7 @@ async def breathe(app, **kwargs) -> str | None:
             return None
 
         # Store system prompt so _ensure_claude (auto-start) can use it
-        chat._system_prompt = app.state.system_prompt
+        chat._system_prompt = await app.state.get_system_prompt()
 
         # Run each prompt in the timeslot sequentially
         output_parts = []

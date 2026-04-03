@@ -385,26 +385,18 @@ async def websocket_chat(ws: WebSocket) -> None:
                     has_session=bool(chat.session_uuid) if chat else False,
                 )
                 if warmup_eligible:
-                    from alpha_app.tools import create_alpha_server
-
                     logfire.info(
-                        "eager-warmup: resurrecting {chat_id} (session {session})",
+                        "eager-warmup: starting {chat_id} (session {session})",
                         chat_id=chat_id,
                         session=chat.session_uuid[:12],
                     )
 
-                    topic_registry = getattr(ws.app.state, "topic_registry", None)
-                    mcp_servers = {"alpha": create_alpha_server(
-                        chat=chat,
-                        topic_registry=topic_registry,
-                        session_id=chat.id,
-                    )}
+                    # Set up for _ensure_claude auto-start
+                    chat._system_prompt = await ws.app.state.get_system_prompt()
+                    chat._topic_registry = getattr(ws.app.state, "topic_registry", None)
 
                     try:
-                        await chat.resurrect(
-                            system_prompt=ws.app.state.system_prompt,
-                            mcp_servers=mcp_servers,
-                        )
+                        await chat._ensure_claude()
                         logfire.info(
                             "eager-warmup: {chat_id} is now {state}",
                             chat_id=chat_id,

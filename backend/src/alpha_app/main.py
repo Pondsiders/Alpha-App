@@ -60,7 +60,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     app.state.chats = {}  # dict[str, Chat]
     app.state.connections = set()  # set[WebSocket] — all live WS connections (the switch)
-    app.state.system_prompt = soul  # Stored for resurrection
+    app.state.system_prompt = soul  # Initial assembly — used as fallback only
+    app.state.get_system_prompt = assemble_system_prompt  # Fresh assembly on every call
     app.state.topic_registry = topic_registry  # Stored for MCP tool + enrobe
 
     # Scheduler — only when --with-scheduler is set (alpha-pi Docker, not Primer bare metal)

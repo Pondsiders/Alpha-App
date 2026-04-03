@@ -25,7 +25,7 @@ async def run(app, **kwargs) -> None:
             return
 
         # Store system prompt so _ensure_claude can use it
-        chat._system_prompt = app.state.system_prompt
+        chat._system_prompt = await app.state.get_system_prompt()
 
         content = [{"type": "text", "text": f"[Alpha] {message}"}]
         await chat.interject(content)  # auto-starts Claude if cold

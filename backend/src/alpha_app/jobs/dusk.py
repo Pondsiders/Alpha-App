@@ -39,7 +39,7 @@ async def run(app, **kwargs) -> None:
             span.set_attribute("dusk.action", "nudge")
 
             # Store system prompt so _ensure_claude (auto-start) can use it
-            chat._system_prompt = app.state.system_prompt
+            chat._system_prompt = await app.state.get_system_prompt()
 
             content = [{"type": "text", "text":
                 f"[Alpha] It's {now.format('h:mm A')}. "
