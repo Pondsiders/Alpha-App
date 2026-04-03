@@ -9,6 +9,8 @@
 import { Thread } from "@/components/assistant-ui/thread";
 import { ThreadListNew } from "@/components/assistant-ui/thread-list";
 import { GroupedThreadList } from "@/components/grouped-thread-list";
+import { ChatInfo } from "@/components/ChatInfo";
+import { ContextMeter } from "@/components/ContextMeter";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   Sidebar,
@@ -45,11 +47,24 @@ function AppSidebar() {
 // -- Header -------------------------------------------------------------------
 
 function Header() {
+  // Mock data — will come from the runtime/store when backend is connected
+  const mockChatId = "eG1S5JgkBShM";
+  const mockSessionUuid = "23c558d0-ca83-480b-93ee-e2f9f6ab5ddb";
+  const mockPercent = 15.9;
+  const mockTokenCount = 159_000;
+  const mockTokenLimit = 1_000_000;
+
   return (
     <header className="flex h-14 shrink-0 items-center gap-2 px-4">
-      <SidebarTrigger className="size-9" />
-      <div className="ml-auto text-muted-foreground text-xs">
-        Alpha · Opus 4.6
+      <SidebarTrigger className="size-9 text-muted-foreground hover:text-foreground transition-colors" />
+      <ChatInfo chatId={mockChatId} sessionUuid={mockSessionUuid} />
+      <div className="ml-auto">
+        <ContextMeter
+          percent={mockPercent}
+          model="claude-opus-4-6"
+          tokenCount={mockTokenCount}
+          tokenLimit={mockTokenLimit}
+        />
       </div>
     </header>
   );
