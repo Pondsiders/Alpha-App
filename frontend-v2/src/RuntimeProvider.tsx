@@ -1,23 +1,65 @@
 /**
- * RuntimeProvider — wires assistant-ui to a mock backend.
+ * RuntimeProvider — wires assistant-ui to our backend.
  *
- * Uses useRemoteThreadListRuntime for multi-thread support with an
- * in-memory thread store (will be replaced with Postgres endpoints).
- * The chat runtime uses useChatRuntime pointed at /api/chat (will be
- * the stream-json translator when the backend is ready).
+ * Uses useRemoteThreadListRuntime for multi-thread support with
+ * thread list from GET /api/threads (Postgres).
  *
- * For now: mock data, no backend, pure UI validation.
+ * Thread history loaded via ThreadHistoryAdapter — fetches
+ * GET /api/threads/{id}/messages when a thread is opened.
+ * Messages render all at once (no SSE replay).
  */
 
-import type { ReactNode } from "react";
+import { type ReactNode, useMemo } from "react";
 import {
   AssistantRuntimeProvider,
+  RuntimeAdapterProvider,
   useRemoteThreadListRuntime,
+  useLocalRuntime,
+  useAui,
   type RemoteThreadListAdapter,
+  type ThreadHistoryAdapter,
+  type ChatModelAdapter,
 } from "@assistant-ui/react";
-import { useChatRuntime, AssistantChatTransport } from "@assistant-ui/react-ai-sdk";
 
-// In-memory thread storage — simulates our Postgres thread table
+// Build a full ThreadMessage from our API's ThreadMessageLike format.
+// Mirrors what fromThreadMessageLike() produces internally.
+function toThreadMessage(m: { id: string; role: string; content: unknown[] }) {
+  const common = { id: m.id, createdAt: new Date() };
+  if (m.role === "assistant") {
+    return {
+      ...common,
+      role: "assistant" as const,
+      content: m.content,
+      status: { type: "complete" as const, reason: "unknown" as const },
+      metadata: {
+        unstable_state: null,
+        unstable_annotations: [] as unknown[],
+        unstable_data: [] as unknown[],
+        custom: {},
+        steps: [] as unknown[],
+      },
+    };
+  }
+  return {
+    ...common,
+    role: m.role as "user",
+    content: m.content,
+    attachments: [],
+    metadata: { custom: {} },
+  };
+}
+
+// Stub model adapter — will be replaced with our Claude Code translator
+const ModelAdapter: ChatModelAdapter = {
+  async *run({ messages }) {
+    // TODO: POST to /api/chat, translate stream-json to assistant-ui format
+    yield {
+      content: [{ type: "text", text: "🦆 Chat is not connected yet. This is a UI preview." }],
+    };
+  },
+};
+
+// In-memory thread storage — fallback when backend isn't available
 const threadsStore = new Map<
   string,
   {
@@ -115,13 +157,80 @@ const threadListAdapter: RemoteThreadListAdapter = {
       }
     });
   },
+
+  // Per-thread Provider — injects the history adapter that loads
+  // messages from our backend when a thread is opened.
+  unstable_Provider: ThreadProvider,
 };
+
+/**
+ * ThreadProvider — wraps each thread with a history adapter.
+ *
+ * When a thread is opened, the history adapter's load() fetches
+ * the thread's messages from GET /api/threads/{id}/messages.
+ * assistant-ui renders them all at once — no SSE, no replay.
+ */
+function ThreadProvider({ children }: { children: ReactNode }) {
+  const aui = useAui();
+
+  const history = useMemo<ThreadHistoryAdapter>(
+    () => ({
+      async load() {
+        const { remoteId } = aui.threadListItem().getState();
+        console.log("[history] load() called, remoteId:", remoteId);
+        if (!remoteId) return { messages: [] };
+
+        try {
+          const res = await fetch(`/api/threads/${remoteId}/messages`);
+          if (!res.ok) return { messages: [] };
+          const raw = await res.json();
+          console.log("[history] fetched", raw.length, "messages from API");
+
+          // Convert to repository import format with full ThreadMessage objects
+          let prevId: string | null = null;
+          const repoMessages = raw.map((m: { id: string; role: string; content: unknown[] }) => {
+            const message = toThreadMessage(m);
+            const entry = { parentId: prevId, message };
+            prevId = m.id;
+            return entry;
+          });
+
+          console.log("[history] returning", repoMessages.length, "repo messages");
+          return {
+            headId: prevId,
+            messages: repoMessages,
+          };
+        } catch (e) {
+          console.error("[history] load error:", e);
+          return { messages: [] };
+        }
+      },
+      async append() {
+        // Message persistence — wire up later when sending works
+      },
+    }),
+    [aui],
+  );
+
+  const adapters = useMemo(() => {
+    console.log("[ThreadProvider] creating adapters with history:", !!history);
+    return { history };
+  }, [history]);
+
+  console.log("[ThreadProvider] rendering, adapters:", adapters);
+
+  return (
+    <RuntimeAdapterProvider adapters={adapters}>
+      {children}
+    </RuntimeAdapterProvider>
+  );
+}
 
 export function RuntimeProvider({
   children,
 }: Readonly<{ children: ReactNode }>) {
   const runtime = useRemoteThreadListRuntime({
-    runtimeHook: useChatRuntime,
+    runtimeHook: () => useLocalRuntime(ModelAdapter),
     adapter: threadListAdapter,
   });
 
