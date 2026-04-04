@@ -1,9 +1,13 @@
 /**
  * GroupedThreadList — Week-grouped, day-collapsible sidebar thread list.
  *
- * Fetches thread data from /api/threads and renders it grouped by week,
- * then by circadian day (6 AM to 6 AM). Uses ThreadListItemPrimitive
- * from assistant-ui for individual items (active state + switching for free).
+ * Reads the runtime's ordered thread list via useAuiState, fetches
+ * /api/threads for creation timestamps, joins them, and groups by
+ * week-then-circadian-day. Each thread is rendered inside a
+ * ThreadListItemByIndexProvider which sets up the per-item context
+ * that ThreadListItemPrimitive.Root and .Trigger need — giving us
+ * click handling, active state, and archive/delete actions for free
+ * from the framework, while we keep full control over the outer layout.
  *
  * Single-thread days render as a plain day-name item.
  * Multi-thread days render as a collapsible with sub-items.
@@ -12,8 +16,9 @@
 import { useEffect, useState, useMemo } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import {
+  ThreadListItemByIndexProvider,
   ThreadListItemPrimitive,
-  ThreadListPrimitive,
+  useAuiState,
 } from "@assistant-ui/react";
 import {
   SidebarGroup,
@@ -41,17 +46,18 @@ import {
 // Types
 // ---------------------------------------------------------------------------
 
-interface ThreadData {
-  chatId: string;
+/** Thread data augmented with its index in the runtime's threadItems array. */
+interface AugmentedThread {
+  chatId: string; // maps to ThreadListItemState.remoteId
   title?: string;
-  createdAt: number; // unix timestamp
-  updatedAt: number;
+  createdAt: number; // unix timestamp (from /api/threads)
+  runtimeIndex: number; // index in s.threads.threadItems
 }
 
 interface DayBucket {
   dayLabel: string; // "Friday", "Thursday", etc.
-  dateLabel: string; // PSO-8601 date for tooltip
-  threads: ThreadData[];
+  dateLabel: string; // PSO-8601 date for tooltip (also used as key)
+  threads: AugmentedThread[];
 }
 
 interface WeekBucket {
@@ -68,10 +74,8 @@ const LA = "America/Los_Angeles";
 /** Get the circadian day start (6 AM LA time) for a given unix timestamp */
 function getCircadianDay(ts: number): Date {
   const d = new Date(ts * 1000);
-  // Convert to LA time string, parse back
   const laStr = d.toLocaleString("en-US", { timeZone: LA });
   const la = new Date(laStr);
-  // If before 6 AM, the circadian day started yesterday
   if (la.getHours() < 6) {
     la.setDate(la.getDate() - 1);
   }
@@ -97,6 +101,15 @@ function toPSO8601(ts: number): string {
       minute: "2-digit",
     })
   );
+}
+
+/** Format creation time as PSO-8601 time only: "7:09 AM" */
+function toTimeOnly(ts: number): string {
+  return new Date(ts * 1000).toLocaleTimeString("en-US", {
+    timeZone: LA,
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 /** Get weekday name for a circadian day */
@@ -125,7 +138,6 @@ function getWeekLabel(weekStart: Date, now: Date): string {
   );
   if (diff === 0) return "This Week";
   if (diff === 1) return "Last Week";
-  // "Mar 15–21" format
   const weekEnd = new Date(weekStart);
   weekEnd.setDate(weekEnd.getDate() + 6);
   const startStr = weekStart.toLocaleDateString("en-US", {
@@ -144,11 +156,14 @@ function getWeekLabel(weekStart: Date, now: Date): string {
 // Grouping logic
 // ---------------------------------------------------------------------------
 
-function groupThreads(threads: ThreadData[]): WeekBucket[] {
+function groupThreads(threads: AugmentedThread[]): WeekBucket[] {
   const now = new Date();
 
   // Bucket by circadian day
-  const dayMap = new Map<string, { circadianStart: Date; threads: ThreadData[] }>();
+  const dayMap = new Map<
+    string,
+    { circadianStart: Date; threads: AugmentedThread[] }
+  >();
   for (const t of threads) {
     const circDay = getCircadianDay(t.createdAt);
     const key = circDay.toISOString();
@@ -164,7 +179,10 @@ function groupThreads(threads: ThreadData[]): WeekBucket[] {
   );
 
   // Bucket days into weeks
-  const weekMap = new Map<string, { weekStart: Date; days: typeof sortedDays }>();
+  const weekMap = new Map<
+    string,
+    { weekStart: Date; days: typeof sortedDays }
+  >();
   for (const day of sortedDays) {
     const ws = getWeekStart(day.circadianStart);
     const key = ws.toISOString();
@@ -191,18 +209,15 @@ function groupThreads(threads: ThreadData[]): WeekBucket[] {
 // Components
 // ---------------------------------------------------------------------------
 
-/** Format creation time as PSO-8601 time only: "7:09 AM" */
-function toTimeOnly(ts: number): string {
-  return new Date(ts * 1000).toLocaleTimeString("en-US", {
-    timeZone: LA,
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
-function ThreadItem({ thread }: { thread: ThreadData }) {
+/**
+ * Thread item rendered as a sub-menu button (inside a collapsible day).
+ *
+ * MUST be wrapped in ThreadListItemByIndexProvider by the caller so that
+ * ThreadListItemPrimitive.Root / .Trigger have per-item context.
+ */
+function ThreadSubItem({ thread }: { thread: AugmentedThread }) {
   return (
-    <ThreadListItemPrimitive.Root threadId={thread.chatId}>
+    <ThreadListItemPrimitive.Root>
       <Tooltip>
         <TooltipTrigger asChild>
           <ThreadListItemPrimitive.Trigger asChild>
@@ -219,35 +234,42 @@ function ThreadItem({ thread }: { thread: ThreadData }) {
   );
 }
 
+/**
+ * Day row — either a single thread button, or a collapsible with
+ * multiple thread sub-items.
+ */
 function DayItem({ day }: { day: DayBucket }) {
   const [open, setOpen] = useState(false);
 
-  // Single thread — just show the day name, clicking switches to that thread
+  // Single thread — clicking the day name switches to that thread
   if (day.threads.length === 1) {
+    const thread = day.threads[0];
     return (
       <SidebarMenuItem>
-        <ThreadListItemPrimitive.Root
-          threadId={day.threads[0].chatId}
-          className="w-full"
+        <ThreadListItemByIndexProvider
+          index={thread.runtimeIndex}
+          archived={false}
         >
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <ThreadListItemPrimitive.Trigger asChild>
-                <SidebarMenuButton className="w-full">
-                  {day.dayLabel}
-                </SidebarMenuButton>
-              </ThreadListItemPrimitive.Trigger>
-            </TooltipTrigger>
-            <TooltipContent side="right">
-              {toPSO8601(day.threads[0].createdAt)}
-            </TooltipContent>
-          </Tooltip>
-        </ThreadListItemPrimitive.Root>
+          <ThreadListItemPrimitive.Root>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <ThreadListItemPrimitive.Trigger asChild>
+                  <SidebarMenuButton className="w-full">
+                    {day.dayLabel}
+                  </SidebarMenuButton>
+                </ThreadListItemPrimitive.Trigger>
+              </TooltipTrigger>
+              <TooltipContent side="right">
+                {toPSO8601(thread.createdAt)}
+              </TooltipContent>
+            </Tooltip>
+          </ThreadListItemPrimitive.Root>
+        </ThreadListItemByIndexProvider>
       </SidebarMenuItem>
     );
   }
 
-  // Multiple threads — collapsible
+  // Multiple threads — collapsible day containing per-thread sub-items
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <SidebarMenuItem>
@@ -265,7 +287,12 @@ function DayItem({ day }: { day: DayBucket }) {
           <SidebarMenuSub>
             {day.threads.map((t) => (
               <SidebarMenuSubItem key={t.chatId}>
-                <ThreadItem thread={t} />
+                <ThreadListItemByIndexProvider
+                  index={t.runtimeIndex}
+                  archived={false}
+                >
+                  <ThreadSubItem thread={t} />
+                </ThreadListItemByIndexProvider>
               </SidebarMenuSubItem>
             ))}
           </SidebarMenuSub>
@@ -279,23 +306,73 @@ function DayItem({ day }: { day: DayBucket }) {
 // Main export
 // ---------------------------------------------------------------------------
 
+/**
+ * Select the runtime's threadItems array directly.
+ *
+ * The store uses immutable updates, so `threadItems` has a stable reference
+ * unless the list actually changes (adds/removes/reorders). useAuiState
+ * compares with Object.is via useSyncExternalStore, so returning the raw
+ * array is the cheap path — transforming it here would break reference
+ * stability and cause a re-render on every store notification.
+ */
+function selectThreadItems(s: {
+  threads: { threadItems: readonly { id: string; remoteId?: string }[] };
+}) {
+  return s.threads.threadItems;
+}
+
 export function GroupedThreadList() {
-  const [threads, setThreads] = useState<ThreadData[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Runtime-side thread list — stable reference, only changes when the
+  // list itself changes.
+  const threadItems = useAuiState(selectThreadItems);
+
+  // Timestamp data from /api/threads (the runtime doesn't carry createdAt)
+  const [timestamps, setTimestamps] = useState<Map<
+    string,
+    { createdAt: number; title?: string }
+  > | null>(null);
 
   useEffect(() => {
     fetch("/api/threads")
       .then((r) => r.json())
-      .then((data) => {
-        setThreads(data);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
+      .then(
+        (
+          data: Array<{ chatId: string; createdAt: number; title?: string }>
+        ) => {
+          const map = new Map<
+            string,
+            { createdAt: number; title?: string }
+          >();
+          for (const t of data) {
+            map.set(t.chatId, { createdAt: t.createdAt, title: t.title });
+          }
+          setTimestamps(map);
+        }
+      )
+      .catch(() => setTimestamps(new Map()));
   }, []);
 
-  const weeks = useMemo(() => groupThreads(threads), [threads]);
+  // Join runtime threads with timestamps, preserving the runtime's index.
+  const augmented = useMemo<AugmentedThread[]>(() => {
+    if (!timestamps || !threadItems) return [];
+    const result: AugmentedThread[] = [];
+    threadItems.forEach((item, runtimeIndex) => {
+      if (!item.remoteId) return;
+      const meta = timestamps.get(item.remoteId);
+      if (!meta) return;
+      result.push({
+        chatId: item.remoteId,
+        title: meta.title,
+        createdAt: meta.createdAt,
+        runtimeIndex,
+      });
+    });
+    return result;
+  }, [threadItems, timestamps]);
 
-  if (loading) {
+  const weeks = useMemo(() => groupThreads(augmented), [augmented]);
+
+  if (timestamps === null) {
     return (
       <div className="flex flex-col gap-1 p-3">
         {Array.from({ length: 8 }, (_, i) => (
@@ -306,7 +383,7 @@ export function GroupedThreadList() {
   }
 
   return (
-    <ThreadListPrimitive.Root className="flex flex-col">
+    <div className="flex flex-col">
       {weeks.map((week) => (
         <SidebarGroup key={week.weekLabel}>
           <SidebarGroupLabel>{week.weekLabel}</SidebarGroupLabel>
@@ -319,6 +396,6 @@ export function GroupedThreadList() {
           </SidebarGroupContent>
         </SidebarGroup>
       ))}
-    </ThreadListPrimitive.Root>
+    </div>
   );
 }
