@@ -1016,15 +1016,17 @@ class Chat:
             self.messages.append(self._current_assistant)
 
     async def _post_turn_suggest(self, user_text: str, assistant_text: str) -> None:
-        """Post-turn suggest: Qwen analyzes, then sends memorables as own turn.
+        """Post-turn: send a system-reminder prompting Alpha to store anything
+        worth remembering from the previous exchange.
 
-        Alpha processes the memorables via cortex.store tool calls.
-        No text response — Alpha responds to Jeffery, not to Intro.
+        Alpha responds via cortex.store tool calls. The reminder is explicit
+        that the conversation is still waiting on Jeffery's actual reply, so
+        Alpha should not proceed with any pending conversational thread.
         Only called after human-initiated turns (guard in _handle_result).
 
         Own Logfire span (sibling to the turn span) with gen_ai attributes.
         """
-        from alpha_app.suggest import suggest, format_intro_block
+        from alpha_app.suggest import POST_TURN_REMINDER
         self.suggest = SuggestState.FIRING
 
         with logfire.span("alpha.suggest", **{
@@ -1035,24 +1037,17 @@ class Chat:
             "suggest.assistant_text_len": len(assistant_text),
         }) as span:
             try:
-                memorables = await suggest(user_text, assistant_text)
-                block = format_intro_block(memorables)
-                if not block:
-                    span.set_attribute("suggest.memorables", 0)
-                    return
-
-                span.set_attribute("suggest.memorables", len(memorables))
                 span.set_attribute("gen_ai.input.messages", [
                     {"role": "user", "content": user_text[:200]},
                     {"role": "assistant", "content": assistant_text[:200]},
                 ])
 
                 # Send as own turn with source="suggest" so the source guard
-                # in _handle_result sees it and does NOT fire suggest again.
+                # in _handle_result sees it and does NOT fire this again.
                 from alpha_app.models import UserMessage as UM
                 msg = UM(
                     id=f"suggest-{uuid.uuid4().hex[:8]}",
-                    content=[{"type": "text", "text": block}],
+                    content=[{"type": "text", "text": POST_TURN_REMINDER}],
                     source="suggest",
                 )
                 async with await self.turn() as t:
@@ -1060,9 +1055,10 @@ class Chat:
                     self.set_trace_context(logfire.get_context())
                     await t.send(msg)
                     response = await t.response()
-                    self.set_trace_context(None)  # Clean up after suggest
+                    self.set_trace_context(None)
 
                 if response:
+                    span.set_attribute("suggest.had_text_output", bool(response.text))
                     span.set_attribute("gen_ai.output.messages", [
                         {"role": "assistant", "content": response.text[:200] if response.text else ""}
                     ])
@@ -1070,7 +1066,7 @@ class Chat:
 
             except Exception as e:
                 span.set_attribute("error.type", type(e).__name__)
-                logfire.debug("suggest turn failed: {error}", error=str(e))
+                logfire.debug("post-turn suggest failed: {error}", error=str(e))
             finally:
                 self.suggest = SuggestState.DISARMED
 
