@@ -1,25 +1,21 @@
 /**
  * GroupedThreadList — Week-grouped, day-collapsible sidebar thread list.
  *
- * Reads the runtime's ordered thread list via useAuiState, fetches
- * /api/threads for creation timestamps, joins them, and groups by
- * week-then-circadian-day. Each thread is rendered inside a
- * ThreadListItemByIndexProvider which sets up the per-item context
- * that ThreadListItemPrimitive.Root and .Trigger need — giving us
- * click handling, active state, and archive/delete actions for free
- * from the framework, while we keep full control over the outer layout.
+ * Reads chats from the Zustand store (populated by the WebSocket handler
+ * in useAlphaWebSocket), groups them by week then circadian day, and
+ * renders each thread as a plain button whose click calls setCurrentChatId.
+ *
+ * Zero assistant-ui framework machinery. No provider hierarchy, no thread
+ * list runtime, no derived contexts. Just: read the store, render buttons,
+ * wire onClick.
  *
  * Single-thread days render as a plain day-name item.
  * Multi-thread days render as a collapsible with sub-items.
  */
 
-import { useEffect, useState, useMemo } from "react";
+import { useMemo, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import {
-  ThreadListItemByIndexProvider,
-  ThreadListItemPrimitive,
-  useAuiState,
-} from "@assistant-ui/react";
+
 import {
   SidebarGroup,
   SidebarGroupLabel,
@@ -42,22 +38,16 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 
+import { useStore, type Chat } from "@/store";
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-/** Thread data augmented with its index in the runtime's threadItems array. */
-interface AugmentedThread {
-  chatId: string; // maps to ThreadListItemState.remoteId
-  title?: string;
-  createdAt: number; // unix timestamp (from /api/threads)
-  runtimeIndex: number; // index in s.threads.threadItems
-}
-
 interface DayBucket {
   dayLabel: string; // "Friday", "Thursday", etc.
   dateLabel: string; // PSO-8601 date for tooltip (also used as key)
-  threads: AugmentedThread[];
+  threads: Chat[];
 }
 
 interface WeekBucket {
@@ -134,7 +124,7 @@ function getWeekStart(d: Date): Date {
 function getWeekLabel(weekStart: Date, now: Date): string {
   const nowWeekStart = getWeekStart(now);
   const diff = Math.round(
-    (nowWeekStart.getTime() - weekStart.getTime()) / (7 * 24 * 60 * 60 * 1000)
+    (nowWeekStart.getTime() - weekStart.getTime()) / (7 * 24 * 60 * 60 * 1000),
   );
   if (diff === 0) return "This Week";
   if (diff === 1) return "Last Week";
@@ -156,26 +146,26 @@ function getWeekLabel(weekStart: Date, now: Date): string {
 // Grouping logic
 // ---------------------------------------------------------------------------
 
-function groupThreads(threads: AugmentedThread[]): WeekBucket[] {
+function groupChats(chats: Chat[]): WeekBucket[] {
   const now = new Date();
 
   // Bucket by circadian day
   const dayMap = new Map<
     string,
-    { circadianStart: Date; threads: AugmentedThread[] }
+    { circadianStart: Date; threads: Chat[] }
   >();
-  for (const t of threads) {
-    const circDay = getCircadianDay(t.createdAt);
+  for (const c of chats) {
+    const circDay = getCircadianDay(c.createdAt);
     const key = circDay.toISOString();
     if (!dayMap.has(key)) {
       dayMap.set(key, { circadianStart: circDay, threads: [] });
     }
-    dayMap.get(key)!.threads.push(t);
+    dayMap.get(key)!.threads.push(c);
   }
 
   // Sort days newest first
   const sortedDays = Array.from(dayMap.values()).sort(
-    (a, b) => b.circadianStart.getTime() - a.circadianStart.getTime()
+    (a, b) => b.circadianStart.getTime() - a.circadianStart.getTime(),
   );
 
   // Bucket days into weeks
@@ -210,66 +200,66 @@ function groupThreads(threads: AugmentedThread[]): WeekBucket[] {
 // ---------------------------------------------------------------------------
 
 /**
- * Thread item rendered as a sub-menu button (inside a collapsible day).
+ * Sub-menu button for a thread inside a multi-thread day.
  *
- * MUST be wrapped in ThreadListItemByIndexProvider by the caller so that
- * ThreadListItemPrimitive.Root / .Trigger have per-item context.
+ * Has its own useStore subscription so only this one component re-renders
+ * when the active chat changes — not the entire sidebar.
  */
-function ThreadSubItem({ thread }: { thread: AugmentedThread }) {
+function ThreadSubItem({ chat }: { chat: Chat }) {
+  const setCurrentChatId = useStore((s) => s.setCurrentChatId);
+  const isActive = useStore((s) => s.currentChatId === chat.id);
+
   return (
-    <ThreadListItemPrimitive.Root>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <ThreadListItemPrimitive.Trigger asChild>
-            <SidebarMenuSubButton className="cursor-pointer">
-              {toTimeOnly(thread.createdAt)}
-            </SidebarMenuSubButton>
-          </ThreadListItemPrimitive.Trigger>
-        </TooltipTrigger>
-        <TooltipContent side="right">
-          {toPSO8601(thread.createdAt)}
-        </TooltipContent>
-      </Tooltip>
-    </ThreadListItemPrimitive.Root>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <SidebarMenuSubButton
+          className="cursor-pointer"
+          isActive={isActive}
+          onClick={() => setCurrentChatId(chat.id)}
+        >
+          {toTimeOnly(chat.createdAt)}
+        </SidebarMenuSubButton>
+      </TooltipTrigger>
+      <TooltipContent side="right">{toPSO8601(chat.createdAt)}</TooltipContent>
+    </Tooltip>
   );
 }
 
-/**
- * Day row — either a single thread button, or a collapsible with
- * multiple thread sub-items.
- */
-function DayItem({ day }: { day: DayBucket }) {
+/** Menu button for a day that has exactly one chat — click goes to it. */
+function SingleThreadDayItem({
+  dayLabel,
+  chat,
+}: {
+  dayLabel: string;
+  chat: Chat;
+}) {
+  const setCurrentChatId = useStore((s) => s.setCurrentChatId);
+  const isActive = useStore((s) => s.currentChatId === chat.id);
+
+  return (
+    <SidebarMenuItem>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <SidebarMenuButton
+            className="w-full cursor-pointer"
+            isActive={isActive}
+            onClick={() => setCurrentChatId(chat.id)}
+          >
+            {dayLabel}
+          </SidebarMenuButton>
+        </TooltipTrigger>
+        <TooltipContent side="right">
+          {toPSO8601(chat.createdAt)}
+        </TooltipContent>
+      </Tooltip>
+    </SidebarMenuItem>
+  );
+}
+
+/** Collapsible menu for a day that has multiple chats. */
+function MultiThreadDayItem({ day }: { day: DayBucket }) {
   const [open, setOpen] = useState(false);
 
-  // Single thread — clicking the day name switches to that thread
-  if (day.threads.length === 1) {
-    const thread = day.threads[0];
-    return (
-      <SidebarMenuItem>
-        <ThreadListItemByIndexProvider
-          index={thread.runtimeIndex}
-          archived={false}
-        >
-          <ThreadListItemPrimitive.Root>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <ThreadListItemPrimitive.Trigger asChild>
-                  <SidebarMenuButton className="w-full">
-                    {day.dayLabel}
-                  </SidebarMenuButton>
-                </ThreadListItemPrimitive.Trigger>
-              </TooltipTrigger>
-              <TooltipContent side="right">
-                {toPSO8601(thread.createdAt)}
-              </TooltipContent>
-            </Tooltip>
-          </ThreadListItemPrimitive.Root>
-        </ThreadListItemByIndexProvider>
-      </SidebarMenuItem>
-    );
-  }
-
-  // Multiple threads — collapsible day containing per-thread sub-items
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <SidebarMenuItem>
@@ -286,13 +276,8 @@ function DayItem({ day }: { day: DayBucket }) {
         <CollapsibleContent>
           <SidebarMenuSub>
             {day.threads.map((t) => (
-              <SidebarMenuSubItem key={t.chatId}>
-                <ThreadListItemByIndexProvider
-                  index={t.runtimeIndex}
-                  archived={false}
-                >
-                  <ThreadSubItem thread={t} />
-                </ThreadListItemByIndexProvider>
+              <SidebarMenuSubItem key={t.id}>
+                <ThreadSubItem chat={t} />
               </SidebarMenuSubItem>
             ))}
           </SidebarMenuSub>
@@ -302,85 +287,28 @@ function DayItem({ day }: { day: DayBucket }) {
   );
 }
 
+/** Dispatcher: single-thread or multi-thread based on day contents. */
+function DayItem({ day }: { day: DayBucket }) {
+  if (day.threads.length === 1) {
+    return <SingleThreadDayItem dayLabel={day.dayLabel} chat={day.threads[0]} />;
+  }
+  return <MultiThreadDayItem day={day} />;
+}
+
 // ---------------------------------------------------------------------------
 // Main export
 // ---------------------------------------------------------------------------
 
-/**
- * Select the runtime's threadItems array directly.
- *
- * The store uses immutable updates, so `threadItems` has a stable reference
- * unless the list actually changes (adds/removes/reorders). useAuiState
- * compares with Object.is via useSyncExternalStore, so returning the raw
- * array is the cheap path — transforming it here would break reference
- * stability and cause a re-render on every store notification.
- */
-function selectThreadItems(s: {
-  threads: { threadItems: readonly { id: string; remoteId?: string }[] };
-}) {
-  return s.threads.threadItems;
-}
-
 export function GroupedThreadList() {
-  // Runtime-side thread list — stable reference, only changes when the
-  // list itself changes.
-  const threadItems = useAuiState(selectThreadItems);
+  // Subscribe to the chats map. Immer gives us structural sharing, so this
+  // reference only changes when the map itself actually changes.
+  const chatsMap = useStore((s) => s.chats);
 
-  // Timestamp data from /api/threads (the runtime doesn't carry createdAt)
-  const [timestamps, setTimestamps] = useState<Map<
-    string,
-    { createdAt: number; title?: string }
-  > | null>(null);
-
-  useEffect(() => {
-    fetch("/api/threads")
-      .then((r) => r.json())
-      .then(
-        (
-          data: Array<{ chatId: string; createdAt: number; title?: string }>
-        ) => {
-          const map = new Map<
-            string,
-            { createdAt: number; title?: string }
-          >();
-          for (const t of data) {
-            map.set(t.chatId, { createdAt: t.createdAt, title: t.title });
-          }
-          setTimestamps(map);
-        }
-      )
-      .catch(() => setTimestamps(new Map()));
-  }, []);
-
-  // Join runtime threads with timestamps, preserving the runtime's index.
-  const augmented = useMemo<AugmentedThread[]>(() => {
-    if (!timestamps || !threadItems) return [];
-    const result: AugmentedThread[] = [];
-    threadItems.forEach((item, runtimeIndex) => {
-      if (!item.remoteId) return;
-      const meta = timestamps.get(item.remoteId);
-      if (!meta) return;
-      result.push({
-        chatId: item.remoteId,
-        title: meta.title,
-        createdAt: meta.createdAt,
-        runtimeIndex,
-      });
-    });
-    return result;
-  }, [threadItems, timestamps]);
-
-  const weeks = useMemo(() => groupThreads(augmented), [augmented]);
-
-  if (timestamps === null) {
-    return (
-      <div className="flex flex-col gap-1 p-3">
-        {Array.from({ length: 8 }, (_, i) => (
-          <div key={i} className="h-9 animate-pulse rounded-lg bg-muted/50" />
-        ))}
-      </div>
-    );
-  }
+  // Project to array once per change, not on every render.
+  const weeks = useMemo(() => {
+    const chats = Object.values(chatsMap);
+    return groupChats(chats);
+  }, [chatsMap]);
 
   return (
     <div className="flex flex-col">

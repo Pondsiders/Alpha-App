@@ -14,7 +14,11 @@ export default defineConfig({
     host: true,
     allowedHosts: ["primer.tail8bd569.ts.net"],
     proxy: {
-      "/api": "http://alpha.tail8bd569.ts.net:18010",
+      "/api": "http://primer.tail8bd569.ts.net:18020",
+      "/ws": {
+        target: "ws://primer.tail8bd569.ts.net:18020",
+        ws: true,
+      },
     },
     headers: {
       "Cache-Control": "no-store",

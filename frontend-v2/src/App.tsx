@@ -7,7 +7,6 @@
  */
 
 import { Thread } from "@/components/assistant-ui/thread";
-import { ThreadListNew } from "@/components/assistant-ui/thread-list";
 import { GroupedThreadList } from "@/components/grouped-thread-list";
 import { ChatInfo } from "@/components/ChatInfo";
 import { ContextMeter } from "@/components/ContextMeter";
@@ -15,13 +14,13 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   Sidebar,
   SidebarContent,
-  SidebarFooter,
   SidebarHeader,
   SidebarProvider,
   SidebarTrigger,
   SidebarInset,
 } from "@/components/ui/sidebar";
 import { RuntimeProvider } from "./RuntimeProvider";
+import { useAlphaWebSocket } from "@/hooks/useAlphaWebSocket";
 
 // -- App Sidebar --------------------------------------------------------------
 
@@ -37,9 +36,8 @@ function AppSidebar() {
       <SidebarContent>
         <GroupedThreadList />
       </SidebarContent>
-      <SidebarFooter className="p-3">
-        <ThreadListNew />
-      </SidebarFooter>
+      {/* SidebarFooter / "New Thread" button intentionally omitted —
+          creating new chats is Phase 2 work (needs the send path). */}
     </Sidebar>
   );
 }
@@ -73,6 +71,11 @@ function Header() {
 // -- App ----------------------------------------------------------------------
 
 export default function App() {
+  // Open the WebSocket on mount and wire events to the Zustand store.
+  // Must run inside a component (it uses hooks). One call, everything
+  // else takes care of itself.
+  useAlphaWebSocket();
+
   return (
     <RuntimeProvider>
       <TooltipProvider>

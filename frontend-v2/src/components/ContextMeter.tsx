@@ -36,7 +36,7 @@ function formatTokens(count: number): string {
   return count.toLocaleString();
 }
 
-export function ContextMeter({ percent, model, tokenCount, tokenLimit }: ContextMeterProps) {
+export function ContextMeter({ percent, model: _model, tokenCount, tokenLimit }: ContextMeterProps) {
   const color = getMeterColor(percent);
   const display = percent.toFixed(1) + "%";
 
