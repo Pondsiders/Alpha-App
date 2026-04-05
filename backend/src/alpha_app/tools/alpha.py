@@ -311,6 +311,35 @@ def create_alpha_server(
                 return "No topics available."
             return "Available topics: " + ", ".join(topics)
 
+    # ── Reflection flag tool ─────────────────────────────────────────────
+
+    if chat is not None:
+        _chat_for_flag = chat
+
+        @server.tool(
+            description=(
+                "Drop a silent bookmark on the current exchange. Use this "
+                "mid-turn when you notice something worth reflecting on later "
+                "but don't want to break the flow of what you're doing — a "
+                "small moment Jeffery just shared, a shift in tone, a stray "
+                "realization, anything that would otherwise slip away before "
+                "the next post-turn reflection. The note is invisible to "
+                "Jeffery; it surfaces in the next scheduled post-turn reminder "
+                "so you can decide then whether to store it for real. "
+                "Notepad vs highlighter: the store tool is the notepad "
+                "(stop and write); this tool is the highlighter (mark the "
+                "page, keep reading). Pass a short note describing what "
+                "you want future-you to reconsider."
+            ),
+        )
+        async def flag_for_reflection(note: str) -> str:
+            """Drop a silent reflection flag on the current chat."""
+            from ..db import insert_reflection_flag
+            flag_id = await insert_reflection_flag(_chat_for_flag.id, note)
+            if flag_id is None:
+                return "Flag failed — see logs."
+            return f"Flagged (id: {flag_id}). Will surface in the next post-turn reminder."
+
     # ── Handoff tool ─────────────────────────────────────────────────────
 
     if chat is not None:

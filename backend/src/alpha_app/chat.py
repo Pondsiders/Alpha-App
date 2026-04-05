@@ -1048,8 +1048,14 @@ class Chat:
 
         Own Logfire span (sibling to the turn span) with gen_ai attributes.
         """
-        from alpha_app.suggest import POST_TURN_REMINDER
+        from alpha_app.suggest import build_post_turn_reminder
+        from alpha_app.db import fetch_unclaimed_flags, claim_flags
         self.suggest = SuggestState.FIRING
+
+        # Highlighter: surface any silent flags dropped during the exchange.
+        flags = await fetch_unclaimed_flags(self.id)
+        flag_notes = [f["note"] for f in flags]
+        reminder_text = build_post_turn_reminder(flag_notes)
 
         with logfire.span("alpha.suggest", **{
             "gen_ai.operation.name": "chat",
@@ -1057,6 +1063,7 @@ class Chat:
             "chat.id": self.id,
             "suggest.user_text_len": len(user_text),
             "suggest.assistant_text_len": len(assistant_text),
+            "suggest.flag_count": len(flag_notes),
         }) as span:
             try:
                 span.set_attribute("gen_ai.input.messages", [
@@ -1069,7 +1076,7 @@ class Chat:
                 from alpha_app.models import UserMessage as UM
                 msg = UM(
                     id=f"suggest-{uuid.uuid4().hex[:8]}",
-                    content=[{"type": "text", "text": POST_TURN_REMINDER}],
+                    content=[{"type": "text", "text": reminder_text}],
                     source="suggest",
                 )
                 async with await self.turn() as t:
@@ -1085,6 +1092,12 @@ class Chat:
                         {"role": "assistant", "content": response.text[:200] if response.text else ""}
                     ])
                     span.set_attribute("gen_ai.usage.output_tokens", self.output_tokens)
+
+                # Claim flags after the reminder has been delivered. We claim
+                # even if response was empty — the flags were surfaced, and
+                # re-surfacing them on the next reminder would be noise.
+                if flags:
+                    await claim_flags([f["id"] for f in flags])
 
             except Exception as e:
                 span.set_attribute("error.type", type(e).__name__)

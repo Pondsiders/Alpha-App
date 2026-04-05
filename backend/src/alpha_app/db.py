@@ -129,6 +129,24 @@ async def init_pool() -> None:
             ON CONFLICT (id) DO NOTHING
         """)
 
+        # Reflection flags — the "highlighter" to store's "notepad".
+        # Alpha drops a silent bookmark mid-turn via flag_for_reflection(note);
+        # the next scheduled post-turn reminder surfaces unclaimed flags in
+        # its body. Decouples noticing from reflecting.
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS app.reflection_flags (
+                id BIGSERIAL PRIMARY KEY,
+                chat_id TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                note TEXT NOT NULL,
+                claimed BOOLEAN NOT NULL DEFAULT FALSE
+            )
+        """)
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_reflection_flags_chat_unclaimed"
+            " ON app.reflection_flags (chat_id, claimed)"
+        )
+
         # Job persistence — our own table, plain JSON, no pickle.
         # APScheduler is pure in-memory; this is the source of truth.
         await conn.execute("""
@@ -216,6 +234,70 @@ async def list_chats() -> list[dict]:
     except Exception as e:
         logfire.error("list_chats FAILED: {error}", error=str(e), exc_info=True)
         return []
+
+
+# -- Reflection flags ---------------------------------------------------------
+
+
+async def insert_reflection_flag(chat_id: str, note: str) -> int | None:
+    """Insert a reflection flag. Returns the new flag ID, or None on error."""
+    try:
+        pool = get_pool()
+        row = await pool.fetchrow(
+            "INSERT INTO app.reflection_flags (chat_id, note)"
+            " VALUES ($1, $2) RETURNING id",
+            chat_id,
+            note,
+        )
+        return row["id"] if row else None
+    except Exception as e:
+        logfire.error(
+            "insert_reflection_flag FAILED: {error} chat={chat_id}",
+            error=str(e),
+            chat_id=chat_id,
+            exc_info=True,
+        )
+        return None
+
+
+async def fetch_unclaimed_flags(chat_id: str) -> list[dict]:
+    """Fetch all unclaimed reflection flags for a chat, oldest first."""
+    try:
+        pool = get_pool()
+        rows = await pool.fetch(
+            "SELECT id, note, created_at FROM app.reflection_flags"
+            " WHERE chat_id = $1 AND claimed = FALSE"
+            " ORDER BY created_at ASC",
+            chat_id,
+        )
+        return [{"id": r["id"], "note": r["note"], "created_at": r["created_at"]} for r in rows]
+    except Exception as e:
+        logfire.error(
+            "fetch_unclaimed_flags FAILED: {error} chat={chat_id}",
+            error=str(e),
+            chat_id=chat_id,
+            exc_info=True,
+        )
+        return []
+
+
+async def claim_flags(flag_ids: list[int]) -> None:
+    """Mark flags as claimed. Idempotent — already-claimed rows stay claimed."""
+    if not flag_ids:
+        return
+    try:
+        pool = get_pool()
+        await pool.execute(
+            "UPDATE app.reflection_flags SET claimed = TRUE WHERE id = ANY($1::bigint[])",
+            flag_ids,
+        )
+    except Exception as e:
+        logfire.error(
+            "claim_flags FAILED: {error} ids={ids}",
+            error=str(e),
+            ids=flag_ids,
+            exc_info=True,
+        )
 
 
 # -- Event store --------------------------------------------------------------

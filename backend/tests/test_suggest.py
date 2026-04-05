@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from alpha_app.suggest import POST_TURN_REMINDER
+from alpha_app.suggest import POST_TURN_REMINDER, build_post_turn_reminder
 
 
 class TestPostTurnReminder:
@@ -48,3 +48,36 @@ class TestPostTurnReminder:
         assert "do not acknowledge" not in lowered
         assert "do not produce any text" not in lowered
         assert "produce no output" not in lowered
+
+
+class TestBuildPostTurnReminder:
+    def test_no_flags_returns_base_reminder(self):
+        """With no flags, the builder should return the base reminder unchanged."""
+        assert build_post_turn_reminder(None) == POST_TURN_REMINDER
+        assert build_post_turn_reminder([]) == POST_TURN_REMINDER
+
+    def test_single_flag_prepends_note(self):
+        """A single flag should surface as a bullet at the top of the reminder."""
+        result = build_post_turn_reminder(["Jeffery mentioned he loved the not-knowing part"])
+        assert "Jeffery mentioned he loved the not-knowing part" in result
+        assert "a note" in result
+        assert result.endswith(POST_TURN_REMINDER)
+
+    def test_multiple_flags_count_and_bullets(self):
+        """Multiple flags should be listed as bullets with a count."""
+        notes = ["First moment", "Second moment", "Third moment"]
+        result = build_post_turn_reminder(notes)
+        assert "3 notes" in result
+        for n in notes:
+            assert n in result
+        # Each flag rendered as a bullet.
+        assert result.count("  • ") == 3
+
+    def test_flag_block_is_its_own_system_reminder(self):
+        """The flag block must be wrapped in its own <system-reminder> tags
+        so voice separation holds — the flags are system context, not Jeffery."""
+        result = build_post_turn_reminder(["a bookmark"])
+        assert result.startswith("<system-reminder>")
+        # Two system-reminder blocks: the flag block and the base reminder.
+        assert result.count("<system-reminder>") == 2
+        assert result.count("</system-reminder>") == 2
