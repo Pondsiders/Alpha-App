@@ -57,6 +57,21 @@ def create_alpha_server(
 
     server = FastMCP("alpha")
 
+    # ── Demo tool (MCP-vs-REST shape comparison) ─────────────────────────
+
+    @server.tool(
+        description=(
+            "Return a fictional duck record with nested structure and mixed "
+            "types. Used to compare how MCP tool returns and REST JSON "
+            "responses look from Alpha's side. Same function backs the "
+            "GET /api/demo/duck endpoint."
+        ),
+    )
+    def demo_duck() -> dict:
+        """Return the canonical demo duck payload."""
+        from ..demo import demo_duck as _demo_duck
+        return _demo_duck()
+
     # ── Memory tools ─────────────────────────────────────────────────────
 
     @server.tool(

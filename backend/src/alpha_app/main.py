@@ -107,6 +107,17 @@ from alpha_app.routes.schedule_api import router as schedule_router
 app.include_router(schedule_router)
 
 
+@app.get("/api/demo/duck")
+async def get_demo_duck():
+    """Demo payload endpoint — mirror of the demo_duck MCP tool.
+
+    Used to compare MCP tool return shape vs REST JSON response shape
+    from Alpha's side. Same underlying function, two surfaces.
+    """
+    from alpha_app.demo import demo_duck
+    return demo_duck()
+
+
 @app.get("/api/theme")
 async def get_theme():
     """Serve the identity's theme CSS from JE_NE_SAIS_QUOI/theme.css."""
