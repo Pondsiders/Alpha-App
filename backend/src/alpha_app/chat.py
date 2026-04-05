@@ -232,6 +232,12 @@ class Chat:
         self._cached_token_count: int = 0
         self._cached_context_window: int = CONTEXT_WINDOW
 
+        # Inertial turn counter — counts completed human-initiated turns.
+        # Persisted in app.chats JSONB; survives reap/resurrect (same context
+        # window continues via --resume). Used to gate post-turn suggest on
+        # the N=3 cadence (fire on 1, 4, 7, 10, 13, ...).
+        self._human_turn_count: int = 0
+
         # Orientation flag — True means the next message needs orientation
         # injected. New chats need it on first message; resumed chats need it too.
         self._needs_orientation: bool = True
@@ -267,6 +273,7 @@ class Chat:
         chat._cached_token_count = data.get("token_count", 0) or 0
         chat._cached_context_window = data.get("context_window", 0) or CONTEXT_WINDOW
         chat._injected_topics = set(data.get("injected_topics", []))
+        chat._human_turn_count = data.get("human_turn_count", 0) or 0
 
         # Restore the recall seen-cache from persisted data.
         # Survives backend restarts — no more resurfacing stored memories.
@@ -483,6 +490,7 @@ class Chat:
             "context_window": self.context_window,
             "injected_topics": sorted(self._injected_topics) if self._injected_topics else [],
             "seen_ids": sorted(seen) if seen else [],
+            "human_turn_count": self._human_turn_count,
         }
 
     def wire_state(self, **overrides) -> dict:
@@ -856,17 +864,31 @@ class Chat:
             and last_user
             and last_user.source in ("human", "buzzer")
         ):
-            user_text = " ".join(
-                b.get("text", "") for b in last_user.content if b.get("type") == "text"
+            # Inertial counter: increment once per completed human-initiated
+            # turn. Counts at the ResultEvent boundary, so two user messages
+            # in one turn (interjection) count as one turn — that's what we
+            # want. Persisted in app.chats JSONB via to_data(); survives reap.
+            self._human_turn_count += 1
+
+            # N=3 cadence: fire suggest on turns 1, 4, 7, 10, 13, ...
+            # (first term 1, common difference 3 — arithmetic sequence).
+            should_suggest = (
+                self._human_turn_count == 1
+                or self._human_turn_count % 3 == 1
             )
-            if user_text.strip():
-                # Empty context so the suggest span is a SIBLING of alpha.turn,
-                # not a child. asyncio.create_task() inherits the parent's trace
-                # context; an empty Context() starts clean.
-                asyncio.create_task(
-                    self._post_turn_suggest(user_text, finalized_msg.text),
-                    context=contextvars.Context(),
+
+            if should_suggest:
+                user_text = " ".join(
+                    b.get("text", "") for b in last_user.content if b.get("type") == "text"
                 )
+                if user_text.strip():
+                    # Empty context so the suggest span is a SIBLING of alpha.turn,
+                    # not a child. asyncio.create_task() inherits the parent's trace
+                    # context; an empty Context() starts clean.
+                    asyncio.create_task(
+                        self._post_turn_suggest(user_text, finalized_msg.text),
+                        context=contextvars.Context(),
+                    )
 
         # Broadcast updated state
         await self._broadcast({

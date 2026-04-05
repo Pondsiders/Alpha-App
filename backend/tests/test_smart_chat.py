@@ -289,6 +289,74 @@ class TestSmartChatCallback:
         assert chat.messages[0].parts[0]["text"] == "First response"
         assert chat.messages[1].parts[0]["text"] == "Second response"
 
+    async def test_human_turn_counter_increments_on_human_turn(self, chat, broadcasts):
+        """_human_turn_count should increment once per completed human-initiated turn."""
+        # Stub out the suggest dispatch so we don't need Ollama.
+        fired: list[int] = []
+
+        async def fake_suggest(user_text: str, assistant_text: str) -> None:
+            fired.append(chat._human_turn_count)
+
+        chat._post_turn_suggest = fake_suggest
+
+        assert chat._human_turn_count == 0
+
+        # Three human-initiated turns in a row.
+        for i in range(3):
+            chat.messages.append(
+                UserMessage(id=f"u{i}", content=[{"type": "text", "text": f"msg {i}"}], source="human")
+            )
+            await chat._on_claude_event(_text_delta(f"reply {i}"))
+            await chat._on_claude_event(_result_event())
+
+        assert chat._human_turn_count == 3
+
+    async def test_suggest_cadence_fires_on_1_4_7(self, chat, broadcasts):
+        """N=3 cadence: suggest fires on turns 1, 4, 7, 10, ... (and nowhere else)."""
+        fired_on: list[int] = []
+
+        async def fake_suggest(user_text: str, assistant_text: str) -> None:
+            fired_on.append(chat._human_turn_count)
+
+        chat._post_turn_suggest = fake_suggest
+
+        # Run 10 human turns and record which ones fired suggest.
+        for i in range(10):
+            chat.messages.append(
+                UserMessage(id=f"u{i}", content=[{"type": "text", "text": f"msg {i}"}], source="human")
+            )
+            await chat._on_claude_event(_text_delta(f"reply {i}"))
+            await chat._on_claude_event(_result_event())
+            # asyncio.create_task runs the coroutine eagerly enough that by
+            # the next event loop turn it's recorded. Give it a beat.
+            await asyncio.sleep(0)
+
+        assert fired_on == [1, 4, 7, 10]
+
+    async def test_human_turn_counter_persists_round_trip(self):
+        """to_data() and from_db() should preserve _human_turn_count."""
+        chat = Chat(id="persist-test")
+        chat._human_turn_count = 7
+
+        data = chat.to_data()
+        assert data["human_turn_count"] == 7
+
+        restored = Chat.from_db("persist-test", updated_at=0.0, data=data)
+        assert restored._human_turn_count == 7
+
+    async def test_human_turn_counter_defaults_to_zero_on_missing_key(self):
+        """Backfill: legacy chats without human_turn_count in JSONB load as 0."""
+        legacy_data = {
+            "session_uuid": "abc",
+            "title": "old chat",
+            "created_at": 0,
+            "token_count": 1000,
+            "context_window": 1_000_000,
+            # no human_turn_count key
+        }
+        chat = Chat.from_db("legacy", updated_at=0.0, data=legacy_data)
+        assert chat._human_turn_count == 0
+
     async def test_messages_to_wire(self, chat, broadcasts):
         """Serialize messages for the 'gimme the fucking chat' payload."""
         # Add a user message manually (as Chat.send() would)
