@@ -5,6 +5,7 @@ If it contains credentials, it stays in .env.
 One file to change, one place to look.
 """
 
+import os
 from pathlib import Path
 
 # -- Filesystem ---------------------------------------------------------------
@@ -25,7 +26,7 @@ OLLAMA_URL = "http://primer.tail8bd569.ts.net:11434"
 GARAGE_ENDPOINT = "http://127.0.0.1:3900"
 GARAGE_BUCKET = "pondside"
 GARAGE_REGION = "pondside"
-PORT = 18010
+PORT = int(os.environ.get("PORT", "18010"))
 
 # -- Models -------------------------------------------------------------------
 

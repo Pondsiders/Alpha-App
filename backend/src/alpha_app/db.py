@@ -53,12 +53,45 @@ async def init_pool() -> None:
 
     _pool = await asyncpg.create_pool(dsn, min_size=2, max_size=10, init=_init_connection)
 
-    # Idempotent migration: add seq column to app.events if not already present.
-    # seq captures true broadcast order and is safe to ORDER BY (unlike BIGSERIAL
-    # id, which can be assigned out of order across pool connections).
-    # Note: any pre-migration rows with seq = NULL will sort LAST in PostgreSQL's
-    # default ASC ordering (NULLs last), after all correctly-sequenced new rows.
     async with _pool.acquire() as conn:
+        # Bootstrap schema + core tables. All idempotent (IF NOT EXISTS) so
+        # this is safe to run against existing production databases AND makes
+        # a fresh database self-sufficient — just create the empty database,
+        # run the app, and it sets itself up.
+        await conn.execute("CREATE SCHEMA IF NOT EXISTS app")
+
+        # Chat metadata — one row per chat, JSONB carries everything flexible.
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS app.chats (
+                id TEXT PRIMARY KEY,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                data JSONB NOT NULL DEFAULT '{}'
+            )
+        """)
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_chats_updated_at"
+            " ON app.chats (updated_at DESC)"
+        )
+
+        # Raw event log — used by the legacy replay protocol.
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS app.events (
+                id BIGSERIAL PRIMARY KEY,
+                chat_id TEXT NOT NULL,
+                ts TIMESTAMPTZ NOT NULL DEFAULT now(),
+                event JSONB NOT NULL,
+                seq INTEGER
+            )
+        """)
+
+        # Idempotent migration: add seq column to app.events if not already
+        # present (for databases created before the column was added). seq
+        # captures true broadcast order and is safe to ORDER BY (unlike
+        # BIGSERIAL id, which can be assigned out of order across pool
+        # connections). Note: any pre-migration rows with seq = NULL will
+        # sort LAST in PostgreSQL's default ASC ordering (NULLs last), after
+        # all correctly-sequenced new rows.
         await conn.execute(
             "ALTER TABLE app.events ADD COLUMN IF NOT EXISTS seq INTEGER"
         )

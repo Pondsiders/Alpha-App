@@ -28,6 +28,10 @@ backend/tests/e2e/screenshots/
 backend/scripts/logs/
 backend/scripts/.gatsby_cache.txt
 
+# API request captures (debug output from proxy.py when
+# ALPHA_SDK_CAPTURE_REQUESTS=1 — never source code)
+api_request_captures/
+
 # OS
 .DS_Store
 

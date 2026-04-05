@@ -124,6 +124,75 @@ async def get_threads():
     return await list_chats()
 
 
+@app.get("/api/threads/{thread_id}/messages")
+async def get_thread_messages(thread_id: str):
+    """Recap: load all messages for a thread as ThreadMessageLike[] for assistant-ui.
+
+    Converts our internal format to assistant-ui's ThreadMessageLike format:
+      - User content[] → content[] (same shape)
+      - Assistant thinking → reasoning type
+      - Assistant tool-call → tool-{name} type
+    Note: ThreadMessageLike uses 'content', not 'parts' (UIMessage uses 'parts').
+    """
+    from alpha_app.db import load_messages
+
+    rows = await load_messages(thread_id)
+    ui_messages = []
+
+    for row in rows:
+        role = row["role"]
+        data = row.get("data", {})
+        msg_id = data.get("id", f"msg-{len(ui_messages)}")
+        source = data.get("source", "human")
+
+        # Skip suggest/narrator messages — they're internal
+        if source in ("suggest",):
+            continue
+
+        if role == "user":
+            # User: content[] → parts[] (same shape, just rename the key)
+            parts = []
+            for block in data.get("content", []):
+                if isinstance(block, dict) and block.get("type") == "text":
+                    parts.append({"type": "text", "text": block.get("text", "")})
+                # Skip non-text blocks (images, etc.) for now
+            if not parts:
+                continue
+            ui_messages.append({
+                "id": msg_id,
+                "role": "user",
+                "content": parts,
+            })
+
+        elif role == "assistant":
+            # Assistant: parts[] with type mapping
+            parts = []
+            for part in data.get("parts", []):
+                ptype = part.get("type")
+                if ptype == "text":
+                    parts.append({"type": "text", "text": part.get("text", "")})
+                elif ptype == "thinking":
+                    parts.append({"type": "reasoning", "text": part.get("thinking", "")})
+                elif ptype == "tool-call":
+                    tool_name = part.get("toolName", "unknown")
+                    parts.append({
+                        "type": f"tool-{tool_name}",
+                        "toolCallId": part.get("toolCallId", ""),
+                        "state": "output-available",
+                        "input": part.get("args", {}),
+                        "output": part.get("result", ""),
+                    })
+            if not parts:
+                continue
+            ui_messages.append({
+                "id": msg_id,
+                "role": "assistant",
+                "content": parts,
+            })
+
+    return ui_messages
+
+
 @app.get("/health")
 async def health() -> dict:
     """Health check endpoint."""
@@ -209,32 +278,10 @@ def run() -> None:
     if not _DOCKER_DIST.is_dir():
         _rebuild_frontend_if_stale(_LOCAL_DIST.parent)
 
-    # SSL cert resolution.
-    # Docker: no SSL — tailscale serve handles TLS termination (443 → 18010).
-    # Bare metal: derive from hostname → Tailscale cert in /Pondside.
-    if os.getenv("CONTAINER"):
-        ssl_certfile = None
-        ssl_keyfile = None
-    else:
-        import socket
-        hostname = socket.gethostname()
-        cert_dir = Path("/Pondside/Basement/Files/certs")
-        cert = cert_dir / f"{hostname}.tail8bd569.ts.net.crt"
-        key = cert_dir / f"{hostname}.tail8bd569.ts.net.key"
-        if cert.is_file() and key.is_file():
-            ssl_certfile = str(cert)
-            ssl_keyfile = str(key)
-        else:
-            ssl_certfile = None
-            ssl_keyfile = None
-
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=args.port,
-        ssl_certfile=ssl_certfile or None,
-        ssl_keyfile=ssl_keyfile or None,
-    )
+    # Plain HTTP. Always. Tailscale Serve handles TLS termination for the
+    # production container; Vite dev server handles HTTPS for local dev.
+    # Nothing downstream needs uvicorn to terminate HTTPS.
+    uvicorn.run(app, host="0.0.0.0", port=args.port)
 
 
 if __name__ == "__main__":

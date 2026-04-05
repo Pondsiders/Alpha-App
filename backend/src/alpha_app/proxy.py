@@ -49,7 +49,12 @@ ANTHROPIC_API_URL = "https://api.anthropic.com"
 CAPTURE_REQUESTS = os.environ.get(
     "ALPHA_SDK_CAPTURE_REQUESTS", ""
 ).lower() in ("1", "true", "yes")
-CAPTURE_DIR = Path(__file__).parent.parent.parent / "tests" / "captures"
+CAPTURE_DIR = Path(
+    os.environ.get(
+        "ALPHA_SDK_CAPTURE_DIR",
+        "/Pondside/Workshop/Projects/Alpha-App/api_request_captures",
+    )
+)
 
 # Headers to forward from claude → Anthropic
 FORWARD_HEADERS = [
@@ -303,7 +308,9 @@ class _Proxy:
 
         # Debug capture
         if CAPTURE_REQUESTS and body is not None:
-            self._capture_request(path, body)
+            self._capture_request(
+                path, body, headers=dict(request.headers)
+            )
 
         # Build forwarding headers
         headers = {}
@@ -476,15 +483,40 @@ class _Proxy:
 
     # -- Debug capture --------------------------------------------------------
 
-    def _capture_request(self, path: str, body: dict, suffix: str = "") -> None:
-        """Dump request to JSON file for debugging."""
+    def _capture_request(
+        self,
+        path: str,
+        body: dict,
+        suffix: str = "",
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        """Dump request to JSON file for debugging.
+
+        Captures both the JSON body and HTTP headers (in a sidecar file)
+        so we can inspect exactly what Claude Code sends to Anthropic.
+        """
         try:
             CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             path_safe = path.replace("/", "_").strip("_")
             suffix_part = f"_{suffix}" if suffix else ""
-            filename = f"{timestamp}_{path_safe}{suffix_part}.json"
-            with open(CAPTURE_DIR / filename, "w") as f:
+            base = f"{timestamp}_{path_safe}{suffix_part}"
+
+            # Body
+            with open(CAPTURE_DIR / f"{base}.json", "w") as f:
                 json.dump(body, f, indent=2, default=str)
+
+            # Headers sidecar
+            if headers:
+                redacted = {}
+                for k, v in headers.items():
+                    kl = k.lower()
+                    if kl in ("authorization", "x-api-key"):
+                        # Show prefix only — enough to identify token type
+                        redacted[k] = v[:20] + "..." if len(v) > 20 else v
+                    else:
+                        redacted[k] = v
+                with open(CAPTURE_DIR / f"{base}_headers.json", "w") as f:
+                    json.dump(redacted, f, indent=2)
         except Exception:
             pass
