@@ -235,36 +235,6 @@ if FRONTEND_DIR.is_dir():
         return FileResponse(FRONTEND_DIR / "index.html")
 
 
-def _rebuild_frontend_if_stale(frontend_dir: Path) -> None:
-    """Run `npm run build` if any frontend/src file is newer than dist/index.html.
-
-    This is only called on bare-metal (not Docker). The timestamp check is the
-    only cost on a clean restart — subprocess is not spawned unless needed.
-    """
-    import subprocess
-
-    src_dir = frontend_dir / "src"
-    dist_index = frontend_dir / "dist" / "index.html"
-
-    if not src_dir.is_dir():
-        return  # Nothing to build
-
-    if dist_index.exists():
-        dist_mtime = dist_index.stat().st_mtime
-        stale = any(
-            p.stat().st_mtime > dist_mtime
-            for p in src_dir.rglob("*")
-            if p.is_file()
-        )
-        if not stale:
-            return
-
-    print("Frontend source has changed — rebuilding…", flush=True)
-    result = subprocess.run(["npm", "run", "build"], cwd=frontend_dir, check=False)
-    if result.returncode != 0:
-        print(f"Warning: frontend build exited with code {result.returncode}", flush=True)
-
-
 def run() -> None:
     """Entry point for `uv run alpha` (bare metal deployment)."""
     import argparse
@@ -281,10 +251,6 @@ def run() -> None:
     # Signal the lifespan to start the scheduler
     if args.with_scheduler:
         app.state._enable_scheduler = True
-
-    # Rebuild frontend if source is newer than the bundle (bare-metal only).
-    if not _DOCKER_DIST.is_dir():
-        _rebuild_frontend_if_stale(_LOCAL_DIST.parent)
 
     # Plain HTTP. Always. Tailscale Serve handles TLS termination for the
     # production container; Vite dev server handles HTTPS for local dev.
