@@ -21,7 +21,8 @@ uv sync --group dev                    # Install dependencies
 uv run pytest tests/ -v                # Run all backend tests
 uv run pytest tests/test_claude.py -v  # Run a single test file
 uv run pytest tests/ -k "test_name"    # Run a single test by name
-uv run uvicorn alpha_app.main:app --port 18010  # Run backend locally
+uv run alpha                                   # Run backend (port 18010)
+uv run alpha --with-scheduler                  # Run with APScheduler jobs (production)
 ```
 
 ### Backend Protocol Tests (from `backend-tests/`)

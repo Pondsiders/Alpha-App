@@ -40,7 +40,7 @@ def weekly_basebackup():
             result = subprocess.run(
                 ["pg_basebackup",
                  "-h", PG_HOST, "-p", PG_PORT, "-U", "postgres",
-                 "-D", dest, "-Ft", "-Xs", "-P"],
+                 "-D", dest, "-Ft", "-Xs", "-P", "-Z", "gzip:9"],
                 capture_output=True, text=True,
             )
             if result.returncode != 0:
