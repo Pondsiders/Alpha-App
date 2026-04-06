@@ -1,45 +1,38 @@
-"""WebSocket route — bidirectional multi-chat switch.
+"""WebSocket route — command/event protocol.
 
-Phase 3: The Switch — all events broadcast to all connected clients.
+See PROTOCOL.md for the wire format. Summary:
+- Client sends commands: { "command": "join-chat", "id": "req_1", "chatId": "xyz" }
+- Server sends events:   { "event": "text-delta", "chatId": "xyz", "delta": "Hello" }
+- Commands with `id` get a correlated response event (or error).
+- Commands without `id` are fire-and-forget.
 
-Every WebSocket connection registers in app.state.connections (a set).
-Streaming events, state changes, and user message echoes broadcast to all
-connections. Request/response messages (list-chats) unicast to the requester.
-The reap timer broadcasts DEAD state via on_reap callback.
-
-Two tabs = two connections = same conversation, synced.
-
-Client -> Server messages:
-  { "type": "create-chat" }
-  { "type": "list-chats" }
-  { "type": "send", "chatId": "...", "content": "Hello" }
-  { "type": "send", "chatId": "...", "content": [{ "type": "text", "text": "Hello" }, ...] }
-  { "type": "buzz", "chatId": "..." }  -- nonverbal hello, Alpha talks first
-  { "type": "interrupt", "chatId": "..." }
-
-Server -> Client messages (unicast — response to requester only):
-  { "type": "chat-list", "data": [...] }
-
-Server -> Client messages (broadcast — all connections):
-  { "type": "chat-created", "chatId": "...", "data": { "state": "dead" } }  -- born COLD, wakes on first message
-  { "type": "chat-state", "chatId": "...", "data": { "state": "busy", "title": "...", ... } }
-  { "type": "user-message", "chatId": "...", "data": { "content": [...] } }
-  { "type": "text-delta", "chatId": "...", "data": "chunk" }
-  { "type": "thinking-delta", "chatId": "...", "data": "chunk" }
-  { "type": "tool-call", "chatId": "...", "data": { "toolCallId", "toolName", "args", "argsText" } }
-  { "type": "done", "chatId": "..." }
-  { "type": "interrupted", "chatId": "..." }
-  { "type": "context-update", "chatId": "...", "data": { "tokenCount": 12345, "tokenLimit": 1000000 } }
-  { "type": "error", "chatId": "...", "data": "something broke" }
+All events broadcast to all connected clients (multi-tab sync).
 """
 
 import asyncio
+from typing import Any
 
 import logfire
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from pydantic import ValidationError
 
 from alpha_app.chat import MODEL, Chat, ConversationState
-from alpha_app.db import load_chat, replay_events
+from alpha_app.db import load_chat, load_messages
+from alpha_app.protocol import (
+    BuzzCommand,
+    ChatCreatedEvent,
+    ChatListEvent,
+    ChatLoadedEvent,
+    ChatStateEvent,
+    CreateChatCommand,
+    ErrorEvent,
+    InterruptCommand,
+    JoinChatCommand,
+    ListChatsCommand,
+    SendAckEvent,
+    SendCommand,
+    parse_command,
+)
 from alpha_app.routes.broadcast import broadcast
 from alpha_app.routes.enrobe import enrobe
 from alpha_app.routes.handlers import handle_create_chat, handle_interrupt, handle_list_chats
@@ -49,6 +42,187 @@ from alpha_app.tools import create_alpha_server
 
 router = APIRouter()
 
+
+# =============================================================================
+# Shared state container (passed to every handler)
+# =============================================================================
+
+class WsContext:
+    """Per-connection context passed to command handlers."""
+
+    def __init__(self, ws: WebSocket, connections: set, chats: dict[str, Chat]):
+        self.ws = ws
+        self.connections = connections
+        self.chats = chats
+        self.streaming_tasks: dict[str, asyncio.Task] = {}
+
+    async def send_event(self, event_model) -> None:
+        """Send a typed event to THIS connection (unicast)."""
+        await self.ws.send_json(event_model.model_dump(exclude_none=True))
+
+    async def broadcast_event(self, event_dict: dict) -> None:
+        """Broadcast a raw event dict to ALL connections."""
+        await broadcast(self.connections, event_dict)
+
+    async def send_error(self, code: str, message: str, *, id: str | None = None, chatId: str | None = None) -> None:
+        """Send an error event."""
+        await self.send_event(ErrorEvent(
+            event="error", id=id, chatId=chatId, code=code, message=message,
+        ))
+
+    def wire_chat(self, chat: Chat) -> None:
+        """Set callbacks and registry on a Chat."""
+        async def on_reap(chat_id: str) -> None:
+            await self.broadcast_event(
+                ChatStateEvent(event="chat-state", chatId=chat_id, state="dead").model_dump(exclude_none=True)
+            )
+
+        async def on_broadcast(event: dict) -> None:
+            await self.broadcast_event(event)
+
+        chat.on_reap = on_reap
+        chat.on_broadcast = on_broadcast
+        chat._topic_registry = getattr(self.ws.app.state, "topic_registry", None)
+
+    async def find_or_load_chat(self, chat_id: str) -> Chat | None:
+        """Find a chat in memory or load from Postgres."""
+        chat = self.chats.get(chat_id)
+        if not chat:
+            chat = await load_chat(chat_id)
+            if chat:
+                self.wire_chat(chat)
+                self.chats[chat_id] = chat
+        else:
+            self.wire_chat(chat)
+        return chat
+
+
+# =============================================================================
+# Command handlers
+# =============================================================================
+
+async def cmd_list_chats(ctx: WsContext, cmd: ListChatsCommand) -> None:
+    """Handle list-chats: return all chats for the sidebar."""
+    from alpha_app.db import list_chats
+    chats = await list_chats()
+    await ctx.send_event(ChatListEvent(
+        event="chat-list", id=cmd.id, chats=chats,
+    ))
+
+
+async def cmd_join_chat(ctx: WsContext, cmd: JoinChatCommand) -> None:
+    """Handle join-chat: load full history + metadata."""
+    chat = await ctx.find_or_load_chat(cmd.chatId)
+
+    if not chat:
+        await ctx.send_error("not-found", f"Chat {cmd.chatId} not found", id=cmd.id, chatId=cmd.chatId)
+        return
+
+    # Load messages: prefer in-memory (includes in-progress deltas), fall back to Postgres.
+    in_memory = cmd.chatId in ctx.chats
+    if in_memory:
+        messages = chat.messages_to_wire()
+    else:
+        messages = await load_messages(cmd.chatId)
+
+    # Build metadata from wire_state
+    ws = chat.wire_state()
+
+    await ctx.send_event(ChatLoadedEvent(
+        event="chat-loaded",
+        id=cmd.id,
+        chatId=cmd.chatId,
+        title=ws.get("title", ""),
+        createdAt=ws.get("createdAt", 0),
+        updatedAt=ws.get("updatedAt", 0),
+        state=ws.get("state", "dead"),
+        tokenCount=ws.get("tokenCount", 0),
+        contextWindow=ws.get("contextWindow", 1_000_000),
+        messages=messages,
+    ))
+
+    # Eager warmup: if COLD with a session, start the subprocess now.
+    if (
+        chat.state == ConversationState.COLD
+        and chat.session_uuid is not None
+    ):
+        chat._system_prompt = await ctx.ws.app.state.get_system_prompt()
+        chat._topic_registry = getattr(ctx.ws.app.state, "topic_registry", None)
+        try:
+            await chat._ensure_claude()
+            await ctx.broadcast_event(
+                ChatStateEvent(event="chat-state", chatId=cmd.chatId, state=chat.state.wire_value).model_dump(exclude_none=True)
+            )
+        except Exception as exc:
+            logfire.warn("eager-warmup failed: {error}", error=str(exc))
+
+
+async def cmd_create_chat(ctx: WsContext, cmd: CreateChatCommand) -> None:
+    """Handle create-chat: create a new conversation."""
+    # Reuse existing handler (it does the nanoid generation, wiring, etc.)
+    await handle_create_chat(ctx.ws, ctx.connections, ctx.chats,
+                              ctx.wire_chat.__func__.__get__(ctx),  # pass bound method
+                              ctx.broadcast_event)
+    # TODO: refactor handle_create_chat to return the chat so we can send
+    # a proper ChatCreatedEvent with the id field for correlation.
+
+
+async def cmd_send(ctx: WsContext, cmd: SendCommand) -> None:
+    """Handle send: deliver a user message to Claude."""
+    chat = await ctx.find_or_load_chat(cmd.chatId)
+    if not chat:
+        await ctx.send_error("not-found", f"Chat {cmd.chatId} not found", id=cmd.id, chatId=cmd.chatId)
+        return
+
+    # Ack immediately
+    await ctx.send_event(SendAckEvent(event="send-ack", id=cmd.id, chatId=cmd.chatId))
+
+    # If a turn is active, this is a steering message (interjection).
+    if chat._active_turn:
+        await chat._active_turn.send(cmd.content)
+    else:
+        task = asyncio.create_task(
+            _run_human_turn(ctx, chat, cmd.content, source="human")
+        )
+        ctx.streaming_tasks[cmd.chatId] = task
+
+
+async def cmd_buzz(ctx: WsContext, cmd: BuzzCommand) -> None:
+    """Handle buzz: the duck button."""
+    chat = await ctx.find_or_load_chat(cmd.chatId)
+    if not chat:
+        await ctx.send_error("not-found", f"Chat {cmd.chatId} not found", id=cmd.id, chatId=cmd.chatId)
+        return
+
+    narration = [{"type": "text", "text": BUZZ_NARRATION}]
+    task = asyncio.create_task(
+        _run_human_turn(ctx, chat, narration, broadcast_user_message=False, source="buzzer")
+    )
+    ctx.streaming_tasks[cmd.chatId] = task
+
+
+async def cmd_interrupt(ctx: WsContext, cmd: InterruptCommand) -> None:
+    """Handle interrupt: stop Claude mid-response."""
+    await handle_interrupt(ctx.ws, ctx.connections, ctx.chats, cmd.chatId, ctx.streaming_tasks)
+
+
+# =============================================================================
+# Command dispatch registry
+# =============================================================================
+
+DISPATCH = {
+    "list-chats": cmd_list_chats,
+    "join-chat": cmd_join_chat,
+    "create-chat": cmd_create_chat,
+    "send": cmd_send,
+    "buzz": cmd_buzz,
+    "interrupt": cmd_interrupt,
+}
+
+
+# =============================================================================
+# Turn execution (extracted from the old _run_human_turn)
+# =============================================================================
 
 def _normalize_content(raw_content: str | list) -> list[dict]:
     """Normalize raw content to Messages API content blocks."""
@@ -61,8 +235,7 @@ def _normalize_content(raw_content: str | list) -> list[dict]:
 
 
 async def _run_human_turn(
-    ws: WebSocket,
-    connections: set,
+    ctx: WsContext,
     chat: Chat,
     content: list[dict],
     *,
@@ -77,12 +250,12 @@ async def _run_human_turn(
     No explicit resurrect. Fire-and-forget from the WebSocket handler.
     """
     chat_id = chat.id
+    connections = ctx.connections
     prompt_preview = build_prompt_preview(content)
 
-    chat._topic_registry = getattr(ws.app.state, "topic_registry", None)
+    chat._topic_registry = getattr(ctx.ws.app.state, "topic_registry", None)
 
-    # Open Logfire span (covers enrobe + send + Claude response).
-    # Closes in _handle_result on ResultEvent, or in the error paths below.
+    # Open Logfire span
     span = logfire.span(
         "alpha.turn: {prompt_preview}",
         **{
@@ -104,26 +277,22 @@ async def _run_human_turn(
     try:
         chat.set_trace_context(logfire.get_context())
 
-        # -- Enrobe (broadcasts progressively via callback) -------------------
         async def _enrobe_broadcast(event: dict) -> None:
             if broadcast_user_message:
                 await broadcast(connections, event)
 
-        topic_registry = getattr(ws.app.state, "topic_registry", None)
+        topic_registry = getattr(ctx.ws.app.state, "topic_registry", None)
         result = await enrobe(
             content, chat=chat, source=source, msg_id=msg_id,
             topics=topics, topic_registry=topic_registry,
             broadcast_fn=_enrobe_broadcast,
         )
 
-        # Update Logfire with enriched content
         enriched_messages = format_input_messages(result.content)
         span.set_attribute("gen_ai.input.messages", enriched_messages)
 
-        # -- Send via Turn (auto-starts Claude if cold) -----------------------
         async with await chat.turn() as t:
             await t.send(result.message)
-            # Don't await t.response() — human watches via broadcast.
 
         await broadcast(connections, {
             "type": "chat-state",
@@ -148,283 +317,82 @@ async def _run_human_turn(
         if chat._turn_lock.locked():
             chat._turn_lock.release()
         try:
-            await broadcast(connections, {"type": "error", "chatId": chat_id, "data": str(e)})
+            await ctx.send_error("turn-failed", str(e), chatId=chat_id)
         except Exception:
             pass
 
 
+# =============================================================================
+# WebSocket endpoint
+# =============================================================================
+
 @router.websocket("/ws")
 async def websocket_chat(ws: WebSocket) -> None:
-    """Bidirectional multi-chat switch.
+    """Command/event WebSocket endpoint.
 
-    Full duplex: the read loop stays hot while streaming tasks run in the
-    background. All events broadcast to all connected clients. Sends to a
-    BUSY chat become interjections. User messages echo to other connections.
-
-    Two tabs, same conversation, fully synced.
+    Receives commands, dispatches to handlers, broadcasts events.
     """
     await ws.accept()
 
-    # Register in the connection set (the switch fabric)
     connections: set = ws.app.state.connections
     connections.add(ws)
-
     chats: dict[str, Chat] = ws.app.state.chats
-
-    # Reap callback — when a chat's idle timer fires, broadcast DEAD to all.
-    async def on_chat_reap(chat_id: str) -> None:
-        await broadcast(connections, {
-            "type": "chat-state",
-            "chatId": chat_id,
-            "data": {"state": "dead"},
-        })
-
-    # Broadcast callback for Smart Chat — events from Claude flow here.
-    async def on_chat_broadcast(event: dict) -> None:
-        await broadcast(connections, event)
-
-    def _wire_chat(chat: Chat) -> None:
-        """Set callbacks and registry on a Chat."""
-        chat.on_reap = on_chat_reap
-        chat.on_broadcast = on_chat_broadcast
-        chat._topic_registry = getattr(ws.app.state, "topic_registry", None)
-
-    # Per-connection tracking for background streaming tasks (legacy path)
-    streaming_tasks: dict[str, asyncio.Task] = {}
-    turn_input_messages: dict[str, list] = {}
+    ctx = WsContext(ws, connections, chats)
 
     logfire.info("ws.connected", client=str(ws.client))
 
     try:
         while True:
             raw = await ws.receive_json()
-            msg_type = raw.get("type")
 
-            if msg_type == "create-chat":
-                await handle_create_chat(ws, connections, chats, on_chat_reap, on_chat_broadcast)
-
-            elif msg_type == "list-chats":
-                await handle_list_chats(ws, chats)
-
-            elif msg_type == "send":
-                chat_id = raw.get("chatId", "")
-                raw_content = raw.get("content", "")
-                message_id = raw.get("messageId")  # Frontend-generated ID for reconciliation
-                topics = raw.get("topics", [])      # Topic names to inject
-
-                if not chat_id:
-                    await ws.send_json({"type": "error", "data": "Missing chatId"})
-                    continue
-
-                content = _normalize_content(raw_content)
-
-                # Find or load the chat
-                chat = chats.get(chat_id)
-                if not chat:
-                    chat = await load_chat(chat_id)
-                    if chat:
-                        _wire_chat(chat)
-                        chats[chat_id] = chat
-                    else:
-                        await ws.send_json({"type": "error", "chatId": chat_id, "data": "Chat not found"})
-                        continue
-
-                # If a turn is active (we're mid-response), this is a steering
-                # message — push it into the existing turn. Otherwise start new.
-                if chat._active_turn:
-                    await chat._active_turn.send(content)
-                else:
-                    task = asyncio.create_task(
-                        _run_human_turn(ws, connections, chat, content,
-                                        msg_id=message_id, topics=topics)
-                    )
-                    streaming_tasks[chat_id] = task
-
-            elif msg_type == "buzz":
-                # The nonverbal hello. No user message — just a stage direction
-                # that Alpha sees and the human doesn't.
-                chat_id = raw.get("chatId", "")
-
-                if not chat_id:
-                    await ws.send_json({"type": "error", "data": "Missing chatId"})
-                    continue
-
-                chat = chats.get(chat_id)
-                if not chat:
-                    chat = await load_chat(chat_id)
-                    if chat:
-                        _wire_chat(chat)
-                        chats[chat_id] = chat
-                    else:
-                        await ws.send_json({"type": "error", "chatId": chat_id, "data": "Chat not found"})
-                        continue
-
-                # Narration message — stage direction, not a human message
-                narration = [{"type": "text", "text": BUZZ_NARRATION}]
-
-                task = asyncio.create_task(
-                    _run_human_turn(ws, connections, chat, narration,
-                                    broadcast_user_message=False, source="buzzer")
+            # Parse and validate the command
+            try:
+                cmd = parse_command(raw)
+            except ValidationError as e:
+                # Bad command shape — tell the client
+                cmd_id = raw.get("id") if isinstance(raw, dict) else None
+                await ctx.send_error(
+                    "invalid-command",
+                    str(e),
+                    id=cmd_id,
                 )
-                streaming_tasks[chat_id] = task
+                continue
 
-            elif msg_type == "interrupt":
-                chat_id = raw.get("chatId", "")
-                await handle_interrupt(ws, connections, chats, chat_id, streaming_tasks)
-
-            elif msg_type == "replay":
-                chat_id = raw.get("chatId")
-                if not chat_id:
-                    await ws.send_json({"type": "error", "data": "Missing chatId"})
-                    continue
-
-                events = await replay_events(chat_id)
-                for event in events:
-                    await ws.send_json(event)
-                await ws.send_json({"type": "replay-done", "chatId": chat_id})
-
-                # After replay: send fresh chat-state with topics so pills populate.
-                # This fires AFTER replay-done, so isReplaying is false by the time
-                # the frontend processes it.
-                chat = chats.get(chat_id)
-                if not chat:
-                    chat = await load_chat(chat_id)
-                    if chat:
-                        _wire_chat(chat)
-                        chats[chat_id] = chat
-                if chat:
-                    _wire_chat(chat)
-                    await ws.send_json({
-                        "type": "chat-state",
-                        "chatId": chat_id,
-                        "data": chat.wire_state(),
-                    })
-
-            elif msg_type == "join-chat":
-                # The "gimme the fucking chat" protocol.
-                # One payload: all messages + chat metadata including topics.
-                # Replaces replay for frontends that support it.
-                # ALSO: eager Claude warmup — if the chat is COLD and has a
-                # session to resume, start the subprocess now so it's warm
-                # by the time the user types.
-                chat_id = raw.get("chatId")
-                if not chat_id:
-                    await ws.send_json({"type": "error", "data": "Missing chatId"})
-                    continue
-
-                from alpha_app.db import load_messages
-
-                # Load or find the chat object
-                chat = chats.get(chat_id)
-                in_memory = chat is not None
-                if not chat:
-                    chat = await load_chat(chat_id)
-                    if chat:
-                        _wire_chat(chat)
-                        chats[chat_id] = chat
-                if chat:
-                    _wire_chat(chat)
-
-                logfire.debug(
-                    "join-chat: {chat_id} found={found} in_memory={in_memory} "
-                    "state={state} session={session}",
-                    chat_id=chat_id,
-                    found=chat is not None,
-                    in_memory=in_memory,
-                    state=chat.state.value if chat else "none",
-                    session=chat.session_uuid[:12] if chat and chat.session_uuid else "none",
+            # Dispatch to handler
+            handler = DISPATCH.get(cmd.command)
+            if not handler:
+                await ctx.send_error(
+                    "unknown-command",
+                    f"Unknown command: {cmd.command}",
+                    id=cmd.id,
                 )
+                continue
 
-                # Load messages: prefer in-memory (includes in-progress
-                # AssistantMessage with latest deltas), fall back to Postgres.
-                if in_memory and chat:
-                    messages = chat.messages_to_wire()
-                else:
-                    messages = await load_messages(chat_id)
-
-                # Build the payload
-                metadata = chat.wire_state() if chat else {
-                    "state": "dead",
-                    "topics": {},
-                }
-
-                logfire.debug(
-                    "join-chat: metadata tokenCount={tc} contextWindow={cw}",
-                    tc=metadata.get("tokenCount"),
-                    cw=metadata.get("contextWindow"),
+            try:
+                await handler(ctx, cmd)
+            except Exception as exc:
+                logfire.error(
+                    "command handler failed: {command} {error}",
+                    command=cmd.command,
+                    error=str(exc),
                 )
-
-                await ws.send_json({
-                    "type": "chat-data",
-                    "chatId": chat_id,
-                    "data": {
-                        "messages": messages,
-                        "metadata": metadata,
-                    },
-                })
-
-                # Eager warmup: if COLD with a session, resurrect now.
-                # The user is looking at this chat — warm the brain while
-                # they read and type. Reap timer handles the waste case.
-                warmup_eligible = (
-                    chat is not None
-                    and chat.state == ConversationState.COLD
-                    and chat.session_uuid is not None
+                await ctx.send_error(
+                    "handler-error",
+                    str(exc),
+                    id=cmd.id,
+                    chatId=getattr(cmd, "chatId", None),
                 )
-                logfire.debug(
-                    "join-chat: warmup_eligible={eligible} "
-                    "(chat={has_chat}, state={state}, session={has_session})",
-                    eligible=warmup_eligible,
-                    has_chat=chat is not None,
-                    state=chat.state.value if chat else "none",
-                    has_session=bool(chat.session_uuid) if chat else False,
-                )
-                if warmup_eligible:
-                    logfire.info(
-                        "eager-warmup: starting {chat_id} (session {session})",
-                        chat_id=chat_id,
-                        session=chat.session_uuid[:12],
-                    )
-
-                    # Set up for _ensure_claude auto-start
-                    chat._topic_registry = getattr(ws.app.state, "topic_registry", None)
-
-                    try:
-                        await chat._ensure_claude()
-                        logfire.info(
-                            "eager-warmup: {chat_id} is now {state}",
-                            chat_id=chat_id,
-                            state=chat.state.value,
-                        )
-                        await broadcast(connections, {
-                            "type": "chat-state",
-                            "chatId": chat_id,
-                            "data": chat.wire_state(),
-                        })
-                    except Exception as exc:
-                        logfire.warn(
-                            "eager-warmup: failed for {chat_id}: {error}",
-                            chat_id=chat_id,
-                            error=str(exc),
-                        )
-                        # Warmup is best-effort — don't crash join-chat
-
-            else:
-                pass
 
     except WebSocketDisconnect:
         logfire.debug("ws.disconnected", client=str(ws.client))
     except Exception as exc:
         logfire.warn("ws.error: {error}", error=str(exc))
     finally:
-        # Deregister from the connection set
         connections.discard(ws)
-
-        # Cancel all streaming tasks on disconnect
-        for task in streaming_tasks.values():
+        for task in ctx.streaming_tasks.values():
             if not task.done():
                 task.cancel()
-        for task in list(streaming_tasks.values()):
+        for task in list(ctx.streaming_tasks.values()):
             try:
                 await task
             except (asyncio.CancelledError, Exception):
