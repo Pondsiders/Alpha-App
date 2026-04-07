@@ -153,11 +153,11 @@ async def _seed(conn: asyncpg.Connection) -> None:
         "topics": None,
     }
 
+    # One text part, paragraphs joined with double newlines — same as
+    # real Claude output (one continuous markdown string).
     assistant_message = {
         "id": ASSISTANT_MSG_ID,
-        "parts": [
-            {"type": "text", "text": p} for p in _story_paragraphs()
-        ],
+        "parts": [{"type": "text", "text": "\n\n".join(_story_paragraphs())}],
         "input_tokens": 0,
         "output_tokens": 0,
         "cache_creation_tokens": 0,

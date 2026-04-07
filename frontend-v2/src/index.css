@@ -18,9 +18,38 @@
   --font-sans: 'Inter Variable', sans-serif;
 }
 
-/* assistant-ui wraps each paragraph in its own div.aui-md, so first:/last:
-   pseudo-variants zero out the margins on every <p>. Add spacing between
-   the wrapper divs instead. */
-.aui-assistant-message-content .aui-md + .aui-md {
-  margin-top: 1em;
+/* Task list checkboxes — remark-gfm renders these as <input type="checkbox">.
+   Style them to use our primary color (amber) and remove the bullet. */
+.prose li:has(> input[type="checkbox"]) {
+  list-style: none;
+  margin-left: -1.25em;
 }
+.prose input[type="checkbox"] {
+  appearance: none;
+  width: 1.1em;
+  height: 1.1em;
+  border: 2px solid var(--color-muted-foreground);
+  border-radius: 4px;
+  margin-right: 0.5em;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+.prose input[type="checkbox"]:checked {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+  /* SVG checkmark via CSS mask — clean, scalable, no unicode weirdness */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E");
+  background-size: 80%;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+/* Book-style paragraph indentation (DISABLED — toggle by uncommenting):
+   First paragraph flush left, subsequent paragraphs indented, no spacing.
+   To enable: uncomment the block below, change prose-p:my-2 → prose-p:my-0
+   in markdown-text.tsx. */
+/* .prose p + p {
+  text-indent: 1.5em;
+  margin-top: 0;
+  margin-bottom: 0;
+} */

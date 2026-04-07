@@ -63,6 +63,7 @@ const CodeBlock: FC<{
           language={language || "text"}
           theme="vitesse-dark"
           delay={150}
+          showLanguage={false}
         >
           {code}
         </ShikiHighlighter>
@@ -81,7 +82,7 @@ const MarkdownTextImpl: FC = () => {
   );
 
   return (
-    <div className="prose prose-base prose-invert max-w-none text-foreground prose-p:my-2 prose-headings:mt-4 prose-headings:mb-2 prose-headings:text-foreground prose-strong:text-foreground prose-a:text-primary prose-blockquote:text-muted-foreground prose-code:text-foreground prose-pre:my-0 prose-pre:bg-transparent prose-pre:p-0" style={{ "--tw-prose-body": "var(--color-foreground)" } as React.CSSProperties}>
+    <div className="prose prose-base prose-invert text-foreground font-light prose-p:my-2 prose-headings:mt-4 prose-headings:mb-2 prose-headings:text-foreground prose-h1:font-[500] prose-h2:font-[600] prose-strong:text-foreground prose-a:text-primary prose-blockquote:text-muted-foreground prose-code:text-foreground prose-code:font-light prose-pre:my-0 prose-pre:bg-transparent prose-pre:p-0 prose-li:marker:text-primary prose-hr:border-primary/30 prose-blockquote:border-primary/40 prose-th:border-primary/30 prose-td:border-primary/20" style={{ "--tw-prose-body": "var(--color-foreground)", "--tw-prose-bullets": "var(--color-primary)", "--tw-prose-counters": "var(--color-primary)", "--tw-prose-th-borders": "color-mix(in oklch, var(--color-primary) 40%, transparent)", "--tw-prose-td-borders": "color-mix(in oklch, var(--color-primary) 25%, transparent)" } as React.CSSProperties}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeInlineCodeProperty]}
@@ -124,7 +125,7 @@ const UserMarkdownTextImpl: FC = () => {
 
   return (
     <div
-      className="prose prose-sm prose-invert max-w-none text-foreground prose-p:my-1.5 prose-headings:mt-3 prose-headings:mb-1.5 prose-headings:text-foreground prose-strong:text-foreground prose-a:text-primary prose-code:text-foreground prose-pre:my-1 prose-pre:bg-black/20 prose-pre:text-xs"
+      className="prose prose-sm prose-invert text-foreground prose-p:my-1.5 prose-headings:mt-3 prose-headings:mb-1.5 prose-headings:text-foreground prose-strong:text-foreground prose-a:text-primary prose-code:text-foreground prose-pre:my-1 prose-pre:bg-black/20 prose-pre:text-xs"
       style={{ "--tw-prose-body": "var(--color-foreground)" } as React.CSSProperties}
     >
       <ReactMarkdown remarkPlugins={[remarkGfm]}>
