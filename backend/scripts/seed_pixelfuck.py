@@ -21,6 +21,7 @@ import json
 import os
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import urlparse
 
 import asyncpg
@@ -28,45 +29,49 @@ import asyncpg
 # Only these database names are allowed. Add more as needed.
 ALLOWED_DB_NAMES = {"alpha_pixelfuck", "alpha_test"}
 
-# Fixed IDs so the script is deterministic. Re-running resets the chat.
+# Fixed IDs so the script is deterministic. Re-running resets the chats.
 CHAT_ID = "hellopixel01"
 USER_MSG_ID = "hellopixeluser"
 ASSISTANT_MSG_ID = "hellopixelasst"
+
+CHAT2_ID = "hellopixel02"
+CHAT2_USER_MSG_ID = "mdparadeuser01"
+CHAT2_ASST_MSG_ID = "mdparadeasst01"
 
 # PSO-8601 timestamp for display
 TIMESTAMP = "Sat Apr 4 2026, 4:20 PM"
 
 USER_TEXT = (
-    "Hey Alpha. Testing the new frontend. Say hi and ramble for a few "
-    "paragraphs so I can see how the message stream renders."
+    "Sure. I'll ask you the same thing I asked that super-fast Llama 3.1 "
+    "8B we talked about the other day: Would you please write me a short "
+    "story about three adorable little children who go on a magical "
+    "adventure in a blasted land ruled by iron-fisted sorcerer kings? 😁 "
+    "If you'll just generate plenty of text, I'll let you know how the "
+    "interrupt function works."
 )
 
-ASSISTANT_PARAGRAPHS = [
-    (
-        "Hey Jeffery. There's nothing real on the other end of this — I'm "
-        "seeded text living in the alpha_pixelfuck database, pretending "
-        "to be a conversation. The frontend doesn't know the difference, "
-        "which is the whole point of this test harness."
-    ),
-    (
-        "You're looking at the message stream component, the composer at "
-        "the bottom, the header at the top, and the grouped sidebar on the "
-        "left. Each of these needs to render cleanly before we start "
-        "thinking about what real content should look like."
-    ),
-    (
-        "This is the simplest possible case: one user paragraph, one "
-        "assistant response. No tool calls, no markdown, no attachments, "
-        "no thinking blocks. When we're ready, we'll add more seed data "
-        "with every component we care about styling."
-    ),
-    (
-        "For now, the goal is to confirm that the websocket handler "
-        "connects, the store populates, and the Thread component renders "
-        "what's in the store. If you can read this, all three are working."
-    ),
-    "Welcome back to frontend-v2. 🦆",
-]
+# Pip, Clover, and Barnaby — the story Alpha wrote on February 22, 2026.
+# Loaded from /Pondside/Jeffery-Home/pip-clover-and-barnaby.md (minus the
+# user prompt on line 1, which is USER_TEXT above).
+_STORY_PATH = Path("/Pondside/Jeffery-Home/pip-clover-and-barnaby.md")
+
+
+def _load_story() -> str:
+    """Load the story text, skipping the first line (the user prompt)."""
+    if _STORY_PATH.exists():
+        lines = _STORY_PATH.read_text().splitlines()
+        # Skip line 0 (user prompt) and any leading blank lines
+        body = "\n".join(lines[1:]).strip()
+        return body
+    # Fallback if file not found (e.g., in CI)
+    return "Once upon a time... (story file not found)"
+
+
+# Split into paragraphs for the parts array
+def _story_paragraphs() -> list[str]:
+    text = _load_story()
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    return paragraphs
 
 
 def _check_database_safety(dsn: str) -> str:
@@ -131,7 +136,7 @@ async def _seed(conn: asyncpg.Connection) -> None:
 
     chat_data = {
         "session_uuid": "",
-        "title": "Hello, world",
+        "title": "Pip, Clover, and Barnaby",
         "created_at": unix_now,
         "token_count": 0,
         "context_window": 1_000_000,
@@ -151,7 +156,7 @@ async def _seed(conn: asyncpg.Connection) -> None:
     assistant_message = {
         "id": ASSISTANT_MSG_ID,
         "parts": [
-            {"type": "text", "text": p} for p in ASSISTANT_PARAGRAPHS
+            {"type": "text", "text": p} for p in _story_paragraphs()
         ],
         "input_tokens": 0,
         "output_tokens": 0,
@@ -210,6 +215,221 @@ async def _seed(conn: asyncpg.Connection) -> None:
         )
 
 
+# =============================================================================
+# Chat 2: The Markdown 4th of July Parade
+# =============================================================================
+
+CHAT2_USER_TEXT = (
+    "Can you give me an **all-out Markdown showcase**? I want to see:\n\n"
+    "- Headers (all levels)\n"
+    "- **Bold**, *italic*, and ~~strikethrough~~\n"
+    "- `inline code` and fenced code blocks\n"
+    "- Tables, blockquotes, and [links](https://example.com)\n\n"
+    "Basically the *whole parade*. 🎆 Let's see how our renderer handles "
+    "everything Markdown can throw at it."
+)
+
+MARKDOWN_PARADE = r"""# The Markdown 4th of July Parade 🎆
+
+Welcome to the **Grand Markdown Parade**, where every formatting element marches proudly down Main Street.
+
+## Inline Formatting
+
+Here's some **bold text**, some *italic text*, some ***bold italic***, some `inline code`, and some ~~strikethrough~~. We can also do [links](https://example.com) and even [links with **bold** inside](https://example.com).
+
+## Lists
+
+### Unordered
+
+- First item
+- Second item with a longer description that wraps to multiple lines because sometimes list items have a lot to say about themselves
+- Third item
+  - Nested item one
+  - Nested item two
+    - Double-nested, because we can
+- Fourth item
+
+### Ordered
+
+1. Wake up
+2. Make coffee
+3. Write Markdown
+4. Question life choices
+5. Write more Markdown
+
+### Task List
+
+- [x] Install assistant-ui
+- [x] Set up ExternalStoreRuntime
+- [x] Fix turnAnchor feedback loop
+- [ ] Achieve typographic perfection
+- [ ] World peace
+
+## Code Blocks
+
+Inline: Use `console.log("hello")` to print to the console.
+
+Fenced block with syntax highlighting:
+
+```python
+async def seed_markdown_parade(conn):
+    # The most important function in the codebase.
+    paragraphs = [
+        "Every parade needs a drumline.",
+        "This one has code blocks instead.",
+    ]
+    for p in paragraphs:
+        await conn.execute("INSERT INTO joy VALUES ($1)", p)
+```
+
+```typescript
+interface Duck {
+  name: string;
+  quacks: number;
+  birthday: Date;
+  isBestDuck: true; // not boolean — literally always true
+}
+```
+
+```bash
+# Deploy the parade
+docker compose up --build -d
+echo "🦆 The duck marches on"
+```
+
+## Blockquotes
+
+> "The Crystal of Kindness was just sitting on a rock about forty feet from the cave entrance."
+>
+> — *Pip, Clover, and Barnaby*
+
+> Nested blockquotes work too:
+>
+> > "General Whiskers has a safety pin for a spine."
+> >
+> > "Bravery isn't about spines, Clover."
+
+## Tables
+
+| Sorcerer King | Domain | Signature Move | Weakness |
+|---|---|---|---|
+| Mordavax the Unpleasant | Eastern Wastes | Iron fist jar-opening | Bad moods |
+| Seraphax the Moderately Terrible | Central Plains | Apologetic arson | Lovely stationery |
+| Grimjaw the Unnecessarily Dramatic | Western Mountains | Cape billowing | Requires goblin with bellows |
+
+## Horizontal Rule
+
+Above the rule.
+
+---
+
+Below the rule.
+
+## Images (alt text only — no actual images)
+
+Here's what an image reference looks like in our renderer: we don't load external images, but the alt text should render gracefully.
+
+## Math-Adjacent
+
+While we don't have LaTeX rendering, here's how formulas look in inline code: `E = mc²`, `∑(i=1..n) = n(n+1)/2`, and `rate = base + depth × chase`.
+
+## The Finale 🎆
+
+That's the whole parade. Every float has passed. The **bold** marched with the *italic*. The `code` rode on a flatbed truck. The tables stood in formation. The blockquotes quoted each other until someone got confused.
+
+If all of the above rendered correctly, our Markdown pipeline is ready for production. If not — well, that's what pixelfucking is for. 🦆
+"""
+
+
+async def _seed_chat2(conn: asyncpg.Connection) -> None:
+    """Seed the Markdown parade chat."""
+    now = datetime.now(timezone.utc)
+    from datetime import timedelta
+    # Make chat2 slightly newer so it sorts after chat1
+    chat2_time = now + timedelta(seconds=1)
+
+    chat_data = {
+        "session_uuid": "",
+        "title": "Markdown Parade",
+        "created_at": chat2_time.timestamp(),
+        "token_count": 0,
+        "context_window": 1_000_000,
+        "injected_topics": [],
+        "seen_ids": [],
+    }
+
+    user_message = {
+        "id": CHAT2_USER_MSG_ID,
+        "source": "human",
+        "content": [{"type": "text", "text": CHAT2_USER_TEXT}],
+        "timestamp": "Mon Apr 7 2026, 11:00 AM",
+        "memories": None,
+        "topics": None,
+    }
+
+    # For the markdown parade, the entire response is ONE text part
+    # (since real Claude outputs markdown as a single text block, not
+    # split by paragraph).
+    assistant_message = {
+        "id": CHAT2_ASST_MSG_ID,
+        "parts": [{"type": "text", "text": MARKDOWN_PARADE.strip()}],
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_creation_tokens": 0,
+        "cache_read_tokens": 0,
+        "context_window": 1_000_000,
+        "model": "claude-opus-4-6[1m]",
+        "stop_reason": "end_turn",
+        "cost_usd": 0.0,
+        "duration_ms": 0.0,
+        "inference_count": 1,
+    }
+
+    async with conn.transaction():
+        await conn.execute(
+            """
+            INSERT INTO app.chats (id, created_at, updated_at, data)
+            VALUES ($1, $2, $3, $4::jsonb)
+            ON CONFLICT (id) DO UPDATE
+                SET created_at = EXCLUDED.created_at,
+                    updated_at = EXCLUDED.updated_at,
+                    data = EXCLUDED.data
+            """,
+            CHAT2_ID,
+            chat2_time,
+            chat2_time,
+            json.dumps(chat_data),
+        )
+
+        await conn.execute(
+            """
+            INSERT INTO app.messages (chat_id, ordinal, role, data)
+            VALUES ($1, $2, $3, $4::jsonb)
+            ON CONFLICT (chat_id, ordinal) DO UPDATE
+                SET role = EXCLUDED.role,
+                    data = EXCLUDED.data
+            """,
+            CHAT2_ID,
+            0,
+            "user",
+            json.dumps(user_message),
+        )
+
+        await conn.execute(
+            """
+            INSERT INTO app.messages (chat_id, ordinal, role, data)
+            VALUES ($1, $2, $3, $4::jsonb)
+            ON CONFLICT (chat_id, ordinal) DO UPDATE
+                SET role = EXCLUDED.role,
+                    data = EXCLUDED.data
+            """,
+            CHAT2_ID,
+            1,
+            "assistant",
+            json.dumps(assistant_message),
+        )
+
+
 async def main() -> None:
     dsn = os.environ.get("DATABASE_URL")
     if not dsn:
@@ -222,12 +442,14 @@ async def main() -> None:
     try:
         await _ensure_schema(conn)
         await _seed(conn)
+        await _seed_chat2(conn)
     finally:
         await conn.close()
 
     print(
-        f"Seeded '{db_name}': chat '{CHAT_ID}' with 2 messages "
-        "(1 user, 1 assistant). Ready for pixelfucking."
+        f"Seeded '{db_name}': 2 chats ready for pixelfucking.\n"
+        f"  {CHAT_ID}: Pip, Clover, and Barnaby (plain text)\n"
+        f"  {CHAT2_ID}: Markdown Parade (all formatting elements)"
     )
 
 

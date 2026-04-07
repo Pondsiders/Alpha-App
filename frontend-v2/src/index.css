@@ -1,6 +1,9 @@
 /* Alpha theme — swap this import to change the entire look */
 @import "./themes/alpha.css";
 
+/* Typography — prose class for markdown content */
+@plugin "@tailwindcss/typography";
+
 /* Animation and component libraries */
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
@@ -13,4 +16,11 @@
 }
 .dark {
   --font-sans: 'Inter Variable', sans-serif;
+}
+
+/* assistant-ui wraps each paragraph in its own div.aui-md, so first:/last:
+   pseudo-variants zero out the margins on every <p>. Add spacing between
+   the wrapper divs instead. */
+.aui-assistant-message-content .aui-md + .aui-md {
+  margin-top: 1em;
 }
