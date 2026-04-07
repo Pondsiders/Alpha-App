@@ -45,6 +45,7 @@ export type AssistantPart =
       toolName: string;
       args: unknown;
       argsText?: string;
+      result?: unknown;
     };
 
 /** Assistant message as persisted by backend (AssistantMessage.to_db() shape). */
@@ -317,6 +318,7 @@ export function convertMessage(msg: Message): ThreadMessageLike {
             toolCallId: part.toolCallId,
             toolName: part.toolName,
             args: part.args,
+            result: part.result,
           } as never;
         }
         return part as never;

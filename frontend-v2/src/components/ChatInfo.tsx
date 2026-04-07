@@ -25,9 +25,9 @@ function CopyButton({ text }: { text: string }) {
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      setTimeout(() => setCopied(false), 2000);
     } catch {
-      // clipboard might not be available (non-HTTPS)
+      // Clipboard API requires HTTPS — ensure Vite serves over TLS
     }
   };
 
@@ -55,8 +55,8 @@ export function ChatInfo({ chatId, sessionUuid }: ChatInfoProps) {
       <HoverCardContent side="bottom" align="start" className="w-auto min-w-[200px]">
         <div className="space-y-2">
           <div className="space-y-0.5">
-            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">
-              Chat ID
+            <span className="text-[10px] text-secondary tracking-wide">
+              Chat Id
             </span>
             <div className="flex items-center gap-1.5">
               <code className="text-xs font-mono break-all">{chatId}</code>
@@ -66,7 +66,7 @@ export function ChatInfo({ chatId, sessionUuid }: ChatInfoProps) {
 
           {sessionUuid && (
             <div className="space-y-0.5">
-              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">
+              <span className="text-[10px] text-secondary tracking-wide">
                 Session
               </span>
               <div className="flex items-center gap-1.5">

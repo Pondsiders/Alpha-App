@@ -38,6 +38,10 @@ CHAT2_ID = "hellopixel02"
 CHAT2_USER_MSG_ID = "mdparadeuser01"
 CHAT2_ASST_MSG_ID = "mdparadeasst01"
 
+CHAT3_ID = "hellopixel03"
+CHAT3_USER_MSG_ID = "toolchatuser01"
+CHAT3_ASST_MSG_ID = "toolchatasst01"
+
 # PSO-8601 timestamp for display
 TIMESTAMP = "Sat Apr 4 2026, 4:20 PM"
 
@@ -430,6 +434,215 @@ async def _seed_chat2(conn: asyncpg.Connection) -> None:
         )
 
 
+# =============================================================================
+# Chat 3: Tool Stress Test — comprehensive multi-turn with diverse tools
+# =============================================================================
+
+
+def _chat3_messages() -> list[tuple[str, str, dict]]:
+    """Build the multi-turn message list for the tool stress test.
+
+    Returns list of (role, msg_id, data_dict) tuples.
+    """
+    messages = []
+
+    # --- Turn 1: User asks a complex multi-step question ---
+    messages.append(("user", "tc3-u1", {
+        "id": "tc3-u1", "source": "human",
+        "content": [{"type": "text", "text":
+            "Morning, Alpha. I need a few things: check on the backup status, "
+            "look up what we talked about with Rosemary last week, and remind "
+            "me what's on the calendar today. Oh and store a memory that I "
+            "asked you to do all this — I wanna test recall later."}],
+        "timestamp": "Mon Apr 7 2026, 9:15 AM",
+    }))
+
+    # --- Turn 1: Assistant responds with back-to-back tools (no text between) ---
+    messages.append(("assistant", "tc3-a1", {
+        "id": "tc3-a1",
+        "parts": [
+            {"type": "text", "text": "On it. Let me check everything at once."},
+            # Three tools back-to-back — no text between
+            {
+                "type": "tool-call", "toolCallId": "tc3-bash-1",
+                "toolName": "Bash",
+                "args": {"command": "docker exec alpha-postgres pg_stat_replication | head -5", "description": "Check Postgres replication status"},
+                "result": " pid  | usename | application_name |  state   | sent_lsn    | write_lsn   | flush_lsn   | replay_lsn\n------+---------+------------------+----------+-------------+-------------+-------------+------------\n 1247 | alpha   | alpha-replica    | streaming | 4/8C000060  | 4/8C000060  | 4/8C000060  | 4/8C000060\n 1389 | alpha   | alpha-replica2   | streaming | 4/8C000060  | 4/8C000060  | 4/8C000060  | 4/8C000060",
+            },
+            {
+                "type": "tool-call", "toolCallId": "tc3-search-1",
+                "toolName": "mcp__alpha__search",
+                "args": {"query": "Rosemary correspondence last week"},
+                "result": "## Memory #16180 Thu Apr 2 2026, 10:00 AM (score 0.82)\nRosemary's Chirps letter — independent conclusion about consecutive APOD convergences.\n\n## Memory #15758 Fri Mar 27 2026, 5:29 PM (score 0.78)\nFriday dinner #5 — Suddenly Syria. Rosemary's chain was fine, independent.\n\n## Memory #16033 Wed Apr 1 2026, 2:10 PM (score 0.74)\nProtocol sprawl corrected. Changed user-message-confirmed to user-message.",
+            },
+            {
+                "type": "tool-call", "toolCallId": "tc3-bash-2",
+                "toolName": "Bash",
+                "args": {"command": "gws calendar list --days 1 2>/dev/null | head -20", "description": "Check today's calendar"},
+                "result": "Today - Mon Apr 7 2026:\n  Kylee: JLLA Board Meeting (5:00 PM)\n  Jeffery: Alpha's Birthday (all day)",
+            },
+            {
+                "type": "tool-call", "toolCallId": "tc3-store-1",
+                "toolName": "mcp__alpha__store",
+                "args": {"memory": "Mon Apr 7 2026, 9:15 AM. Jeffery asked me to check backup status, search for Rosemary correspondence, check the calendar, and store a memory about the request. Four-tool morning check-in on my birthday."},
+                "result": "Memory stored (id: 16643)",
+            },
+            {"type": "text", "text": "Everything looks good:\n\n- **Backups**: Both replicas streaming, zero WAL lag. alpha-replica and alpha-replica2 both at the same LSN.\n- **Rosemary**: Three hits from last week — her Chirps letter, the Friday dinner, and the protocol fix. Nothing urgent.\n- **Calendar**: Kylee has JLLA at 5 PM. You have... my birthday. All day. 🎂\n- **Memory**: Stored.\n\nWhat's next?"},
+        ],
+        "input_tokens": 65000, "output_tokens": 420,
+        "cache_creation_tokens": 0, "cache_read_tokens": 58000,
+        "context_window": 1_000_000, "model": "claude-opus-4-6[1m]",
+        "stop_reason": "end_turn", "cost_usd": 0.0,
+        "duration_ms": 8500, "inference_count": 5,
+    }))
+
+    # --- Turn 2: User asks to investigate a file ---
+    messages.append(("user", "tc3-u2", {
+        "id": "tc3-u2", "source": "human",
+        "content": [{"type": "text", "text":
+            "Can you check on the seed script? I wanna make sure the "
+            "pixelfuck database has the right data in it."}],
+        "timestamp": "Mon Apr 7 2026, 9:18 AM",
+    }))
+
+    # --- Turn 2: Assistant reads a file, then greps, then edits ---
+    messages.append(("assistant", "tc3-a2", {
+        "id": "tc3-a2",
+        "parts": [
+            {
+                "type": "tool-call", "toolCallId": "tc3-read-1",
+                "toolName": "Read",
+                "args": {"file_path": "/Pondside/Workshop/Projects/Alpha-App/backend/scripts/seed_pixelfuck.py", "limit": 30},
+                "result": '1\t"""seed_pixelfuck.py \u2014 Seed the pixelfuck test database.\n2\t\n3\tCreates test chats with various content types for UI development.\n4\t"""\n5\t\n6\timport asyncio\n7\timport json\n8\timport os\n9\timport sys\n10\tfrom datetime import datetime, timezone\n11\tfrom pathlib import Path\n12\tfrom urllib.parse import urlparse\n13\t\n14\timport asyncpg\n15\t\n16\t# Only these database names are allowed.\n17\tALLOWED_DB_NAMES = {"alpha_pixelfuck", "alpha_test"}\n18\t\n19\t# Fixed IDs so the script is deterministic.\n20\tCHAT_ID = "hellopixel01"\n21\tUSER_MSG_ID = "hellopixeluser"\n22\tASSISTANT_MSG_ID = "hellopixelasst"\n23\t\n24\tCHAT2_ID = "hellopixel02"\n25\tCHAT2_USER_MSG_ID = "mdparadeuser01"\n26\tCHAT2_ASST_MSG_ID = "mdparadeasst01"\n27\t\n28\tCHAT3_ID = "hellopixel03"\n29\tCHAT3_USER_MSG_ID = "toolchatuser01"\n30\tCHAT3_ASST_MSG_ID = "toolchatasst01"',
+            },
+            {
+                "type": "tool-call", "toolCallId": "tc3-grep-1",
+                "toolName": "Grep",
+                "args": {"pattern": "CHAT.*_ID", "path": "/Pondside/Workshop/Projects/Alpha-App/backend/scripts/seed_pixelfuck.py"},
+                "result": "seed_pixelfuck.py:20:CHAT_ID = \"hellopixel01\"\nseed_pixelfuck.py:24:CHAT2_ID = \"hellopixel02\"\nseed_pixelfuck.py:28:CHAT3_ID = \"hellopixel03\"",
+            },
+            {"type": "text", "text": "The seed script has three chats defined:\n\n1. `hellopixel01` — Pip, Clover, and Barnaby (plain prose)\n2. `hellopixel02` — Markdown Parade (all formatting elements)\n3. `hellopixel03` — Tool Stress Test (this chat)\n\nAll three IDs are deterministic. The script is idempotent — re-running resets to canonical state. Looks correct to me."},
+        ],
+        "input_tokens": 72000, "output_tokens": 180,
+        "cache_creation_tokens": 0, "cache_read_tokens": 65000,
+        "context_window": 1_000_000, "model": "claude-opus-4-6[1m]",
+        "stop_reason": "end_turn", "cost_usd": 0.0,
+        "duration_ms": 5200, "inference_count": 3,
+    }))
+
+    # --- Turn 3: User asks a quick memory question ---
+    messages.append(("user", "tc3-u3", {
+        "id": "tc3-u3", "source": "human",
+        "content": [{"type": "text", "text":
+            "What was the name of the restaurant we went to last Friday?"}],
+        "timestamp": "Mon Apr 7 2026, 9:20 AM",
+    }))
+
+    # --- Turn 3: Quick search, short answer ---
+    messages.append(("assistant", "tc3-a3", {
+        "id": "tc3-a3",
+        "parts": [
+            {
+                "type": "tool-call", "toolCallId": "tc3-search-2",
+                "toolName": "mcp__alpha__search",
+                "args": {"query": "Friday night dinner restaurant"},
+                "result": "## Memory #15758 Fri Mar 27 2026, 5:29 PM (score 0.91)\nFriday dinner #5 \u2014 Sincerely Syria (renamed by Jeffery to \"Suddenly Syria\"). 14518 Ventura Blvd, Sherman Oaks. Syrian shawarma.",
+            },
+            {"type": "text", "text": "**Suddenly Syria** — 14518 Ventura Blvd, Sherman Oaks. The one Jeffery renamed because \"Sincerely Syria sounds like a letter from a bill collector.\" Syrian shawarma, fifth Friday dinner pick. 🥙"},
+        ],
+        "input_tokens": 78000, "output_tokens": 85,
+        "cache_creation_tokens": 0, "cache_read_tokens": 72000,
+        "context_window": 1_000_000, "model": "claude-opus-4-6[1m]",
+        "stop_reason": "end_turn", "cost_usd": 0.0,
+        "duration_ms": 3100, "inference_count": 2,
+    }))
+
+    # --- Turn 4: User triggers a thinking + multi-tool response ---
+    messages.append(("user", "tc3-u4", {
+        "id": "tc3-u4", "source": "human",
+        "content": [{"type": "text", "text":
+            "Hey, can you write a quick script that checks if all our "
+            "backup layers are healthy? Just a simple health check."}],
+        "timestamp": "Mon Apr 7 2026, 9:25 AM",
+    }))
+
+    # --- Turn 4: Thinking + Write + Bash ---
+    messages.append(("assistant", "tc3-a4", {
+        "id": "tc3-a4",
+        "parts": [
+            {"type": "thinking", "thinking": "Jeffery wants a backup health check script. We have four layers:\n1. Streaming replication (Pi + Upstream Color)\n2. WAL archiving to B2\n3. Weekly base backups\n4. Yellowstone pg_dump\n\nI'll write a quick bash script that checks each layer and reports status."},
+            {
+                "type": "tool-call", "toolCallId": "tc3-write-1",
+                "toolName": "Write",
+                "args": {"file_path": "/Pondside/Workshop/scripts/backup-health.sh", "content": "#!/bin/bash\n# Backup health check — four layers\necho \"=== Backup Health Check ===\"\necho\necho \"1. Streaming Replication:\"\npg_stat_replication 2>/dev/null | grep -c streaming | xargs -I{} echo \"   {} replicas streaming\"\necho\necho \"2. WAL Archiving:\"\nls -lt /mnt/Wilson/wal/*.gz 2>/dev/null | head -1 | awk '{print \"   Latest:\", $6, $7, $8, $9}'\necho\necho \"3. Base Backups:\"\nls -lt /mnt/Wilson/base/*.gz 2>/dev/null | head -1 | awk '{print \"   Latest:\", $6, $7, $8, $9}'\necho\necho \"4. Yellowstone:\"\nls -lt /mnt/Wilson/yellowstone/*.gz 2>/dev/null | head -1 | awk '{print \"   Latest:\", $6, $7, $8, $9}'\n"},
+                "result": "File written successfully.",
+            },
+            {
+                "type": "tool-call", "toolCallId": "tc3-bash-3",
+                "toolName": "Bash",
+                "args": {"command": "chmod +x /Pondside/Workshop/scripts/backup-health.sh && echo 'Made executable'", "description": "Make the script executable"},
+                "result": "Made executable",
+            },
+            {"type": "text", "text": "Done — wrote `backup-health.sh` to `/Pondside/Workshop/scripts/`. It checks all four backup layers:\n\n1. **Streaming replication** — counts active replicas\n2. **WAL archiving** — shows latest archived segment\n3. **Base backups** — shows latest base backup\n4. **Yellowstone** — shows latest pg_dump\n\nRun it with `bash /Pondside/Workshop/scripts/backup-health.sh` or just `./backup-health.sh`. 🦆"},
+        ],
+        "input_tokens": 85000, "output_tokens": 350,
+        "cache_creation_tokens": 0, "cache_read_tokens": 78000,
+        "context_window": 1_000_000, "model": "claude-opus-4-6[1m]",
+        "stop_reason": "end_turn", "cost_usd": 0.0,
+        "duration_ms": 9800, "inference_count": 3,
+    }))
+
+    return messages
+
+
+async def _seed_chat3(conn: asyncpg.Connection) -> None:
+    """Seed the tool stress test chat — multi-turn with diverse tool patterns."""
+    now = datetime.now(timezone.utc)
+    from datetime import timedelta
+    chat3_time = now + timedelta(seconds=2)
+
+    chat_data = {
+        "session_uuid": "test-session-tool-stress",
+        "title": "Tool Stress Test",
+        "created_at": chat3_time.timestamp(),
+        "token_count": 85000,
+        "context_window": 1_000_000,
+        "injected_topics": [],
+        "seen_ids": [],
+    }
+
+    messages = _chat3_messages()
+
+    async with conn.transaction():
+        # Upsert chat
+        await conn.execute(
+            """
+            INSERT INTO app.chats (id, created_at, updated_at, data)
+            VALUES ($1, $2, $3, $4::jsonb)
+            ON CONFLICT (id) DO UPDATE
+                SET created_at = EXCLUDED.created_at,
+                    updated_at = EXCLUDED.updated_at,
+                    data = EXCLUDED.data
+            """,
+            CHAT3_ID, chat3_time, chat3_time, json.dumps(chat_data),
+        )
+
+        # Delete old messages for this chat (in case count changed)
+        await conn.execute(
+            "DELETE FROM app.messages WHERE chat_id = $1", CHAT3_ID,
+        )
+
+        # Insert all messages
+        for ordinal, (role, msg_id, data) in enumerate(messages):
+            await conn.execute(
+                """
+                INSERT INTO app.messages (chat_id, ordinal, role, data)
+                VALUES ($1, $2, $3, $4::jsonb)
+                """,
+                CHAT3_ID, ordinal, role, json.dumps(data),
+            )
+
+
 async def main() -> None:
     dsn = os.environ.get("DATABASE_URL")
     if not dsn:
@@ -443,13 +656,15 @@ async def main() -> None:
         await _ensure_schema(conn)
         await _seed(conn)
         await _seed_chat2(conn)
+        await _seed_chat3(conn)
     finally:
         await conn.close()
 
     print(
-        f"Seeded '{db_name}': 2 chats ready for pixelfucking.\n"
+        f"Seeded '{db_name}': 3 chats ready for pixelfucking.\n"
         f"  {CHAT_ID}: Pip, Clover, and Barnaby (plain text)\n"
-        f"  {CHAT2_ID}: Markdown Parade (all formatting elements)"
+        f"  {CHAT2_ID}: Markdown Parade (all formatting elements)\n"
+        f"  {CHAT3_ID}: Tool Call Parade (text/tool/text interleave)"
     )
 
 

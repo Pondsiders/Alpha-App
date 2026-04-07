@@ -73,22 +73,22 @@ export function ContextMeter({ percent, model: _model, tokenCount, tokenLimit }:
         </div>
       </HoverCardTrigger>
       <HoverCardContent side="top" align="end" className="w-auto min-w-[160px]">
-        <div className="space-y-1.5">
+        <div className="space-y-2">
           {/* Context percentage */}
-          <div className="flex items-baseline justify-between gap-3">
-            <span className="text-[11px] text-muted-foreground shrink-0">Context</span>
-            <span className="text-[11px] font-mono" style={{ color }}>
+          <div className="space-y-0.5">
+            <span className="text-[10px] text-secondary tracking-wide">Context</span>
+            <div className="text-xs font-mono" style={{ color }}>
               {display}
-            </span>
+            </div>
           </div>
 
           {/* Token usage */}
           {tokenDisplay && (
-            <div className="flex items-baseline justify-between gap-3">
-              <span className="text-[11px] text-muted-foreground shrink-0">Tokens</span>
-              <span className="text-[11px] font-mono text-muted-foreground">
+            <div className="space-y-0.5">
+              <span className="text-[10px] text-secondary tracking-wide">Tokens</span>
+              <div className="text-xs font-mono text-foreground">
                 {tokenDisplay}
-              </span>
+              </div>
             </div>
           )}
         </div>
