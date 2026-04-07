@@ -19,23 +19,22 @@ from pydantic import ValidationError
 from alpha_app.chat import MODEL, Chat, ConversationState
 from alpha_app.db import load_chat, load_messages
 from alpha_app.protocol import (
+    AppStateEvent,
     BuzzCommand,
     ChatCreatedEvent,
-    ChatListEvent,
     ChatLoadedEvent,
     ChatStateEvent,
     CreateChatCommand,
     ErrorEvent,
     InterruptCommand,
     JoinChatCommand,
-    ListChatsCommand,
     SendAckEvent,
     SendCommand,
     parse_command,
 )
 from alpha_app.routes.broadcast import broadcast
 from alpha_app.routes.enrobe import enrobe
-from alpha_app.routes.handlers import handle_create_chat, handle_interrupt, handle_list_chats
+from alpha_app.routes.handlers import handle_create_chat, handle_interrupt
 from alpha_app.routes.spans import build_prompt_preview, format_input_messages
 from alpha_app.strings import BUZZ_NARRATION
 from alpha_app.tools import create_alpha_server
@@ -100,15 +99,6 @@ class WsContext:
 # =============================================================================
 # Command handlers
 # =============================================================================
-
-async def cmd_list_chats(ctx: WsContext, cmd: ListChatsCommand) -> None:
-    """Handle list-chats: return all chats for the sidebar."""
-    from alpha_app.db import list_chats
-    chats = await list_chats()
-    await ctx.send_event(ChatListEvent(
-        event="chat-list", id=cmd.id, chats=chats,
-    ))
-
 
 async def cmd_join_chat(ctx: WsContext, cmd: JoinChatCommand) -> None:
     """Handle join-chat: load full history + metadata."""
@@ -211,7 +201,6 @@ async def cmd_interrupt(ctx: WsContext, cmd: InterruptCommand) -> None:
 # =============================================================================
 
 DISPATCH = {
-    "list-chats": cmd_list_chats,
     "join-chat": cmd_join_chat,
     "create-chat": cmd_create_chat,
     "send": cmd_send,
@@ -340,6 +329,38 @@ async def websocket_chat(ws: WebSocket) -> None:
     ctx = WsContext(ws, connections, chats)
 
     logfire.info("ws.connected", client=str(ws.client))
+
+    # -- Immediate state push (no client command needed) -----------------------
+    # Send app-state (chat list + global flags) then chat-loaded for
+    # the suggested chat or the most recent one.
+    try:
+        from alpha_app.db import list_chats
+        chat_list = await list_chats()
+
+        await ctx.send_event(AppStateEvent(
+            event="app-state",
+            chats=chat_list,
+            solitude=getattr(ws.app.state, "solitude", False),
+            version=getattr(ws.app.state, "version", ""),
+        ))
+
+        # Determine which chat to load: query param hint or most recent.
+        last_chat_param = ws.query_params.get("lastChat")
+        chat_ids = {c["chatId"] for c in chat_list}
+        target_id = None
+
+        if last_chat_param and last_chat_param in chat_ids:
+            target_id = last_chat_param
+        elif chat_list:
+            # Most recent by updatedAt
+            target_id = max(chat_list, key=lambda c: c.get("updatedAt", 0))["chatId"]
+
+        if target_id:
+            # Reuse the join-chat handler logic
+            await cmd_join_chat(ctx, JoinChatCommand(command="join-chat", chatId=target_id))
+
+    except Exception as exc:
+        logfire.error("ws.on-connect state push failed: {error}", error=str(exc))
 
     try:
         while True:

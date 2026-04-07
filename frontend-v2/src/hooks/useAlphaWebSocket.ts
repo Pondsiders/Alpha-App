@@ -2,8 +2,12 @@
  * useAlphaWebSocket — wires the WebSocket transport to the Zustand store.
  *
  * Speaks the command/event protocol defined in PROTOCOL.md.
- * Client sends commands: { command: "list-chats", id?: "req_1" }
- * Server sends events:  { event: "chat-list", id?: "req_1", chats: [...] }
+ * Client sends commands: { command: "join-chat", chatId: "xyz" }
+ * Server sends events:  { event: "app-state", chats: [...] }
+ *
+ * On connect, the server immediately sends app-state + chat-loaded.
+ * No client request needed for startup — the server pushes.
+ * The ?lastChat= query param hints which chat to restore.
  *
  * Every incoming event is validated through Zod (lib/protocol.ts).
  * Invalid events throw — no silent defaults, no ?? 0.
@@ -20,6 +24,7 @@ import {
 
 export function useAlphaWebSocket() {
   const setConnected = useStore((s) => s.setConnected);
+  const setCurrentChatId = useStore((s) => s.setCurrentChatId);
   const setChatList = useStore((s) => s.setChatList);
   const setMessages = useStore((s) => s.setMessages);
   const upsertChat = useStore((s) => s.upsertChat);
@@ -43,7 +48,7 @@ export function useAlphaWebSocket() {
       switch (event.event) {
         // -- Chat lifecycle --
 
-        case "chat-list": {
+        case "app-state": {
           const chats: Omit<Chat, "messages" | "isRunning">[] = event.chats.map(
             (c) => ({
               id: c.chatId,
@@ -68,6 +73,9 @@ export function useAlphaWebSocket() {
             contextWindow: event.contextWindow,
           });
           setMessages(event.chatId, event.messages as unknown as Message[]);
+          // Select this chat and persist to localStorage for next startup.
+          setCurrentChatId(event.chatId);
+          try { localStorage.setItem("alpha-lastChatId", event.chatId); } catch { /* noop */ }
           break;
         }
 
@@ -160,6 +168,7 @@ export function useAlphaWebSocket() {
       }
     },
     [
+      setCurrentChatId,
       setChatList,
       setMessages,
       upsertChat,
@@ -187,20 +196,19 @@ export function useAlphaWebSocket() {
     [rawSend],
   );
 
-  // On connect, ask for the chat list.
-  const requestedRef = useRef(false);
-  useEffect(() => {
-    if (connected && !requestedRef.current) {
-      requestedRef.current = true;
-      send({ command: "list-chats" });
-    } else if (!connected) {
-      requestedRef.current = false;
-    }
-  }, [connected, send]);
-
-  // When the user switches chats, join it.
+  // When the user switches chats manually (sidebar click), join it.
+  // On startup the server sends chat-loaded automatically — this effect
+  // only fires for subsequent switches (currentChatId changes after the
+  // initial app-state/chat-loaded pair).
   const currentChatId = useStore((s) => s.currentChatId);
+  const prevChatIdRef = useRef<string | null>(null);
   useEffect(() => {
+    // Skip the first set (from the server's auto-loaded chat).
+    if (currentChatId === prevChatIdRef.current) return;
+    const isFirstLoad = prevChatIdRef.current === null;
+    prevChatIdRef.current = currentChatId;
+    if (isFirstLoad) return; // Server already sent this chat.
+
     if (connected && currentChatId) {
       send({ command: "join-chat", chatId: currentChatId });
     }

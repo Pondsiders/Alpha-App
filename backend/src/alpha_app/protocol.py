@@ -26,11 +26,6 @@ class _CommandBase(BaseModel):
     chatId: str | None = None  # Scoped to a chat when present.
 
 
-class ListChatsCommand(_CommandBase):
-    """Get all chats for the sidebar."""
-    command: Literal["list-chats"]
-
-
 class JoinChatCommand(_CommandBase):
     """Load a chat's full history and metadata."""
     command: Literal["join-chat"]
@@ -63,8 +58,7 @@ class BuzzCommand(_CommandBase):
 
 # Discriminated union of all commands, keyed on the `command` field.
 Command = (
-    ListChatsCommand
-    | JoinChatCommand
+    JoinChatCommand
     | CreateChatCommand
     | SendCommand
     | InterruptCommand
@@ -95,10 +89,12 @@ class _EventBase(BaseModel):
 
 # -- Chat lifecycle -----------------------------------------------------------
 
-class ChatListEvent(_EventBase):
-    """Response to list-chats."""
-    event: Literal["chat-list"]
-    chats: list[dict[str, Any]]  # Array of chat metadata dicts.
+class AppStateEvent(_EventBase):
+    """Global application state. Sent on connect and broadcast on changes."""
+    event: Literal["app-state"]
+    chats: list[dict[str, Any]]  # Full chat list for sidebar.
+    solitude: bool = False  # Night mode flag.
+    version: str = ""  # App version for stale-frontend detection.
 
 
 class ChatLoadedEvent(_EventBase):

@@ -2,6 +2,24 @@
 
 Alpha-App communicates over a single multiplexed WebSocket. All messages are JSON objects. The protocol is asymmetric: clients send **commands**, the server sends **events**.
 
+## Connection
+
+The WebSocket endpoint is `/ws`. The client MAY include a `lastChat` query parameter suggesting which chat to restore:
+
+```
+GET /ws?lastChat=abc123 HTTP/1.1
+Upgrade: websocket
+```
+
+On connection, the server immediately sends two events — no client command required:
+
+1. **`app-state`** — global application state including the full chat list.
+2. **`chat-loaded`** — the full message history for one chat.
+
+If `lastChat` is present and the chat exists, the server sends that chat. Otherwise it sends the most recent chat. If no chats exist at all, only `app-state` is sent (no `chat-loaded`).
+
+The client renders from these two events. No startup handshake, no request/response dance. The server pushes; the client receives and renders.
+
 ## Envelope
 
 ### Client → Server: Commands
@@ -71,15 +89,6 @@ Load a chat's full history and metadata.
 
 Response: `chat-loaded` event.
 
-### `list-chats`
-Get all chats for the sidebar.
-
-```json
-{ "command": "list-chats", "id": "req_2" }
-```
-
-Response: `chat-list` event.
-
 ### `create-chat`
 Create a new conversation.
 
@@ -116,15 +125,14 @@ Response: `buzz-ack` event.
 
 ## Events
 
-### Chat lifecycle
+### Application state
 
-#### `chat-list`
-Response to `list-chats`. Full sidebar data.
+#### `app-state`
+Sent by the server immediately on WebSocket connect. Also broadcast to all clients when global state changes (chat created, deleted, renamed, etc.). Never requested by the client — the server pushes it.
 
 ```json
 {
-  "event": "chat-list",
-  "id": "req_2",
+  "event": "app-state",
   "chats": [
     {
       "chatId": "hellopixel01",
@@ -135,12 +143,24 @@ Response to `list-chats`. Full sidebar data.
       "tokenCount": 0,
       "contextWindow": 1000000
     }
-  ]
+  ],
+  "solitude": false,
+  "version": "0.4.1"
 }
 ```
 
+| Field | Description |
+|-------|-------------|
+| `chats` | Full chat list for the sidebar. |
+| `solitude` | Whether Alpha is in night mode. |
+| `version` | App version string. Client can compare to detect stale frontends. |
+
+### Chat lifecycle
+
 #### `chat-loaded`
-Response to `join-chat`. Full message history + metadata.
+Full message history + metadata for one chat. Sent in two situations:
+1. Immediately after `app-state` on connect (the startup chat).
+2. In response to a `join-chat` command (switching chats mid-session).
 
 ```json
 {

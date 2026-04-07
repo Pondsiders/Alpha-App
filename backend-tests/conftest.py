@@ -18,6 +18,14 @@ from pathlib import Path
 
 import pytest
 import requests
+from dotenv import load_dotenv
+
+# Load repo .env for DATABASE_URL and other config.
+# dotenv won't override vars already in the environment, so you can
+# `export DATABASE_URL=...` before running pytest to override.
+_repo_env = Path(__file__).parent / ".." / ".env"
+if _repo_env.exists():
+    load_dotenv(_repo_env, override=False)
 
 from mock_anthropic import MockAnthropicServer
 
@@ -72,11 +80,22 @@ def _create_test_database() -> None:
         "CREATE SCHEMA IF NOT EXISTS app; "
         "CREATE TABLE IF NOT EXISTS app.chats ("
         "  id TEXT PRIMARY KEY,"
+        "  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),"
         "  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),"
         "  data JSONB NOT NULL DEFAULT '{}'"
         "); "
         "CREATE INDEX IF NOT EXISTS idx_chats_updated_at "
         "  ON app.chats (updated_at DESC); "
+        "CREATE TABLE IF NOT EXISTS app.messages ("
+        "  id BIGSERIAL PRIMARY KEY,"
+        "  chat_id TEXT NOT NULL REFERENCES app.chats(id),"
+        "  ordinal INTEGER NOT NULL,"
+        "  role TEXT NOT NULL,"
+        "  data JSONB NOT NULL,"
+        "  UNIQUE (chat_id, ordinal)"
+        "); "
+        "CREATE INDEX IF NOT EXISTS idx_messages_chat_ordinal "
+        "  ON app.messages (chat_id, ordinal); "
         "CREATE TABLE IF NOT EXISTS app.events ("
         "  id BIGSERIAL PRIMARY KEY,"
         "  chat_id TEXT NOT NULL,"
@@ -187,10 +206,61 @@ class Backend:
 
 # -- Fixtures -----------------------------------------------------------------
 
+def _seed_test_data() -> None:
+    """Insert a test chat with messages into the test database."""
+    import json
+    test_url = _test_database_url()
+
+    chat_data = json.dumps({
+        "title": "Test Chat",
+        "session_uuid": None,
+        "token_count": 42000,
+        "context_window": 1000000,
+    })
+
+    user_msg = json.dumps({
+        "id": "msg-user-001",
+        "source": "human",
+        "content": [{"type": "text", "text": "Hello, duck!"}],
+        "timestamp": "Mon Apr 7 2026, 9:00 AM",
+    })
+
+    assistant_msg = json.dumps({
+        "id": "msg-asst-001",
+        "parts": [{"type": "text", "text": "Hello! Happy birthday to me! 🦆"}],
+        "input_tokens": 1000,
+        "output_tokens": 50,
+        "cache_creation_tokens": 0,
+        "cache_read_tokens": 0,
+        "context_window": 1000000,
+        "model": "claude-opus-4-6",
+        "stop_reason": "end_turn",
+        "cost_usd": 0.01,
+        "duration_ms": 2000,
+        "inference_count": 1,
+    })
+
+    sql = (
+        f"INSERT INTO app.chats (id, data) VALUES ('testchat01', '{chat_data}'); "
+        f"INSERT INTO app.messages (chat_id, ordinal, role, data) VALUES "
+        f"  ('testchat01', 0, 'user', '{user_msg}'), "
+        f"  ('testchat01', 1, 'assistant', '{assistant_msg}'); "
+    )
+
+    result = subprocess.run(
+        ["psql", test_url, "-c", sql],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"Failed to seed test data: {result.stderr.strip()}")
+    print("Test data seeded: testchat01 with 2 messages")
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _test_db():
-    """Create and destroy the test database."""
+    """Create, seed, and destroy the test database."""
     _create_test_database()
+    _seed_test_data()
     yield
     _drop_test_database()
 

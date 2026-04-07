@@ -15,11 +15,6 @@ import { z } from "zod/v4";
 // Commands (client → server)
 // =============================================================================
 
-export const ListChatsCommand = z.object({
-  command: z.literal("list-chats"),
-  id: z.string().optional(),
-});
-
 export const JoinChatCommand = z.object({
   command: z.literal("join-chat"),
   id: z.string().optional(),
@@ -49,7 +44,6 @@ export const BuzzCommand = z.object({
   chatId: z.string(),
 });
 
-export type ListChatsCommand = z.infer<typeof ListChatsCommand>;
 export type JoinChatCommand = z.infer<typeof JoinChatCommand>;
 export type CreateChatCommand = z.infer<typeof CreateChatCommand>;
 export type SendCommand = z.infer<typeof SendCommand>;
@@ -57,7 +51,6 @@ export type InterruptCommand = z.infer<typeof InterruptCommand>;
 export type BuzzCommand = z.infer<typeof BuzzCommand>;
 
 export type Command =
-  | ListChatsCommand
   | JoinChatCommand
   | CreateChatCommand
   | SendCommand
@@ -70,9 +63,8 @@ export type Command =
 
 // -- Chat lifecycle -----------------------------------------------------------
 
-export const ChatListEvent = z.object({
-  event: z.literal("chat-list"),
-  id: z.string().optional(),
+export const AppStateEvent = z.object({
+  event: z.literal("app-state"),
   chats: z.array(
     z.object({
       chatId: z.string(),
@@ -84,6 +76,8 @@ export const ChatListEvent = z.object({
       contextWindow: z.number(),
     })
   ),
+  solitude: z.boolean().default(false),
+  version: z.string().default(""),
 });
 
 export const ChatLoadedEvent = z.object({
@@ -208,7 +202,7 @@ export const ErrorEvent = z.object({
 // -- Discriminated union of all events ----------------------------------------
 
 export const ServerEvent = z.discriminatedUnion("event", [
-  ChatListEvent,
+  AppStateEvent,
   ChatLoadedEvent,
   ChatCreatedEvent,
   ChatStateEvent,
@@ -225,7 +219,7 @@ export const ServerEvent = z.discriminatedUnion("event", [
   ErrorEvent,
 ]);
 
-export type ChatListEvent = z.infer<typeof ChatListEvent>;
+export type AppStateEvent = z.infer<typeof AppStateEvent>;
 export type ChatLoadedEvent = z.infer<typeof ChatLoadedEvent>;
 export type ChatCreatedEvent = z.infer<typeof ChatCreatedEvent>;
 export type ChatStateEvent = z.infer<typeof ChatStateEvent>;
