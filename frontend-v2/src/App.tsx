@@ -6,6 +6,7 @@
  * Thread fills the main content area.
  */
 
+import { useState } from "react";
 import { Thread } from "@/components/assistant-ui/thread";
 import { GroupedThreadList } from "@/components/grouped-thread-list";
 import { ChatInfo } from "@/components/ChatInfo";
@@ -76,10 +77,17 @@ export default function App() {
   // else takes care of itself.
   useAlphaWebSocket();
 
+  const [sidebarOpen, setSidebarOpen] = useState(() => {
+    try { return localStorage.getItem("alpha-sidebarOpen") !== "false"; } catch { return true; }
+  });
+
   return (
     <RuntimeProvider>
       <TooltipProvider>
-        <SidebarProvider>
+        <SidebarProvider
+          open={sidebarOpen}
+          onOpenChange={(open) => { setSidebarOpen(open); try { localStorage.setItem("alpha-sidebarOpen", String(open)); } catch { /* noop */ } }}
+        >
           <AppSidebar />
           <SidebarInset>
             <Header />
