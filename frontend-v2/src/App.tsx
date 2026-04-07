@@ -54,7 +54,7 @@ function Header() {
   const mockTokenLimit = 1_000_000;
 
   return (
-    <header className="sticky top-0 z-10 flex h-14 shrink-0 items-center gap-2 bg-sidebar px-4">
+    <header className="flex h-14 shrink-0 items-center gap-2 bg-sidebar px-4">
       <SidebarTrigger className="size-9 text-muted-foreground hover:text-foreground transition-colors" />
       <ChatInfo chatId={mockChatId} sessionUuid={mockSessionUuid} />
       <div className="ml-auto">
