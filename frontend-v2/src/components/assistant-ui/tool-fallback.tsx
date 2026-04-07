@@ -163,20 +163,24 @@ export const ToolFallback = ({
       {hasResult && (
         <div className="border-t border-border bg-muted/15">
           <pre
-            className="m-0 px-3 py-2 text-xs font-mono text-muted-foreground overflow-auto leading-relaxed whitespace-pre-wrap break-words"
+            className="m-0 px-3 py-2 text-xs font-mono text-muted-foreground leading-relaxed whitespace-pre"
             style={{
-              maxHeight: outputExpanded ? "600px" : "320px",
+              maxHeight: outputExpanded ? "600px" : "120px",
+              overflowX: "auto",
+              overflowY: outputExpanded ? "auto" : "hidden",
               color: isError ? "var(--color-destructive)" : undefined,
             }}
           >
             {displayOutput}
           </pre>
-          {outputTruncated && (
+          {outputLines.length > OUTPUT_TRUNCATE && (
             <button
-              onClick={() => setOutputExpanded(true)}
+              onClick={() => setOutputExpanded(!outputExpanded)}
               className="w-full px-3 py-1.5 text-[11px] text-muted-foreground hover:text-primary font-mono bg-transparent border-t border-border cursor-pointer text-center"
             >
-              ↓ Show full output ({outputLines.length} lines)
+              {outputExpanded
+                ? `↑ Collapse (${outputLines.length} lines)`
+                : `↓ Show full output (${outputLines.length} lines)`}
             </button>
           )}
         </div>

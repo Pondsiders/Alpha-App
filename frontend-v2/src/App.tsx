@@ -7,6 +7,7 @@
  */
 
 import { useState } from "react";
+import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Thread } from "@/components/assistant-ui/thread";
 import { GroupedThreadList } from "@/components/grouped-thread-list";
 import { ChatInfo } from "@/components/ChatInfo";
@@ -30,7 +31,10 @@ function AppSidebar() {
     <Sidebar>
       <SidebarHeader className="h-14 !flex-row !items-center justify-start px-4">
         <div className="flex items-center gap-2 font-medium text-sm">
-          <span className="text-xl">🦆</span>
+          <Avatar className="size-7">
+            <AvatarImage src="/alpha.png" alt="Alpha" />
+            <AvatarFallback>🦆</AvatarFallback>
+          </Avatar>
           <span className="text-foreground/90">Alpha</span>
         </div>
       </SidebarHeader>
