@@ -423,6 +423,7 @@ class Claude:
         self._stdout_task: asyncio.Task | None = None
         self._proxy: _Proxy | None = None
         self._session_id: str | None = None
+        self._fork: bool = False  # When True + session_id, use --fork-session
         self._system_prompt_file: Path | None = None  # Temp file for large system prompts
         self._trace_context: dict | None = None  # Turn span context for stdout traces
 
@@ -544,18 +545,21 @@ class Claude:
 
     # -- Lifecycle ------------------------------------------------------------
 
-    async def start(self, session_id: str | None = None) -> None:
+    async def start(self, session_id: str | None = None, fork: bool = False) -> None:
         """Spawn claude and perform the init handshake.
 
         Args:
             session_id: Resume this session, or None for a new session.
+            fork: If True (with session_id), fork the session instead of
+                  resuming it. Creates a new session ID; original untouched.
         """
         if self._state != ClaudeState.IDLE:
             raise RuntimeError(f"Cannot start in state {self._state}")
 
         self._state = ClaudeState.STARTING
         self._session_id = session_id
-        mode = "resume" if session_id else "fresh"
+        self._fork = fork and bool(session_id)  # fork only makes sense with a session
+        mode = "fork" if self._fork else ("resume" if session_id else "fresh")
         logfire.info(
             "claude.lifecycle: start {mode} session={session}",
             mode=mode,
@@ -1120,6 +1124,8 @@ class Claude:
 
         if self._session_id:
             cmd.extend(["--resume", self._session_id])
+            if self._fork:
+                cmd.append("--fork-session")
 
         if self._disallowed_tools:
             cmd.extend(["--disallowedTools", ",".join(self._disallowed_tools)])

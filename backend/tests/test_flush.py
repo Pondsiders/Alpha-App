@@ -256,6 +256,7 @@ class TestOrdinalCollision:
 
         mock_row = {
             "id": "test-lc",
+            "created_at": MagicMock(timestamp=MagicMock(return_value=500.0)),
             "updated_at": MagicMock(timestamp=MagicMock(return_value=1000.0)),
             "data": {
                 "title": "Test",

@@ -84,52 +84,62 @@ async def _get_redis() -> aioredis.Redis:
 # Capsules (Postgres)
 # ---------------------------------------------------------------------------
 
-def _format_capsule_header(period_start, period_end) -> str:
-    """Format a capsule time range into a markdown header.
+def _pondside_yesterday() -> tuple[pendulum.DateTime, pendulum.DateTime]:
+    """Return the (start, end) of yesterday's Pondside day.
 
-    Night capsules (start hour >= 22 or < 6):
-        ## Friday night, February 27-28, 2026
-    Day capsules:
-        ## Friday, February 27, 2026
+    A Pondside day runs 6 AM to 6 AM. "Yesterday" is the 24-hour window
+    ending at the most recently passed 6 AM boundary.
     """
-    start = pendulum.instance(period_start).in_timezone("America/Los_Angeles")
-    end = pendulum.instance(period_end).in_timezone("America/Los_Angeles")
-
-    if start.hour >= 22 or start.hour < 6:
-        return (
-            f"## {start.format('dddd')} night, "
-            f"{start.format('MMMM')} {start.day}-{end.day}, {end.year}"
-        )
-    return f"## {start.format('dddd, MMMM D, YYYY')}"
+    now = pendulum.now()  # Reads TZ from environment
+    if now.hour >= 6:
+        today_dawn = now.replace(hour=6, minute=0, second=0, microsecond=0)
+    else:
+        today_dawn = now.subtract(days=1).replace(hour=6, minute=0, second=0, microsecond=0)
+    yesterday_dawn = today_dawn.subtract(days=1)
+    return yesterday_dawn, today_dawn
 
 
 async def fetch_capsules() -> tuple[str | None, str | None]:
-    """Fetch the two most recent capsule summaries from Postgres.
+    """Fetch yesterday's day and night capsules from cortex.capsules.
 
-    Returns (yesterday, last_night) as pre-formatted markdown strings
-    with date headers. Both can be None if no summaries exist.
+    Uses Pondside-day boundaries (6 AM to 6 AM). Returns (yesterday, last_night)
+    as pre-formatted markdown strings. Both can be None if no capsules exist.
     """
     try:
+        yesterday_dawn, today_dawn = _pondside_yesterday()
+
         pool = await get_pool()
         async with pool.acquire() as conn:
-            rows = await conn.fetch("""
-                SELECT period_start, period_end, summary
-                FROM cortex.summaries
-                ORDER BY period_start DESC
-                LIMIT 2
-            """)
+            day_row = await conn.fetchrow(
+                "SELECT content, created_at FROM cortex.capsules"
+                " WHERE kind = 'day'"
+                "   AND created_at >= $1"
+                "   AND created_at < $2"
+                " ORDER BY created_at DESC LIMIT 1",
+                yesterday_dawn, today_dawn,
+            )
+            night_row = await conn.fetchrow(
+                "SELECT content, created_at FROM cortex.capsules"
+                " WHERE kind = 'night'"
+                "   AND created_at >= $1"
+                "   AND created_at < $2"
+                " ORDER BY created_at DESC LIMIT 1",
+                yesterday_dawn, today_dawn,
+            )
 
-        if not rows:
-            return None, None
+        yesterday = None
+        if day_row:
+            day_date = pendulum.instance(day_row["created_at"])
+            header = f"## {day_date.format('dddd, MMMM D, YYYY')}"
+            yesterday = f"{header}\n\n{day_row['content']}"
 
-        summaries = [
-            f"{_format_capsule_header(row['period_start'], row['period_end'])}\n\n{row['summary']}"
-            for row in rows
-        ]
+        last_night = None
+        if night_row:
+            night_date = pendulum.instance(night_row["created_at"])
+            header = f"## {night_date.format('dddd')} night, {night_date.format('MMMM D, YYYY')}"
+            last_night = f"{header}\n\n{night_row['content']}"
 
-        if len(summaries) >= 2:
-            return summaries[1], summaries[0]  # (older, newer)
-        return None, summaries[0]
+        return yesterday, last_night
 
     except Exception:
         return None, None

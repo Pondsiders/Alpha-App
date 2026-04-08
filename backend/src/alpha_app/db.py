@@ -147,6 +147,24 @@ async def init_pool() -> None:
             " ON app.reflection_flags (chat_id, claimed)"
         )
 
+        # Capsules — day/night continuity letters.
+        # Written by the Dusk ghost (day) and Solitude (night).
+        # Read by Dawn to build the next day's system prompt.
+        await conn.execute("CREATE SCHEMA IF NOT EXISTS cortex")
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS cortex.capsules (
+                id BIGSERIAL PRIMARY KEY,
+                kind TEXT NOT NULL CHECK (kind IN ('day', 'night')),
+                chat_id TEXT,
+                content TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        """)
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_capsules_kind_created"
+            " ON cortex.capsules (kind, created_at DESC)"
+        )
+
         # Job persistence — our own table, plain JSON, no pickle.
         # APScheduler is pure in-memory; this is the source of truth.
         await conn.execute("""
@@ -406,12 +424,13 @@ async def load_chat(chat_id: str) -> Chat | None:
     try:
         pool = get_pool()
         row = await pool.fetchrow(
-            "SELECT id, updated_at, data FROM app.chats WHERE id = $1",
+            "SELECT id, created_at, updated_at, data FROM app.chats WHERE id = $1",
             chat_id,
         )
         if row:
             chat = Chat.from_db(
                 chat_id=row["id"],
+                created_at=row["created_at"].timestamp(),
                 updated_at=row["updated_at"].timestamp(),
                 data=row["data"],
             )

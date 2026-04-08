@@ -341,7 +341,7 @@ class TestSmartChatCallback:
         data = chat.to_data()
         assert data["human_turn_count"] == 7
 
-        restored = Chat.from_db("persist-test", updated_at=0.0, data=data)
+        restored = Chat.from_db("persist-test", created_at=0.0, updated_at=0.0, data=data)
         assert restored._human_turn_count == 7
 
     async def test_human_turn_counter_defaults_to_zero_on_missing_key(self):
@@ -349,12 +349,11 @@ class TestSmartChatCallback:
         legacy_data = {
             "session_uuid": "abc",
             "title": "old chat",
-            "created_at": 0,
             "token_count": 1000,
             "context_window": 1_000_000,
             # no human_turn_count key
         }
-        chat = Chat.from_db("legacy", updated_at=0.0, data=legacy_data)
+        chat = Chat.from_db("legacy", created_at=0.0, updated_at=0.0, data=legacy_data)
         assert chat._human_turn_count == 0
 
     async def test_messages_to_wire(self, chat, broadcasts):

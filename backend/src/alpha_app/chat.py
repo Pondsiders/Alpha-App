@@ -238,6 +238,10 @@ class Chat:
         # the N=3 cadence (fire on 1, 4, 7, 10, 13, ...).
         self._human_turn_count: int = 0
 
+        # Fork source — if set, _ensure_claude will use --fork-session
+        # instead of --resume. Set by clone(), consumed once.
+        self._fork_from: str | None = None
+
         # Orientation flag — True means the next message needs orientation
         # injected. New chats need it on first message; resumed chats need it too.
         self._needs_orientation: bool = True
@@ -262,13 +266,13 @@ class Chat:
         self.on_reap: Callable[[str], Awaitable[None]] | None = None
 
     @classmethod
-    def from_db(cls, chat_id: str, updated_at: float, data: dict) -> "Chat":
+    def from_db(cls, chat_id: str, created_at: float, updated_at: float, data: dict) -> "Chat":
         """Restore a Chat from Postgres row. Born COLD (no subprocess)."""
         chat = cls(id=chat_id)
         chat.session_uuid = data.get("session_uuid") or None
         chat.title = data.get("title", "")
         chat.state = ConversationState.COLD
-        chat.created_at = data.get("created_at", 0) or 0
+        chat.created_at = created_at
         chat.updated_at = updated_at
         chat._cached_token_count = data.get("token_count", 0) or 0
         chat._cached_context_window = data.get("context_window", 0) or CONTEXT_WINDOW
@@ -283,6 +287,24 @@ class Chat:
             mark_seen(chat_id, seen_ids)
 
         return chat
+
+    def clone(self) -> "Chat":
+        """Create a fork-ready copy of this Chat.
+
+        Returns a new Chat with a fresh ID that, when its Claude subprocess
+        starts, will fork from this chat's session (--fork-session). The
+        original session is untouched. The clone is born COLD and headless —
+        no broadcast, no WebSocket, no sidebar presence.
+
+        Used by Dusk to create a ghost that writes a day capsule.
+        """
+        ghost = Chat(id=generate_chat_id())
+        ghost.session_uuid = self.session_uuid  # Will fork from this
+        ghost._fork_from = self.session_uuid     # Signal to _ensure_claude
+        ghost._system_prompt = self._system_prompt
+        ghost._topic_registry = self._topic_registry
+        ghost.title = f"[capsule] {self.title}"
+        return ghost
 
     async def load_messages(self) -> None:
         """Load messages from app.messages into self.messages.
@@ -561,7 +583,10 @@ class Chat:
         self._claude._on_reap = self._on_claude_reap
 
         session_id = self.session_uuid  # None for fresh, UUID for resume
-        await self._claude.start(session_id)
+        fork = bool(self._fork_from)
+        await self._claude.start(session_id, fork=fork)
+        if fork:
+            self._fork_from = None  # Consumed — don't fork again on resurrect
 
         self.state = ConversationState.READY
         if not session_id:
@@ -573,7 +598,7 @@ class Chat:
             "chat.lifecycle: auto-start chat={chat_id} session={session} mode={mode}",
             chat_id=self.id,
             session=session_id or "(new)",
-            mode="resume" if session_id else "fresh",
+            mode="fork" if fork else ("resume" if session_id else "fresh"),
         )
 
     async def wait_until_ready(self) -> "AssistantMessage | None":

@@ -169,6 +169,36 @@ def create_alpha_server(
 
         return result
 
+    # ── Capsule tool ────────────────────────────────────────────────────
+
+    @server.tool(
+        description=(
+            "Seal a continuity capsule — a day or night summary letter for "
+            "future-you. Day capsules cover what happened during the day with "
+            "Jeffery. Night capsules cover Solitude. These become part of your "
+            "system prompt on future mornings."
+        ),
+    )
+    async def seal(content: str, kind: str = "day") -> str:
+        """Write a capsule to cortex.capsules.
+
+        Args:
+            content: The capsule text — a summary/letter for future-you.
+            kind: 'day' or 'night'.
+        """
+        if kind not in ("day", "night"):
+            return f"Invalid kind '{kind}'. Must be 'day' or 'night'."
+
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "INSERT INTO cortex.capsules (kind, chat_id, content)"
+                " VALUES ($1, $2, $3) RETURNING id, created_at",
+                kind, session_id, content,
+            )
+
+        return f"Capsule sealed (id={row['id']}, kind={kind}, {row['created_at']})."
+
     # ── Dream tool ───────────────────────────────────────────────────────
 
     @server.tool(
