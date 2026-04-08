@@ -1,0 +1,13 @@
+/* Alpha amber accent */
+:root {
+  --vp-c-brand-1: oklch(0.70 0.085 67);
+  --vp-c-brand-2: oklch(0.65 0.080 67);
+  --vp-c-brand-3: oklch(0.60 0.075 67);
+  --vp-c-brand-soft: oklch(0.70 0.085 67 / 0.14);
+}
+
+/* Fonts */
+:root {
+  --vp-font-family-base: 'Inter', ui-sans-serif, sans-serif, system-ui;
+  --vp-font-family-mono: 'Fira Code', ui-monospace, monospace;
+}
