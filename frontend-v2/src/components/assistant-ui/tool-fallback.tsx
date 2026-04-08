@@ -1,20 +1,14 @@
 /**
  * ToolFallback — Generic tool call UI.
  *
- * Same layout for all tools: icon left, content middle, dot right.
- * Progressive disclosure: streaming → executing → result (truncated).
- * Custom tool UIs registered via makeAssistantToolUI "graduate" out
- * of this component — everything else falls through to here.
- *
- * Ported from frontend/src/components/ToolFallback.tsx with theme
- * classes updated for the alpha.css / Tailwind v4 palette.
+ * The catch-all consumer of ToolShell. Renders args as code and
+ * results as monospace preformatted text. Custom tool UIs
+ * (BashTool, StoreTool, etc.) graduate out of this component
+ * by providing their own ToolShell consumers.
  */
 
-import { useState } from "react";
 import { Wrench } from "lucide-react";
-
-/** Max output lines before truncating. */
-const OUTPUT_TRUNCATE = 20;
+import { ToolShell } from "./tool-shell";
 
 interface ToolFallbackProps {
   toolName: string;
@@ -32,12 +26,10 @@ export const ToolFallback = ({
   result,
   status,
 }: ToolFallbackProps) => {
-  const [outputExpanded, setOutputExpanded] = useState(false);
-
   const safeName = toolName || "Unknown Tool";
   const displayName = safeName.charAt(0).toUpperCase() + safeName.slice(1);
 
-  // Try to parse argsText first, fall back to args prop.
+  // Parse args
   let parsedArgs: Record<string, unknown> = {};
   let jsonComplete = false;
   try {
@@ -53,13 +45,19 @@ export const ToolFallback = ({
   }
 
   const hasResult = result !== undefined && result !== null;
-  const isStreaming = !jsonComplete && !hasResult;
-  const isRunning = !hasResult && jsonComplete;
   const isError = status?.type === "incomplete" && status.reason === "error";
 
-  // Arg summary for the title bar
+  // Derive status for ToolShell
+  const shellStatus = (() => {
+    if (!jsonComplete && !hasResult) return "streaming" as const;
+    if (!hasResult && jsonComplete) return "running" as const;
+    if (isError) return "error" as const;
+    return "success" as const;
+  })();
+
+  // Arg summary (one-line)
   const argSummary = (() => {
-    if (!jsonComplete) return "";
+    if (!jsonComplete) return argsText || "";
     const entries = Object.entries(parsedArgs);
     if (entries.length === 0) return "";
 
@@ -70,121 +68,86 @@ export const ToolFallback = ({
     }
     if (parsedArgs.query) {
       const q = String(parsedArgs.query);
-      return q.length > 50 ? q.slice(0, 50) + "..." : q;
+      return q.length > 80 ? q.slice(0, 80) + "…" : q;
     }
     if (parsedArgs.pattern) return String(parsedArgs.pattern);
     if (parsedArgs.memory) {
       const m = String(parsedArgs.memory);
-      return m.length > 50 ? m.slice(0, 50) + "..." : m;
+      return m.length > 80 ? m.slice(0, 80) + "…" : m;
     }
     if (parsedArgs.command) {
       const c = String(parsedArgs.command);
-      return c.length > 60 ? c.slice(0, 60) + "..." : c;
+      return c.length > 80 ? c.slice(0, 80) + "…" : c;
     }
 
     const firstString = entries.find(([, v]) => typeof v === "string");
     if (firstString) {
       const val = String(firstString[1]);
-      return val.length > 50 ? val.slice(0, 50) + "..." : val;
+      return val.length > 80 ? val.slice(0, 80) + "…" : val;
     }
 
     return `${entries.length} args`;
   })();
 
-  // Format result for display
+  // Full args
+  const fullArgsText = jsonComplete
+    ? JSON.stringify(parsedArgs, null, 2)
+    : argsText || "";
+
+  // Result text
   const resultText = hasResult
     ? typeof result === "string"
       ? result
       : JSON.stringify(result, null, 2)
     : "";
+  const resultFirstLine = resultText.split("\n")[0] || "";
 
-  const outputLines = resultText.split("\n");
-  const outputTruncated =
-    !outputExpanded && outputLines.length > OUTPUT_TRUNCATE;
-  const displayOutput = outputTruncated
-    ? outputLines.slice(0, OUTPUT_TRUNCATE).join("\n")
-    : resultText;
-
-  // Status dot color
-  const dotColor =
-    isStreaming || isRunning
-      ? "var(--color-primary)"
-      : isError
-        ? "var(--color-destructive)"
-        : "var(--color-success)"; // avocado green for success
-
-  const iconColor =
-    isStreaming || isRunning
-      ? "var(--color-primary)"
-      : isError
-        ? "var(--color-destructive)"
-        : undefined; // default muted for success
+  // Has anything to show in input/output?
+  const hasArgs = jsonComplete ? Object.keys(parsedArgs).length > 0 : !!argsText;
+  const multiLineArgs = fullArgsText.split("\n").length > 1;
+  const multiLineResult = resultText.split("\n").length > 1;
 
   return (
-    <div
-      data-testid="tool-call"
-      className="w-full rounded-lg border border-border overflow-hidden"
-    >
-      {/* Header — tool name + arg summary, dot on right */}
-      <div className="flex items-start gap-2 px-3 py-2.5 bg-muted/30">
-        <Wrench
-          size={14}
-          className="mt-[2px] shrink-0 text-muted-foreground/60"
-          style={iconColor ? { color: iconColor } : undefined}
-        />
-        <div className="min-w-0 flex-1">
-          <div className="text-[12px] text-foreground mb-0.5">
-            {displayName}
-          </div>
-          {argSummary && (
-            <code className="text-[13px] text-muted-foreground font-mono leading-snug break-all">
-              {argSummary}
-            </code>
-          )}
-        </div>
-        <span
-          className={`w-2 h-2 mt-[5px] rounded-full shrink-0 ${
-            isStreaming || isRunning ? "animate-pulse" : ""
-          }`}
-          style={{ backgroundColor: dotColor }}
-        />
-      </div>
+    <ToolShell
+      icon={Wrench}
+      name={displayName}
+      status={shellStatus}
 
-      {/* Running indicator */}
-      {(isStreaming || isRunning) && !hasResult && (
-        <div className="px-3 py-2 border-t border-border bg-muted/15">
-          <span className="text-muted-foreground/40 text-xs font-mono italic">
-            {isStreaming ? "Generating..." : "Executing..."}
+      input={hasArgs ? (
+        <code className="text-xs font-mono text-foreground leading-relaxed truncate block">
+          {argSummary}
+        </code>
+      ) : undefined}
+
+      expandedInput={hasArgs && multiLineArgs ? (
+        <pre className="m-0 text-xs font-mono text-foreground leading-relaxed whitespace-pre max-h-[300px] overflow-auto">
+          {fullArgsText}
+        </pre>
+      ) : undefined}
+
+      output={
+        shellStatus === "running" ? (
+          <span className="text-muted-foreground/50 text-xs font-mono italic">
+            Executing…
           </span>
-        </div>
-      )}
-
-      {/* Output — only when result arrives */}
-      {hasResult && (
-        <div className="border-t border-border bg-muted/15">
-          <pre
-            className="m-0 px-3 py-2 text-xs font-mono text-muted-foreground leading-relaxed whitespace-pre"
-            style={{
-              maxHeight: outputExpanded ? "600px" : "120px",
-              overflowX: "auto",
-              overflowY: outputExpanded ? "auto" : "hidden",
-              color: isError ? "var(--color-destructive)" : undefined,
-            }}
+        ) : hasResult ? (
+          <code
+            className="text-xs font-mono leading-relaxed truncate block"
+            style={{ color: isError ? "var(--color-destructive)" : "var(--color-foreground)" }}
           >
-            {displayOutput}
-          </pre>
-          {outputLines.length > OUTPUT_TRUNCATE && (
-            <button
-              onClick={() => setOutputExpanded(!outputExpanded)}
-              className="w-full px-3 py-1.5 text-[11px] text-muted-foreground hover:text-primary font-mono bg-transparent border-t border-border cursor-pointer text-center"
-            >
-              {outputExpanded
-                ? `↑ Collapse (${outputLines.length} lines)`
-                : `↓ Show full output (${outputLines.length} lines)`}
-            </button>
-          )}
-        </div>
-      )}
-    </div>
+            {resultFirstLine}
+          </code>
+        ) : undefined
+      }
+
+      expandedOutput={hasResult && multiLineResult ? (
+        <pre
+          className="m-0 text-xs font-mono leading-relaxed whitespace-pre max-h-[600px] overflow-auto"
+          style={{ color: isError ? "var(--color-destructive)" : "var(--color-foreground)" }}
+        >
+          {resultText}
+        </pre>
+      ) : undefined}
+    />
   );
 };
