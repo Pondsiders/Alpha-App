@@ -33,6 +33,7 @@ export function useAlphaWebSocket() {
   const appendThinkingDelta = useStore((s) => s.appendThinkingDelta);
   const setIsRunning = useStore((s) => s.setIsRunning);
   const setTokenCount = useStore((s) => s.setTokenCount);
+  const setWsSend = useStore((s) => s.setWsSend);
 
   const handleRawEvent = useCallback(
     (raw: { type: string; [key: string]: unknown }) => {
@@ -88,6 +89,7 @@ export function useAlphaWebSocket() {
             tokenCount: 0,
             contextWindow: 1_000_000,
           });
+          setCurrentChatId(event.chatId);
           break;
         }
 
@@ -195,6 +197,12 @@ export function useAlphaWebSocket() {
     (cmd: Command) => rawSend(cmd),
     [rawSend],
   );
+
+  // Expose send on the store so any component can send commands.
+  useEffect(() => {
+    setWsSend(send as any);
+    return () => setWsSend(null);
+  }, [send, setWsSend]);
 
   // When the user switches chats manually (sidebar click), join it.
   // On startup the server sends chat-loaded automatically — this effect

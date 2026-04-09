@@ -10,7 +10,14 @@
 set -e
 cd "$(dirname "$0")"
 
-# -- Config --
+# -- Load .env for secrets (OAuth token, Logfire, etc.) --
+if [ -f .env ]; then
+    set -a
+    source .env
+    set +a
+fi
+
+# -- Config (overrides .env where needed) --
 BACKEND_PORT=18020
 DB_NAME="alpha_pixelfuck"
 DB_PASSWORD="myths-livia-mcduck9SONGS"

@@ -34,13 +34,14 @@ async def handle_create_chat(
         # Broadcast to all — the requester navigates (createPendingRef),
         # other tabs just add it to their sidebar.
         await broadcast(connections, {
-            "type": "chat-created",
+            "event": "chat-created",
             "chatId": chat_id,
-            "data": {"state": chat.state.wire_value},
+            "title": "",
+            "createdAt": chat.created_at,
         })
 
     except Exception as e:
-        await ws.send_json({"type": "error", "data": f"Failed to create chat: {e}"})
+        await ws.send_json({"event": "error", "data": f"Failed to create chat: {e}"})
 
 
 async def handle_list_chats(
@@ -59,7 +60,7 @@ async def handle_list_chats(
             item["tokenCount"] = live_chat.token_count
             item["contextWindow"] = live_chat.context_window
 
-    await ws.send_json({"type": "chat-list", "data": chat_list})
+    await ws.send_json({"event": "chat-list", "data": chat_list})
 
 
 async def handle_interrupt(
@@ -71,7 +72,7 @@ async def handle_interrupt(
 ) -> None:
     """Handle interrupt: kill the subprocess, broadcast state change."""
     if not chat_id:
-        await ws.send_json({"type": "error", "data": "Missing chatId"})
+        await ws.send_json({"event": "error", "data": "Missing chatId"})
         return
 
     chat = chats.get(chat_id)
@@ -79,20 +80,15 @@ async def handle_interrupt(
         try:
             await chat.interrupt()
             await broadcast(connections, {
-                "type": "chat-state",
+                "event": "chat-state",
                 "chatId": chat_id,
-                "data": {
-                    "state": chat.state.wire_value,
-                    "sessionUuid": chat.session_uuid or "",
-                    "tokenCount": chat.token_count,
-                    "contextWindow": chat.context_window,
-                },
+                "state": chat.state.wire_value,
             })
         except Exception as e:
-            await broadcast(connections, {"type": "error", "chatId": chat_id, "data": str(e)})
+            await broadcast(connections, {"event": "error", "chatId": chat_id, "data": str(e)})
 
     task = streaming_tasks.get(chat_id)
     if task and not task.done():
         task.cancel()
 
-    await broadcast(connections, {"type": "interrupted", "chatId": chat_id})
+    await broadcast(connections, {"event": "interrupted", "chatId": chat_id})

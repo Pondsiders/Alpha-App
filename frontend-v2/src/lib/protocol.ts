@@ -125,7 +125,7 @@ export const UserMessageEvent = z.object({
   chatId: z.string(),
   messageId: z.string(),
   content: z.array(z.record(z.string(), z.unknown())),
-  memories: z.array(z.record(z.string(), z.unknown())).default([]),
+  memories: z.array(z.record(z.string(), z.unknown())).nullable().default([]),
   timestamp: z.string().default(""),
 });
 

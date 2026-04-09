@@ -1,0 +1,5 @@
+{
+  "name": "test-identity",
+  "version": "0.1.0",
+  "description": "Minimal test identity for SDK migration development."
+}

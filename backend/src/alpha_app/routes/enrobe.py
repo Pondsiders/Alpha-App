@@ -118,10 +118,14 @@ async def enrobe(
     async def _broadcast_snapshot() -> None:
         """Broadcast the current enrichment state immediately."""
         if broadcast_fn:
+            wire = msg.to_wire()
             await broadcast_fn({
-                "type": "user-message",
+                "event": "user-message",
                 "chatId": chat.id,
-                "data": msg.to_wire(),
+                "messageId": wire.get("id", ""),
+                "content": wire.get("content", []),
+                "memories": wire.get("memories", []),
+                "timestamp": wire.get("timestamp", ""),
             })
 
     # 1. Orientation — now lives in the system prompt (survives --resume

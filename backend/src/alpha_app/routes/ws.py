@@ -136,7 +136,6 @@ async def cmd_join_chat(ctx: WsContext, cmd: JoinChatCommand) -> None:
         chat.state == ConversationState.COLD
         and chat.session_uuid is not None
     ):
-        chat._system_prompt = await ctx.ws.app.state.get_system_prompt()
         chat._topic_registry = getattr(ctx.ws.app.state, "topic_registry", None)
         try:
             await chat._ensure_claude()
@@ -284,9 +283,9 @@ async def _run_human_turn(
             await t.send(result.message)
 
         await broadcast(connections, {
-            "type": "chat-state",
+            "event": "chat-state",
             "chatId": chat_id,
-            "data": chat.wire_state(),
+            "state": chat.state.wire_value,
         })
 
     except asyncio.CancelledError:

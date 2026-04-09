@@ -143,6 +143,10 @@ interface AppState {
 
   /** Update token accounting for a chat. */
   setTokenCount: (chatId: string, tokenCount: number) => void;
+
+  /** WebSocket send function — set by useAlphaWebSocket on connect. */
+  wsSend: ((cmd: Record<string, unknown>) => void) | null;
+  setWsSend: (fn: ((cmd: Record<string, unknown>) => void) | null) => void;
 }
 
 export const useStore = create<AppState>()(
@@ -150,6 +154,7 @@ export const useStore = create<AppState>()(
     connected: false,
     chats: {},
     currentChatId: null,
+    wsSend: null,
 
     setConnected: (connected) =>
       set((state) => {
@@ -249,6 +254,11 @@ export const useStore = create<AppState>()(
       set((state) => {
         const chat = state.chats[chatId];
         if (chat) chat.tokenCount = tokenCount;
+      }),
+
+    setWsSend: (fn) =>
+      set((state) => {
+        state.wsSend = fn as any; // Immer can't proxy functions, cast is safe
       }),
   })),
 );

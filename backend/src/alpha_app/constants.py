@@ -10,7 +10,9 @@ from pathlib import Path
 
 # -- Filesystem ---------------------------------------------------------------
 
-JE_NE_SAIS_QUOI = Path("/Pondside/Alpha-Home/Alpha")
+JE_NE_SAIS_QUOI = Path(
+    os.environ.get("JE_NE_SAIS_QUOI_OVERRIDE", "/Pondside/Alpha-Home/Alpha")
+)
 THUMBNAIL_DIR = Path("/Pondside/Alpha-Home/images/thumbnails")
 CONTEXT_FILE_NAME = "ALPHA.md"
 

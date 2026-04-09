@@ -16,6 +16,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarHeader,
   SidebarProvider,
   SidebarTrigger,
@@ -23,6 +24,27 @@ import {
 } from "@/components/ui/sidebar";
 import { RuntimeProvider } from "./RuntimeProvider";
 import { useAlphaWebSocket } from "@/hooks/useAlphaWebSocket";
+import { useStore } from "@/store";
+import { Plus } from "lucide-react";
+import { SidebarMenuButton } from "@/components/ui/sidebar";
+
+// -- New Chat Button ----------------------------------------------------------
+
+function NewChatButton() {
+  const wsSend = useStore((s) => s.wsSend);
+  const connected = useStore((s) => s.connected);
+
+  return (
+    <SidebarMenuButton
+      className="w-full cursor-pointer text-muted-foreground hover:text-foreground"
+      disabled={!connected || !wsSend}
+      onClick={() => wsSend?.({ command: "create-chat" })}
+    >
+      <Plus className="size-4" />
+      <span>New Chat</span>
+    </SidebarMenuButton>
+  );
+}
 
 // -- App Sidebar --------------------------------------------------------------
 
@@ -41,8 +63,9 @@ function AppSidebar() {
       <SidebarContent>
         <GroupedThreadList />
       </SidebarContent>
-      {/* SidebarFooter / "New Thread" button intentionally omitted —
-          creating new chats is Phase 2 work (needs the send path). */}
+      <SidebarFooter className="p-2">
+        <NewChatButton />
+      </SidebarFooter>
     </Sidebar>
   );
 }

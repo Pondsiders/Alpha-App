@@ -176,10 +176,14 @@ class Turn:
                         break
             chat.messages.append(msg)  # Born dirty
             await chat.flush()
+            wire = msg.to_wire()
             await chat._broadcast({
-                "type": "user-message",
+                "event": "user-message",
                 "chatId": chat.id,
-                "data": msg.to_wire(),
+                "messageId": wire.get("id", ""),
+                "content": wire.get("content", []),
+                "memories": wire.get("memories", []),
+                "timestamp": wire.get("timestamp", ""),
             })
             chat.reset_output_tokens()
             await chat._claude.send(msg.to_content_blocks())
@@ -667,9 +671,9 @@ class Chat:
                 self.set_trace_context(logfire.get_context())
 
             await self._broadcast({
-                "type": "chat-state",
+                "event": "chat-state",
                 "chatId": self.id,
-                "data": self.wire_state(),
+                "state": self.state.wire_value,
             })
 
         # -- Dispatch to focused handler --
@@ -694,7 +698,7 @@ class Chat:
             text = event.delta_text
             if text:
                 await self._broadcast({
-                    "type": "text-delta", "chatId": chat_id, "data": text,
+                    "event": "text-delta", "chatId": chat_id, "delta": text,
                 })
                 self._ensure_assistant()
                 if self._current_assistant.parts and self._current_assistant.parts[-1]["type"] == "text":
@@ -706,7 +710,7 @@ class Chat:
             text = event.delta_text
             if text:
                 await self._broadcast({
-                    "type": "thinking-delta", "chatId": chat_id, "data": text,
+                    "event": "thinking-delta", "chatId": chat_id, "delta": text,
                 })
                 self._ensure_assistant()
                 if self._current_assistant.parts and self._current_assistant.parts[-1]["type"] == "thinking":
@@ -718,20 +722,18 @@ class Chat:
             partial = event.delta_partial_json
             if partial:
                 await self._broadcast({
-                    "type": "tool-use-delta",
+                    "event": "tool-call-delta",
                     "chatId": chat_id,
-                    "data": {"index": event.index, "partialJson": partial},
+                    "toolCallId": "",  # Not available on deltas, only on start
+                    "delta": partial,
                 })
 
         elif event.event_type == "content_block_start" and event.block_type == "tool_use":
             await self._broadcast({
-                "type": "tool-use-start",
+                "event": "tool-call-start",
                 "chatId": chat_id,
-                "data": {
-                    "toolCallId": event.block_id,
-                    "toolName": event.block_name,
-                    "index": event.index,
-                },
+                "toolCallId": event.block_id,
+                "name": event.block_name,
             })
 
     # -- Assistant events: complete content blocks ---------------------------
@@ -753,9 +755,10 @@ class Chat:
                     "argsText": json.dumps(block.get("input", {})),
                 }
                 await self._broadcast({
-                    "type": "tool-call",
+                    "event": "tool-call-start",
                     "chatId": chat_id,
-                    "data": tool_data,
+                    "toolCallId": tool_data["toolCallId"],
+                    "name": tool_data["toolName"],
                 })
                 self._ensure_assistant()
                 self._current_assistant.parts.append({"type": "tool-call", **tool_data})
@@ -779,10 +782,14 @@ class Chat:
                     # Re-broadcast as user-message with full metadata.
                     # Same event type as the initial send — progressive
                     # enhancement. Frontend reconciles by message ID.
+                    wire = msg.to_wire()
                     await self._broadcast({
-                        "type": "user-message",
+                        "event": "user-message",
                         "chatId": chat_id,
-                        "data": msg.to_wire(),
+                        "messageId": wire.get("id", ""),
+                        "content": wire.get("content", []),
+                        "memories": wire.get("memories", []),
+                        "timestamp": wire.get("timestamp", ""),
                     })
                     break
 
@@ -798,13 +805,12 @@ class Chat:
                     result_text = str(content)
 
                 await self._broadcast({
-                    "type": "tool-result",
+                    "event": "tool-call-result",
                     "chatId": chat_id,
-                    "data": {
-                        "toolCallId": tool_use_id,
-                        "result": result_text,
-                        "isError": block.get("is_error", False),
-                    },
+                    "toolCallId": tool_use_id,
+                    "name": "",  # Not available in tool_result echo
+                    "args": {},
+                    "result": result_text,
                 })
 
                 # Update the tool-call part in the accumulator
@@ -845,10 +851,12 @@ class Chat:
             msg._dirty = True
 
             # Broadcast the coalesced assistant-message
+            wire = msg.to_wire()
             await self._broadcast({
-                "type": "assistant-message",
+                "event": "assistant-message",
                 "chatId": chat_id,
-                "data": msg.to_wire(),
+                "messageId": wire.get("id", ""),
+                "content": wire.get("parts", []),
             })
 
             # Persist all dirty messages (including this one) to Postgres
@@ -919,9 +927,9 @@ class Chat:
 
         # Broadcast updated state
         await self._broadcast({
-            "type": "chat-state",
+            "event": "chat-state",
             "chatId": chat_id,
-            "data": self.wire_state(),
+            "state": self.state.wire_value,
         })
 
         # Context truncation detection
@@ -935,7 +943,7 @@ class Chat:
             from alpha_app.memories.recall import clear_seen
             clear_seen(chat_id)
             await self._broadcast({
-                "type": "exception",
+                "event": "exception",
                 "chatId": chat_id,
                 "data": {
                     "exceptionType": "context-loss-detected",
@@ -951,7 +959,7 @@ class Chat:
         api_error = self.pop_api_error()
         if api_error:
             await self._broadcast({
-                "type": "exception",
+                "event": "exception",
                 "chatId": chat_id,
                 "data": {
                     "exceptionType": "api-error",
@@ -978,7 +986,7 @@ class Chat:
 
         elif event.subtype == "task_started":
             await self._broadcast({
-                "type": "agent-started",
+                "event": "agent-started",
                 "chatId": chat_id,
                 "data": {
                     "taskId": event.raw.get("task_id", ""),
@@ -992,7 +1000,7 @@ class Chat:
         elif event.subtype == "task_progress":
             usage = event.raw.get("usage", {})
             await self._broadcast({
-                "type": "agent-progress",
+                "event": "agent-progress",
                 "chatId": chat_id,
                 "data": {
                     "taskId": event.raw.get("task_id", ""),
@@ -1012,7 +1020,7 @@ class Chat:
             usage = event.raw.get("usage", {})
 
             await self._broadcast({
-                "type": "agent-done",
+                "event": "agent-done",
                 "chatId": chat_id,
                 "data": {
                     "taskId": task_id,
@@ -1038,7 +1046,7 @@ class Chat:
             await self.flush()
 
             await self._broadcast({
-                "type": "system-message",
+                "event": "system-message",
                 "chatId": chat_id,
                 "data": sys_msg.to_wire(),
             })
@@ -1048,7 +1056,7 @@ class Chat:
     async def _handle_error(self, event: ErrorEvent) -> None:
         """Bookshelf: nothing. Broadcast: error event."""
         await self._broadcast({
-            "type": "error", "chatId": self.id, "data": event.message,
+            "event": "error", "chatId": self.id, "code": "subprocess-error", "message": event.message,
         })
 
     def _ensure_assistant(self) -> None:
