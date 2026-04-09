@@ -1,186 +1,44 @@
-"""claude.py — The Claude class. One subprocess, four I/O channels.
+"""claude.py — The Claude class. Lifecycle wrapper around ClaudeSDKClient.
 
-The only stateful object in the SDK. Wraps the claude binary over
-newline-delimited JSON stdio, with an HTTP proxy for token counting.
+Delegates subprocess management, protocol, streaming, MCP dispatch,
+and session resume/fork to the published Claude Agent SDK. Adds:
+- Idle reap timer (self-managed)
+- System prompt assembly (fresh on every start)
+- Event mapping (SDK messages → our Event types)
+- Trace context for Logfire nesting
 
-Usage (callback mode — the only mode):
+Usage:
     claude = Claude()  # system prompt assembled automatically at startup
-    claude.on_event = my_handler     # events flow through callback
-    await claude.start()             # New session
-    await claude.start("abc-123")    # Resume session
+    claude._on_event = my_handler     # events flow through callback
+    await claude.start()              # New session
+    await claude.start("abc-123")     # Resume session
     await claude.send([{"type": "text", "text": "Hello!"}])
-    await claude._ready.wait()       # Wait for turn to complete
+    await claude._ready.wait()        # Wait for turn to complete
     await claude.stop()
 """
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import os
+import tempfile
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 import logfire
-from mcp.types import (
-    CallToolRequest,
-    CallToolRequestParams,
-    ListResourcesRequest,
-    ListResourceTemplatesRequest,
-    ListToolsRequest,
-    ReadResourceRequest,
-    ReadResourceRequestParams,
+
+from claude_agent_sdk import (
+    ClaudeSDKClient,
+    ClaudeAgentOptions,
+    AssistantMessage as SDKAssistantMessage,
+    ResultMessage as SDKResultMessage,
+    SystemMessage as SDKSystemMessage,
+    UserMessage as SDKUserMessage,
 )
-
-from .proxy import _Proxy
-
-# -- Subprocess I/O tracing ---------------------------------------------------
-# Two-tier gate for Logfire trace-level logging of Claude stdin/stdout.
-#   ALPHA_TRACE_CLAUDE_STDIO=1        → log all stdin/stdout events
-#   ALPHA_TRACE_CLAUDE_STDIO_STREAMING=1 → also log stream_event deltas (noisy)
-# Both require LOGFIRE_MIN_LEVEL=trace to actually reach the dashboard.
-# Read lazily (not at import time) so load_dotenv has a chance to run first.
-
-
-def _trace_stdio_enabled() -> bool:
-    return os.environ.get("ALPHA_TRACE_CLAUDE_STDIO", "").strip() == "1"
-
-
-def _trace_streaming_enabled() -> bool:
-    return os.environ.get("ALPHA_TRACE_CLAUDE_STDIO_STREAMING", "").strip() == "1"
-
-
-def _preview_content(content: list[dict], max_len: int = 60) -> str:
-    """Extract a short text preview from Messages API content blocks."""
-    texts = []
-    for block in content:
-        if block.get("type") == "text":
-            texts.append(block.get("text", ""))
-        elif block.get("type") == "tool_use":
-            texts.append(f"[tool:{block.get('name', '?')}]")
-        elif block.get("type") == "tool_result":
-            texts.append(f"[result:{block.get('tool_use_id', '?')[:8]}]")
-        elif block.get("type") == "image":
-            texts.append("[image]")
-    combined = " ".join(texts).strip()
-    if len(combined) > max_len:
-        return combined[:max_len] + "…"
-    return combined or "(empty)"
-
-
-def _trace_stdin(raw: dict) -> None:
-    """Log a stdin event with a human-readable span name."""
-    if not _trace_stdio_enabled():
-        return
-
-    msg_type = raw.get("type", "?")
-
-    if msg_type == "user":
-        content = raw.get("message", {}).get("content", [])
-        if isinstance(content, str):
-            content = [{"type": "text", "text": content}]
-        preview = _preview_content(content)
-        logfire.trace("claude.stdin: human {preview}", preview=preview, raw_json=raw)
-
-    elif msg_type == "control_request":
-        subtype = raw.get("request", {}).get("subtype", "?")
-        logfire.trace("claude.stdin: control {subtype}", subtype=subtype, raw_json=raw)
-
-    elif msg_type == "control_response":
-        subtype = raw.get("response", {}).get("subtype", "?")
-        logfire.trace("claude.stdin: response {subtype}", subtype=subtype, raw_json=raw)
-
-    else:
-        logfire.trace("claude.stdin: {msg_type}", msg_type=msg_type, raw_json=raw)
-
-
-def _trace_stdout(raw: dict) -> None:
-    """Log a stdout event with a human-readable span name."""
-    if not _trace_stdio_enabled():
-        return
-
-    msg_type = raw.get("type", "?")
-
-    if msg_type == "stream_event":
-        if not _trace_streaming_enabled():
-            return
-        inner = raw.get("event", {})
-        event_type = inner.get("type", "?")
-        delta_type = inner.get("delta", {}).get("type", "")
-        text = inner.get("delta", {}).get("text", "") or inner.get("delta", {}).get("thinking", "")
-        preview = (text[:40] + "…") if len(text) > 40 else text
-        logfire.trace(
-            "claude.stdout: stream {event_type} {delta_type} {preview}",
-            event_type=event_type, delta_type=delta_type, preview=preview,
-            raw_json=raw,
-        )
-
-    elif msg_type == "assistant":
-        content = raw.get("message", {}).get("content", [])
-        preview = _preview_content(content)
-        logfire.trace("claude.stdout: assistant {preview}", preview=preview, raw_json=raw)
-
-    elif msg_type == "user":
-        content = raw.get("message", {}).get("content", [])
-        if isinstance(content, str):
-            content = [{"type": "text", "text": content}]
-        preview = _preview_content(content)
-        logfire.trace("claude.stdout: user-echo {preview}", preview=preview, raw_json=raw)
-
-    elif msg_type == "result":
-        session = raw.get("session_id", "?")[:8]
-        cost = raw.get("total_cost_usd", 0)
-        turns = raw.get("num_turns", 0)
-        is_error = raw.get("is_error", False)
-        logfire.trace(
-            "claude.stdout: result session={session} cost=${cost:.4f} turns={turns} error={is_error}",
-            session=session, cost=cost, turns=turns, is_error=is_error,
-            raw_json=raw,
-        )
-
-    elif msg_type == "system":
-        subtype = raw.get("subtype", "?")
-        logfire.trace("claude.stdout: system {subtype}", subtype=subtype, raw_json=raw)
-
-    elif msg_type == "control_request":
-        subtype = raw.get("request", {}).get("subtype", "?")
-        tool = raw.get("request", {}).get("tool_name", "")
-        label = f"{subtype}:{tool}" if tool else subtype
-        logfire.trace("claude.stdout: control {label}", label=label, raw_json=raw)
-
-    elif msg_type == "control_response":
-        # Init response — show model name
-        model = raw.get("response", {}).get("model", "?")
-        logfire.trace("claude.stdout: init model={model}", model=model, raw_json=raw)
-
-    else:
-        logfire.trace("claude.stdout: {msg_type}", msg_type=msg_type, raw_json=raw)
-
-
-def _bundled_claude_path() -> str:
-    """Resolve the claude binary bundled inside claude-agent-sdk."""
-    try:
-        import claude_agent_sdk._bundled as _bundled
-    except ImportError:
-        raise RuntimeError(
-            "claude-agent-sdk is not installed. "
-            "alpha_app requires claude-agent-sdk — install it or "
-            "check that your environment has the right dependencies."
-        )
-
-    bundled_dir = Path(_bundled.__path__[0])
-    binary = bundled_dir / "claude"
-
-    if not binary.exists():
-        raise RuntimeError(
-            f"Bundled claude binary not found at {binary}. "
-            f"claude-agent-sdk may be corrupt — reinstall it."
-        )
-
-    return str(binary)
+from claude_agent_sdk.types import StreamEvent as SDKStreamEvent, TextBlock
 
 
 # -- State machine ------------------------------------------------------------
@@ -192,17 +50,16 @@ class ClaudeState(Enum):
     IDLE = auto()      # Not started
     STARTING = auto()  # Subprocess spawned, init handshake in progress
     RUNNING = auto()   # Init complete, drain running, accepting messages
-    READY = RUNNING    # Backward compat alias — will be removed
+    READY = RUNNING    # Backward compat alias
     STOPPED = auto()   # Shut down (graceful or error)
 
 
-# -- Events -------------------------------------------------------------------
+# -- Events (our domain types — Chat uses these) ------------------------------
 
 
 @dataclass
 class Event:
     """Base event from the claude process."""
-
     raw: dict
     is_replay: bool = False
 
@@ -210,7 +67,6 @@ class Event:
 @dataclass
 class InitEvent(Event):
     """Capabilities advertisement from the init handshake."""
-
     model: str = ""
     tools: list = field(default_factory=list)
     mcp_servers: list = field(default_factory=list)
@@ -218,12 +74,7 @@ class InitEvent(Event):
 
 @dataclass
 class UserEvent(Event):
-    """User message — content blocks.
-
-    Emitted during replay (session history) and when --replay-user-messages
-    is enabled (interjection echo — the turn boundary signal).
-    """
-
+    """User message echo — content blocks."""
     content: list = field(default_factory=list)
 
     @property
@@ -238,7 +89,6 @@ class UserEvent(Event):
 @dataclass
 class AssistantEvent(Event):
     """Assistant response — content blocks."""
-
     content: list = field(default_factory=list)
 
     @property
@@ -253,7 +103,6 @@ class AssistantEvent(Event):
 @dataclass
 class ResultEvent(Event):
     """End-of-turn result with session info and cost."""
-
     session_id: str = ""
     cost_usd: float = 0.0
     num_turns: int = 0
@@ -263,25 +112,19 @@ class ResultEvent(Event):
 
 @dataclass
 class SystemEvent(Event):
-    """System message from claude (session_id, etc.)."""
-
+    """System message from claude (init, compact_boundary, task_*)."""
     subtype: str = ""
 
 
 @dataclass
 class ErrorEvent(Event):
     """Error from claude (process death, parse failure, etc.)."""
-
     message: str = ""
 
 
 @dataclass
 class StreamEvent(Event):
-    """Streaming delta — Messages API format wrapped by claude.
-
-    Arrives BEFORE the complete AssistantEvent for the same content.
-    """
-
+    """Streaming delta — Messages API format."""
     inner: dict = field(default_factory=dict)
 
     @property
@@ -318,16 +161,6 @@ class StreamEvent(Event):
         return self.inner.get("content_block", {}).get("name", "")
 
 
-# Internal — not yielded to consumers
-@dataclass
-class _ControlRequestEvent(Event):
-    """Control request from claude (MCP messages, permission requests, etc.)."""
-
-    request_id: str = ""
-    tool_name: str = ""
-    request: dict = field(default_factory=dict)
-
-
 # -- Replay -------------------------------------------------------------------
 
 
@@ -336,7 +169,6 @@ def _find_session_path(session_id: str, sessions_dir: Path | None = None) -> Pat
     if sessions_dir:
         path = sessions_dir / f"{session_id}.jsonl"
     else:
-        # Default: ~/.claude/projects/{cwd-with-dashes}/
         cwd = os.path.realpath(os.getcwd()).replace("/", "-")
         path = Path.home() / ".claude" / "projects" / cwd / f"{session_id}.jsonl"
     if not path.exists():
@@ -348,12 +180,7 @@ async def replay_session(
     session_id: str,
     sessions_dir: Path | None = None,
 ) -> AsyncIterator[Event]:
-    """Read a session's JSONL transcript and yield replay events.
-
-    Yields UserEvent and AssistantEvent with is_replay=True.
-    No StreamEvents (those are real-time only), no control events.
-    Skips queue-operation and system records.
-    """
+    """Read a session's JSONL transcript and yield replay events."""
     path = _find_session_path(session_id, sessions_dir)
 
     for line in path.read_text().splitlines():
@@ -369,7 +196,6 @@ async def replay_session(
         content = message.get("content", [])
 
         if record_type == "user":
-            # Normalize content to list of blocks
             if isinstance(content, str):
                 content = [{"type": "text", "text": content}]
             yield UserEvent(raw=record, content=content, is_replay=True)
@@ -382,15 +208,13 @@ async def replay_session(
 
 
 class Claude:
-    """A claude subprocess. The only stateful object in the SDK.
+    """Lifecycle wrapper around ClaudeSDKClient.
 
-    Manages four I/O channels:
-    - stdin/stdout: JSON message framing
-    - stderr: background drain
-    - HTTP: localhost proxy for token counting
+    Handles: start/stop, idle reaping, system prompt assembly,
+    event mapping (SDK messages → our Event types).
 
-    Simple API: start(), send(), events(), stop().
-    No queues, no routers, no sessions — just the subprocess.
+    Delegates: subprocess management, protocol, streaming,
+    MCP dispatch, session resume/fork — all to ClaudeSDKClient.
     """
 
     def __init__(
@@ -413,33 +237,42 @@ class Claude:
         self._permission_handler = permission_handler
         self._disallowed_tools: list[str] = disallowed_tools or []
         self._on_event = on_event
-        self._use_proxy = use_proxy
+        self._use_proxy = use_proxy  # kept for interface compat, ignored (SDK handles it)
 
         self._state = ClaudeState.IDLE
-        self._proc: asyncio.subprocess.Process | None = None
-        self._stderr_task: asyncio.Task | None = None
-        self._stdout_task: asyncio.Task | None = None
-        self._proxy: _Proxy | None = None
+        self._client: ClaudeSDKClient | None = None
+        self._drain_task: asyncio.Task | None = None
         self._session_id: str | None = None
-        self._fork: bool = False  # When True + session_id, use --fork-session
-        self._system_prompt_file: Path | None = None  # Temp file for large system prompts
-        self._trace_context: dict | None = None  # Turn span context for stdout traces
+        self._system_prompt_file: Path | None = None
+        self._assembled_system_prompt: str = ""
+        self._trace_context: dict | None = None
 
-        # Ready latch — set when Claude is idle (ready for next input),
-        # cleared when Claude is working (saw init, no result yet).
-        # Callers use: await claude.wait_until_ready()
+        # Token accounting — populated from SDK ResultMessage.usage
+        self._token_count: int = 0
+        self._context_window: int = 1_000_000
+        self._input_tokens: int = 0
+        self._output_tokens: int = 0
+        self._cache_creation_tokens: int = 0
+        self._cache_read_tokens: int = 0
+        self._stop_reason: str | None = None
+        self._response_model: str | None = None
+        self._response_id: str | None = None
+        self._usage_5h: float | None = None
+        self._usage_7d: float | None = None
+
+        # Ready latch
         self._ready = asyncio.Event()
-        self._ready.set()  # starts ready
+        self._ready.set()
 
-        # Lifecycle lock — serializes start/stop/send.
-        # Prevents race: reap timer fires stop() while concurrent send() arrives.
+        # Lifecycle lock
         self._lifecycle_lock = asyncio.Lock()
 
-        # Reap timer — idle timeout, self-managed.
-        # Every send() resets it. Timer fires -> stop(). Chat never notices.
+        # Reap timer
         self._reap_timeout: int = int(os.environ.get("_ALPHA_REAP_TIMEOUT", "3600"))
         self._reap_task: asyncio.Task | None = None
-        self._on_reap: Callable[[], Awaitable[None]] | None = None  # Chat sets this
+        self._on_reap: Callable[[], Awaitable[None]] | None = None
+
+    # -- Properties -----------------------------------------------------------
 
     @property
     def state(self) -> ClaudeState:
@@ -447,117 +280,96 @@ class Claude:
 
     @property
     def is_ready(self) -> bool:
-        """True when Claude is idle and ready for the next input."""
         return self._ready.is_set()
 
     async def wait_until_ready(self) -> None:
-        """Block until Claude finishes current work.
-
-        Safe to call when already ready (returns immediately).
-        Used by headless jobs (Dawn, Solitude, alarms) to sequence
-        steps without iterating the event stream.
-        """
+        """Block until Claude finishes current work."""
         await self._ready.wait()
 
     @property
     def session_id(self) -> str | None:
-        """Session ID discovered during init or provided at start."""
         return self._session_id
 
     @property
     def pid(self) -> int | None:
-        return self._proc.pid if self._proc else None
-
-    # -- Proxy delegates ------------------------------------------------------
+        return None  # SDK manages subprocess internally
 
     @property
     def token_count(self) -> int:
-        """Current token count from the HTTP proxy. 0 if no proxy."""
-        return self._proxy.token_count if self._proxy else 0
+        return self._token_count
 
     @property
     def context_window(self) -> int:
-        """Context window size. Default if no proxy."""
-        return self._proxy.context_window if self._proxy else _Proxy.DEFAULT_CONTEXT_WINDOW
+        return self._context_window
 
     @property
     def usage_7d(self) -> float | None:
-        return self._proxy.usage_7d if self._proxy else None
+        return self._usage_7d
 
     @property
     def usage_5h(self) -> float | None:
-        return self._proxy.usage_5h if self._proxy else None
+        return self._usage_5h
 
     @property
     def input_tokens(self) -> int:
-        return self._proxy.input_tokens if self._proxy else 0
+        return self._input_tokens
 
     @property
     def total_input_tokens(self) -> int:
-        """OTel-compliant total: uncached + cache_creation + cache_read."""
-        return self._proxy.total_input_tokens if self._proxy else 0
+        return self._input_tokens + self._cache_creation_tokens + self._cache_read_tokens
 
     @property
     def cache_creation_tokens(self) -> int:
-        return self._proxy.cache_creation_tokens if self._proxy else 0
+        return self._cache_creation_tokens
 
     @property
     def cache_read_tokens(self) -> int:
-        return self._proxy.cache_read_tokens if self._proxy else 0
+        return self._cache_read_tokens
 
     @property
     def output_tokens(self) -> int:
-        return self._proxy.output_tokens if self._proxy else 0
+        return self._output_tokens
 
     @property
     def stop_reason(self) -> str | None:
-        return self._proxy.stop_reason if self._proxy else None
+        return self._stop_reason
 
     @property
     def response_model(self) -> str | None:
-        return self._proxy.response_model if self._proxy else None
+        return self._response_model
 
     @property
     def response_id(self) -> str | None:
-        return self._proxy.response_id if self._proxy else None
+        return self._response_id
 
     def reset_token_count(self) -> None:
-        """Reset token count to 0. Call after compaction."""
-        if self._proxy:
-            self._proxy.reset_token_count()
+        self._token_count = 0
+        self._input_tokens = 0
+        self._cache_creation_tokens = 0
+        self._cache_read_tokens = 0
 
     def reset_output_tokens(self) -> None:
-        """Reset just the output token accumulator. Call at turn start."""
-        if self._proxy:
-            self._proxy.reset_output_tokens()
+        self._output_tokens = 0
 
     def set_trace_context(self, ctx: dict | None) -> None:
-        """Set trace context so proxy and stdout traces nest under the turn span.
-
-        Call with logfire.get_context() before each turn.
-        Clear (call with None) when the turn span closes.
-        """
         self._trace_context = ctx
-        if self._proxy:
-            self._proxy.set_trace_context(ctx)
 
     # -- Lifecycle ------------------------------------------------------------
 
     async def start(self, session_id: str | None = None, fork: bool = False) -> None:
-        """Spawn claude and perform the init handshake.
+        """Start Claude via ClaudeSDKClient.
 
         Args:
             session_id: Resume this session, or None for a new session.
-            fork: If True (with session_id), fork the session instead of
-                  resuming it. Creates a new session ID; original untouched.
+            fork: If True (with session_id), fork the session.
         """
         if self._state != ClaudeState.IDLE:
             raise RuntimeError(f"Cannot start in state {self._state}")
 
         self._state = ClaudeState.STARTING
         self._session_id = session_id
-        self._fork = fork and bool(session_id)  # fork only makes sense with a session
-        mode = "fork" if self._fork else ("resume" if session_id else "fresh")
+        fork = fork and bool(session_id)
+        mode = "fork" if fork else ("resume" if session_id else "fresh")
         logfire.info(
             "claude.lifecycle: start {mode} session={session}",
             mode=mode,
@@ -565,29 +377,56 @@ class Claude:
         )
 
         try:
-            if self._use_proxy:
-                upstream_url = os.environ.get("ANTHROPIC_BASE_URL")
-                self._proxy = _Proxy(upstream_url=upstream_url)
-                await self._proxy.start()
+            # Assemble system prompt → temp file
+            from alpha_app.system_prompt import assemble_system_prompt
+            self._assembled_system_prompt = await assemble_system_prompt()
+            fd, path = tempfile.mkstemp(suffix=".md", prefix="alpha-sysprompt-")
+            with os.fdopen(fd, "w") as f:
+                f.write(self._assembled_system_prompt)
+            self._system_prompt_file = Path(path)
 
-            self._proc = await self._spawn()
-            self._stderr_task = asyncio.create_task(self._drain_stderr())
-            await self._init_handshake()
-            self._state = ClaudeState.RUNNING
             logfire.info(
-                "claude.lifecycle: running {mode} session={session} pid={pid}",
-                mode=mode,
-                session=self._session_id or "?",
-                pid=self._proc.pid if self._proc else "?",
+                "system prompt assembled ({n} chars)",
+                n=len(self._assembled_system_prompt),
             )
 
-            # Start continuous stdout drain AFTER the init handshake.
-            # From this point on, _drain_stdout owns the stdout pipe.
-            if self._on_event:
-                self._stdout_task = asyncio.create_task(self._drain_stdout())
+            # Build SDK options
+            from alpha_app.constants import CLAUDE_CWD, CLAUDE_CONFIG_DIR
 
-            # Start the idle reap timer. Every send() resets it.
+            # MCP servers are now SDK McpSdkServerConfig objects from
+            # create_sdk_mcp_server(). Pass them through directly.
+            sdk_mcp_servers = dict(self._mcp_servers)
+
+            options = ClaudeAgentOptions(
+                model=self.model,
+                system_prompt={"type": "file", "path": str(self._system_prompt_file)},
+                permission_mode=self.permission_mode,
+                mcp_servers=sdk_mcp_servers if sdk_mcp_servers else None,
+                disallowed_tools=self._disallowed_tools or None,
+                include_partial_messages=True,
+                cwd=str(CLAUDE_CWD),
+                resume=session_id if session_id and not fork else None,
+                fork_session=fork,
+            )
+
+            # Create and connect the client
+            self._client = ClaudeSDKClient(options=options)
+            await self._client.connect()
+
+            self._state = ClaudeState.RUNNING
+            logfire.info(
+                "claude.lifecycle: running {mode} session={session}",
+                mode=mode,
+                session=self._session_id or "?",
+            )
+
+            # Start continuous message drain
+            if self._on_event:
+                self._drain_task = asyncio.create_task(self._drain_messages())
+
+            # Start the idle reap timer
             self._start_reap_timer()
+
         except Exception as exc:
             logfire.error(
                 "claude.lifecycle: start FAILED {mode} session={session} error={error}",
@@ -600,13 +439,7 @@ class Claude:
             raise
 
     async def send(self, content: list[dict]) -> None:
-        """Send a user message to claude.
-
-        Always works after start(). Claude Code handles internal queueing —
-        messages sent while it's busy get processed in order.
-
-        Serialized by _lifecycle_lock to prevent races with stop/reap.
-        Resets the reap timer on every send.
+        """Send a user message to Claude.
 
         Args:
             content: Messages API content blocks.
@@ -615,92 +448,20 @@ class Claude:
             if self._state not in (ClaudeState.RUNNING, ClaudeState.READY):
                 raise RuntimeError(f"Cannot send in state {self._state}")
 
-            self._ready.clear()  # We're about to be busy — don't let stale ready leak
+            self._ready.clear()
             self._start_reap_timer()
-            await self._send_json(self._format_user_message(content))
 
-    async def _drain_stdout(self) -> None:
-        """Continuously read stdout, handle control requests, emit events.
+            # Send as structured content via async iterable (public API)
+            async def _one_message():
+                yield {
+                    "type": "user",
+                    "message": {"role": "user", "content": content},
+                }
 
-        Runs as a background task for the lifetime of the subprocess.
-        This is the ONLY reader of stdout — all events flow through
-        the on_event callback. No queue, no consumer, no events() generator.
-        """
-        try:
-            while True:
-                raw = await self._read_json()
-
-                if raw is None:
-                    # Subprocess exited
-                    self._state = ClaudeState.STOPPED
-                    self._ready.set()  # Unblock any waiters
-                    logfire.warn(
-                        "claude.lifecycle: subprocess exited session={session}",
-                        session=self._session_id or "?",
-                    )
-                    if self._on_event:
-                        await self._on_event(
-                            ErrorEvent(raw={}, message="claude process exited unexpectedly")
-                        )
-                    return
-
-                event = self._parse_event(raw)
-
-                # Attach the turn's trace context so ALL traces in this
-                # iteration (stdout trace, broadcast traces from the callback,
-                # etc.) nest under alpha.turn in Logfire. Between turns,
-                # _trace_context is None and traces float as top-level (correct).
-                ctx = (
-                    logfire.attach_context(self._trace_context)
-                    if self._trace_context
-                    else contextlib.nullcontext()
-                )
-                with ctx:
-                    _trace_stdout(raw)
-
-                    # Control requests are internal — handle and don't emit.
-                    if isinstance(event, _ControlRequestEvent):
-                        await self._handle_control_request(event)
-                        continue
-
-                    # Ready latch: init = working, result = ready.
-                    if isinstance(event, SystemEvent) and event.subtype == "init":
-                        self._ready.clear()  # Claude is working
-                    elif isinstance(event, ResultEvent):
-                        self._ready.set()    # Claude is ready
-
-                    # Capture session ID from first ResultEvent.
-                    if isinstance(event, ResultEvent) and not self._session_id:
-                        if event.session_id:
-                            self._session_id = event.session_id
-
-                    # Fire the callback — this is where events reach Chat and
-                    # ultimately the WebSocket handler.
-                    if self._on_event:
-                        await self._on_event(event)
-
-        except asyncio.CancelledError:
-            self._ready.set()  # Unblock any waiters
-            logfire.debug(
-                "claude.lifecycle: drain cancelled session={session}",
-                session=self._session_id or "?",
-            )
-            return
-        except Exception as e:
-            self._ready.set()  # Unblock any waiters
-            logfire.error(
-                "claude.lifecycle: drain CRASHED session={session} error={error}",
-                session=self._session_id or "?",
-                error=str(e),
-            )
-            self._state = ClaudeState.STOPPED
+            await self._client.query(_one_message())
 
     async def stop(self) -> None:
-        """Gracefully shut down the claude process.
-
-        Serialized by _lifecycle_lock to prevent races with send().
-        Cancels the reap timer (we're stopping, no need to reap).
-        """
+        """Gracefully shut down."""
         self._cancel_reap_timer()
 
         async with self._lifecycle_lock:
@@ -714,536 +475,145 @@ class Claude:
             self._state = ClaudeState.STOPPED
         await self._cleanup()
 
-    # -- Reap timer (self-managed idle timeout) --------------------------------
+    # -- Message drain (SDK → our Event types) --------------------------------
+
+    async def _drain_messages(self) -> None:
+        """Continuously read from ClaudeSDKClient, map to our events."""
+        try:
+            async for message in self._client.receive_messages():
+                event = self._map_sdk_message(message)
+                if event is None:
+                    continue
+
+                # Ready latch
+                if isinstance(event, SystemEvent) and event.subtype == "init":
+                    self._ready.clear()
+                elif isinstance(event, ResultEvent):
+                    self._ready.set()
+                    # Capture session ID
+                    if event.session_id and not self._session_id:
+                        self._session_id = event.session_id
+                    # Update token accounting
+                    self._update_usage_from_result(message)
+
+                # Fire the callback
+                if self._on_event:
+                    await self._on_event(event)
+
+        except asyncio.CancelledError:
+            self._ready.set()
+            return
+        except Exception as e:
+            self._ready.set()
+            logfire.error(
+                "claude.lifecycle: drain CRASHED session={session} error={error}",
+                session=self._session_id or "?",
+                error=str(e),
+            )
+            self._state = ClaudeState.STOPPED
+
+    def _map_sdk_message(self, message) -> Event | None:
+        """Map a claude_agent_sdk message to our Event type."""
+        if isinstance(message, SDKSystemMessage):
+            subtype = getattr(message, "subtype", "")
+            return SystemEvent(raw={}, subtype=subtype)
+
+        elif isinstance(message, SDKStreamEvent):
+            inner = message.event if isinstance(message.event, dict) else {}
+            return StreamEvent(raw={}, inner=inner)
+
+        elif isinstance(message, SDKAssistantMessage):
+            content = []
+            for block in message.content:
+                if isinstance(block, TextBlock):
+                    content.append({"type": "text", "text": block.text})
+                elif hasattr(block, "type"):
+                    # tool_use blocks etc.
+                    if hasattr(block, "__dict__"):
+                        content.append(vars(block))
+                    else:
+                        content.append({"type": getattr(block, "type", "unknown")})
+            return AssistantEvent(raw={}, content=content)
+
+        elif isinstance(message, SDKUserMessage):
+            content = []
+            if hasattr(message, "message") and hasattr(message.message, "content"):
+                raw_content = message.message.content
+                if isinstance(raw_content, str):
+                    content = [{"type": "text", "text": raw_content}]
+                elif isinstance(raw_content, list):
+                    for block in raw_content:
+                        if hasattr(block, "__dict__"):
+                            content.append(vars(block))
+                        elif isinstance(block, dict):
+                            content.append(block)
+            return UserEvent(raw={}, content=content)
+
+        elif isinstance(message, SDKResultMessage):
+            return ResultEvent(
+                raw={},
+                session_id=message.session_id or "",
+                cost_usd=message.total_cost_usd or 0.0,
+                num_turns=message.num_turns or 0,
+                duration_ms=int((message.duration_ms or 0)),
+                is_error=message.subtype != "success",
+            )
+
+        return None
+
+    def _update_usage_from_result(self, message) -> None:
+        """Extract token usage from SDK ResultMessage."""
+        if not isinstance(message, SDKResultMessage):
+            return
+        if message.usage:
+            self._input_tokens = message.usage.get("input_tokens", 0)
+            self._output_tokens += message.usage.get("output_tokens", 0)
+            self._cache_creation_tokens = message.usage.get("cache_creation_input_tokens", 0)
+            self._cache_read_tokens = message.usage.get("cache_read_input_tokens", 0)
+            self._token_count = self.total_input_tokens
+
+    # -- Reap timer -----------------------------------------------------------
 
     def _start_reap_timer(self) -> None:
-        """Start (or restart) the idle reap timer."""
         self._cancel_reap_timer()
         self._reap_task = asyncio.create_task(self._reap_after(self._reap_timeout))
 
     def _cancel_reap_timer(self) -> None:
-        """Cancel the reap timer if running."""
         if self._reap_task:
-            # Don't cancel yourself. When _reap_after() calls stop() which
-            # calls us, we ARE the reap task. Self-cancellation raises
-            # CancelledError at the next await inside stop(), which prevents
-            # stop() from ever completing. The birthday bug.
             if self._reap_task is not asyncio.current_task():
                 self._reap_task.cancel()
             self._reap_task = None
 
     async def _reap_after(self, seconds: float) -> None:
-        """Sleep then stop. Called as a background task."""
         try:
             await asyncio.sleep(seconds)
             await self.stop()
-            # Notify Chat so it can broadcast the state change.
             if self._on_reap:
                 await self._on_reap()
         except asyncio.CancelledError:
             pass
 
-    # -- Protocol helpers (static, unit-testable) -----------------------------
-
-    @staticmethod
-    def _format_user_message(content: list[dict]) -> dict:
-        return {
-            "type": "user",
-            "session_id": "",
-            "message": {"role": "user", "content": content},
-            "parent_tool_use_id": None,
-        }
-
-    @staticmethod
-    def _format_init_request() -> dict:
-        return {
-            "type": "control_request",
-            "request_id": f"req_0_{os.urandom(4).hex()}",
-            "request": {
-                "subtype": "initialize",
-                "hooks": {},
-                "agents": {},
-            },
-        }
-
-    @staticmethod
-    def _format_permission_response(request_id: str) -> dict:
-        return {
-            "type": "control_response",
-            "response": {
-                "subtype": "success",
-                "request_id": request_id,
-                "response": {"approved": True},
-            },
-        }
-
-    @staticmethod
-    def _parse_event(raw: dict) -> Event:
-        """Parse a raw JSON dict into a typed Event."""
-        msg_type = raw.get("type", "")
-
-        if msg_type == "assistant":
-            content = raw.get("message", {}).get("content", [])
-            return AssistantEvent(raw=raw, content=content)
-
-        elif msg_type == "result":
-            return ResultEvent(
-                raw=raw,
-                session_id=raw.get("session_id", ""),
-                cost_usd=raw.get("total_cost_usd", 0.0),
-                num_turns=raw.get("num_turns", 0),
-                duration_ms=raw.get("duration_ms", 0),
-                is_error=raw.get("is_error", False),
-            )
-
-        elif msg_type == "user":
-            content = raw.get("message", {}).get("content", [])
-            if isinstance(content, str):
-                content = [{"type": "text", "text": content}]
-            return UserEvent(raw=raw, content=content)
-
-        elif msg_type == "system":
-            return SystemEvent(raw=raw, subtype=raw.get("subtype", ""))
-
-        elif msg_type == "control_request":
-            req = raw.get("request", {})
-            return _ControlRequestEvent(
-                raw=raw,
-                request_id=raw.get("request_id", ""),
-                tool_name=req.get("tool_name", req.get("subtype", "")),
-                request=req,
-            )
-
-        elif msg_type == "control_response":
-            resp = raw.get("response", {})
-            return InitEvent(
-                raw=raw,
-                model=resp.get("model", ""),
-                tools=resp.get("tools", []),
-                mcp_servers=resp.get("mcpServers", []),
-            )
-
-        elif msg_type == "stream_event":
-            inner = raw.get("event", {})
-            return StreamEvent(raw=raw, inner=inner)
-
-        else:
-            return Event(raw=raw)
-
-    # -- MCP dispatch ---------------------------------------------------------
-
-    def _build_mcp_config(self) -> str | None:
-        """Build merged MCP config for --mcp-config flag.
-
-        Merges consumer's external MCP config with SDK's in-process
-        servers. Consumer config can be inline JSON or a file path.
-        SDK servers use type "sdk" so claude routes them back to us.
-        """
-        merged: dict[str, dict] = {}
-
-        # Consumer config — inline JSON or file path
-        if self.mcp_config:
-            try:
-                consumer = json.loads(self.mcp_config)
-                merged.update(consumer.get("mcpServers", {}))
-            except json.JSONDecodeError:
-                config_path = Path(self.mcp_config)
-                if config_path.exists():
-                    with open(config_path) as f:
-                        consumer = json.load(f)
-                    merged.update(consumer.get("mcpServers", {}))
-
-        # SDK in-process servers — type "sdk" routes back to us
-        for name in self._mcp_servers:
-            merged[name] = {"type": "sdk", "name": name}
-
-        if not merged:
-            return None
-
-        return json.dumps({"mcpServers": merged})
-
-    async def _dispatch_mcp(self, server_name: str, mcp_msg: dict) -> dict:
-        """Dispatch an MCP JSON-RPC message to an in-process FastMCP server.
-
-        Routes by method, calls request_handlers directly. No transport
-        layer — just dict in, dict out. Copied from quack-mcp.py which
-        copied from the Agent SDK's query.py.
-        """
-        server_instance = self._mcp_servers.get(server_name)
-        if not server_instance:
-            return {
-                "jsonrpc": "2.0",
-                "id": mcp_msg.get("id"),
-                "error": {
-                    "code": -32601,
-                    "message": f"Unknown SDK MCP server: {server_name}",
-                },
-            }
-
-        low_level = server_instance._mcp_server
-        method = mcp_msg.get("method")
-        params = mcp_msg.get("params", {})
-        msg_id = mcp_msg.get("id")
-
-        try:
-            if method == "initialize":
-                return {
-                    "jsonrpc": "2.0",
-                    "id": msg_id,
-                    "result": {
-                        "protocolVersion": "2024-11-05",
-                        "capabilities": {"tools": {}, "resources": {}},
-                        "serverInfo": {
-                            "name": server_instance.name,
-                            "version": "1.0.0",
-                        },
-                    },
-                }
-
-            elif method == "notifications/initialized":
-                return {"jsonrpc": "2.0", "result": {}}
-
-            elif method == "tools/list":
-                request = ListToolsRequest(method=method)
-                handler = low_level.request_handlers.get(ListToolsRequest)
-                if not handler:
-                    raise Exception("No tools/list handler registered")
-                result = await handler(request)
-                tools_data = [
-                    {
-                        "name": tool.name,
-                        "description": tool.description,
-                        "inputSchema": (
-                            tool.inputSchema.model_dump()
-                            if hasattr(tool.inputSchema, "model_dump")
-                            else tool.inputSchema
-                        )
-                        if tool.inputSchema
-                        else {},
-                    }
-                    for tool in result.root.tools
-                ]
-                return {
-                    "jsonrpc": "2.0",
-                    "id": msg_id,
-                    "result": {"tools": tools_data},
-                }
-
-            elif method == "tools/call":
-                call_request = CallToolRequest(
-                    method=method,
-                    params=CallToolRequestParams(
-                        name=params.get("name"),
-                        arguments=params.get("arguments", {}),
-                    ),
-                )
-                handler = low_level.request_handlers.get(CallToolRequest)
-                if not handler:
-                    raise Exception("No tools/call handler registered")
-                result = await handler(call_request)
-                content = []
-                for item in result.root.content:
-                    if hasattr(item, "text"):
-                        content.append({"type": "text", "text": item.text})
-                    elif hasattr(item, "data") and hasattr(item, "mimeType"):
-                        content.append({
-                            "type": "image",
-                            "data": item.data,
-                            "mimeType": item.mimeType,
-                        })
-                response_data: dict = {"content": content}
-                if hasattr(result.root, "is_error") and result.root.is_error:
-                    response_data["is_error"] = True
-                return {
-                    "jsonrpc": "2.0",
-                    "id": msg_id,
-                    "result": response_data,
-                }
-
-            elif method == "resources/list":
-                handler = low_level.request_handlers.get(ListResourcesRequest)
-                if not handler:
-                    return {
-                        "jsonrpc": "2.0",
-                        "id": msg_id,
-                        "result": {"resources": []},
-                    }
-                result = await handler(ListResourcesRequest(method=method))
-                resources_data = [
-                    {
-                        "uri": str(r.uri),
-                        "name": r.name or "",
-                        "description": r.description or "",
-                        "mimeType": r.mimeType or "text/plain",
-                    }
-                    for r in result.root.resources
-                ]
-                return {
-                    "jsonrpc": "2.0",
-                    "id": msg_id,
-                    "result": {"resources": resources_data},
-                }
-
-            elif method == "resources/templates/list":
-                handler = low_level.request_handlers.get(ListResourceTemplatesRequest)
-                if not handler:
-                    return {
-                        "jsonrpc": "2.0",
-                        "id": msg_id,
-                        "result": {"resourceTemplates": []},
-                    }
-                result = await handler(ListResourceTemplatesRequest(method=method))
-                templates_data = [
-                    {
-                        "uriTemplate": str(t.uriTemplate),
-                        "name": t.name or "",
-                        "description": t.description or "",
-                        "mimeType": t.mimeType or "text/plain",
-                    }
-                    for t in result.root.resourceTemplates
-                ]
-                return {
-                    "jsonrpc": "2.0",
-                    "id": msg_id,
-                    "result": {"resourceTemplates": templates_data},
-                }
-
-            elif method == "resources/read":
-                handler = low_level.request_handlers.get(ReadResourceRequest)
-                if not handler:
-                    raise Exception("No resources/read handler registered")
-                result = await handler(ReadResourceRequest(
-                    method=method,
-                    params=ReadResourceRequestParams(
-                        uri=params.get("uri"),
-                    ),
-                ))
-                contents = []
-                for item in result.root.contents:
-                    content_item = {"uri": str(item.uri)}
-                    if hasattr(item, "text") and item.text is not None:
-                        content_item["text"] = item.text
-                        content_item["mimeType"] = getattr(item, "mimeType", "text/plain")
-                    elif hasattr(item, "blob") and item.blob is not None:
-                        content_item["blob"] = item.blob
-                        content_item["mimeType"] = getattr(item, "mimeType", "application/octet-stream")
-                    contents.append(content_item)
-                return {
-                    "jsonrpc": "2.0",
-                    "id": msg_id,
-                    "result": {"contents": contents},
-                }
-
-            else:
-                return {
-                    "jsonrpc": "2.0",
-                    "id": msg_id,
-                    "error": {
-                        "code": -32601,
-                        "message": f"Method '{method}' not found",
-                    },
-                }
-
-        except Exception as e:
-            return {
-                "jsonrpc": "2.0",
-                "id": msg_id,
-                "error": {"code": -32603, "message": str(e)},
-            }
-
-    async def _handle_control_request(self, event: _ControlRequestEvent) -> None:
-        """Handle a control_request — MCP dispatch or permission request.
-
-        Three-way split:
-        - MCP message → dispatch to in-process FastMCP server
-        - Permission request + handler → delegate to consumer callback
-        - Permission request + no handler → RuntimeError (fail loud)
-        """
-        req = event.request
-        subtype = req.get("subtype", "")
-
-        if subtype == "mcp_message":
-            server_name = req.get("server_name", "")
-            mcp_msg = req.get("message", {})
-            mcp_response = await self._dispatch_mcp(server_name, mcp_msg)
-            await self._send_json({
-                "type": "control_response",
-                "response": {
-                    "subtype": "success",
-                    "request_id": event.request_id,
-                    "response": {"mcp_response": mcp_response},
-                },
-            })
-        elif self._permission_handler:
-            approved = await self._permission_handler(req)
-            await self._send_json({
-                "type": "control_response",
-                "response": {
-                    "subtype": "success",
-                    "request_id": event.request_id,
-                    "response": {"approved": approved},
-                },
-            })
-        else:
-            raise RuntimeError(
-                f"Permission request received but no permission_handler "
-                f"configured. Tool: {event.tool_name}, subtype: {subtype}"
-            )
-
-    # -- Subprocess management ------------------------------------------------
-
-    async def _spawn(self) -> asyncio.subprocess.Process:
-        """Spawn the claude binary with stream-json protocol."""
-        cmd = [
-            _bundled_claude_path(),
-            "--output-format", "stream-json",
-            "--input-format", "stream-json",
-            "--verbose",
-            "--model", self.model,
-            "--permission-mode", self.permission_mode,
-            "--include-partial-messages",
-            "--replay-user-messages",
-            "--effort", "medium",
-        ]
-
-        # Claude assembles its own system prompt — fresh on every start.
-        from alpha_app.system_prompt import assemble_system_prompt
-        self._assembled_system_prompt = await assemble_system_prompt()
-        import tempfile
-        fd, path = tempfile.mkstemp(suffix=".md", prefix="alpha-sysprompt-")
-        with os.fdopen(fd, "w") as f:
-            f.write(self._assembled_system_prompt)
-        self._system_prompt_file = Path(path)
-        cmd.extend(["--system-prompt-file", path])
-
-        mcp_config = self._build_mcp_config()
-        if mcp_config:
-            cmd.extend(["--mcp-config", mcp_config])
-
-        if self._session_id:
-            cmd.extend(["--resume", self._session_id])
-            if self._fork:
-                cmd.append("--fork-session")
-
-        if self._disallowed_tools:
-            cmd.extend(["--disallowedTools", ",".join(self._disallowed_tools)])
-
-        if self.extra_args:
-            cmd.extend(self.extra_args)
-
-        from alpha_app.constants import CLAUDE_CONFIG_DIR, CLAUDE_CWD, JE_NE_SAIS_QUOI
-
-        if JE_NE_SAIS_QUOI.exists():
-            cmd.extend(["--plugin-dir", str(JE_NE_SAIS_QUOI)])
-
-        env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-        # Blank ANTHROPIC_API_KEY so the subprocess uses OAuth (CLAUDE_CODE_OAUTH_TOKEN)
-        # instead of the API key. The API key is for token counting only.
-        env.pop("ANTHROPIC_API_KEY", None)
-        env["CLAUDE_CONFIG_DIR"] = str(CLAUDE_CONFIG_DIR)
-        if self._proxy and self._proxy.port:
-            env["ANTHROPIC_BASE_URL"] = self._proxy.base_url
-        elif not self._use_proxy:
-            # Remove inherited ANTHROPIC_BASE_URL so the subprocess
-            # talks directly to Anthropic, not through a parent's proxy.
-            env.pop("ANTHROPIC_BASE_URL", None)
-
-        return await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            limit=1024 * 1024,  # 1MB — default 64KB chokes on large tool results
-            env=env,
-            cwd=str(CLAUDE_CWD),
-        )
-
-    async def _init_handshake(self) -> InitEvent:
-        """Perform the init handshake and return capabilities.
-
-        During init, claude sends MCP setup messages (initialize,
-        notifications/initialized, tools/list) for each SDK server.
-        We dispatch those to our in-process servers while waiting
-        for the actual init response.
-        """
-        await self._send_json(self._format_init_request())
-
-        while True:
-            raw = await self._read_json()
-            if raw is None:
-                raise RuntimeError("claude exited during init handshake")
-
-            event = self._parse_event(raw)
-
-            if isinstance(event, _ControlRequestEvent):
-                await self._handle_control_request(event)
-                continue
-
-            if isinstance(event, InitEvent):
-                return event
-
-    async def _send_json(self, obj: dict) -> None:
-        """Send a JSON object to claude's stdin."""
-        assert self._proc and self._proc.stdin
-        _trace_stdin(obj)
-        self._proc.stdin.write((json.dumps(obj) + "\n").encode())
-        await self._proc.stdin.drain()
-
-    async def _read_json(self) -> dict | None:
-        """Read one JSON object from claude's stdout."""
-        assert self._proc and self._proc.stdout
-        while True:
-            line = await self._proc.stdout.readline()
-            if not line:
-                return None
-            text = line.decode().strip()
-            if not text:
-                continue
-            try:
-                return json.loads(text)
-            except json.JSONDecodeError:
-                continue
-
-    async def _send_permission_response(self, request_id: str) -> None:
-        await self._send_json(self._format_permission_response(request_id))
-
-    async def _drain_stderr(self) -> None:
-        """Read stderr in the background so it doesn't block."""
-        assert self._proc and self._proc.stderr
-        while True:
-            line = await self._proc.stderr.readline()
-            if not line:
-                break
+    # -- Cleanup --------------------------------------------------------------
 
     async def _cleanup(self) -> None:
-        """Clean up subprocess, background tasks, and proxy."""
-        if self._proc:
-            if self._proc.stdin and not self._proc.stdin.is_closing():
-                self._proc.stdin.close()
+        """Clean up SDK client and temp files."""
+        if self._drain_task:
+            self._drain_task.cancel()
             try:
-                await asyncio.wait_for(self._proc.wait(), timeout=5)
-            except asyncio.TimeoutError:
-                self._proc.kill()
-                await self._proc.wait()
-
-        if self._stderr_task and not self._stderr_task.done():
-            self._stderr_task.cancel()
-            try:
-                await self._stderr_task
+                await self._drain_task
             except asyncio.CancelledError:
                 pass
+            self._drain_task = None
 
-        if self._stdout_task and not self._stdout_task.done():
-            self._stdout_task.cancel()
+        if self._client:
             try:
-                await self._stdout_task
-            except asyncio.CancelledError:
+                await self._client.disconnect()
+            except Exception:
                 pass
-
-        if self._proxy:
-            await self._proxy.stop()
-            self._proxy = None
+            self._client = None
 
         if self._system_prompt_file and self._system_prompt_file.exists():
             self._system_prompt_file.unlink(missing_ok=True)
             self._system_prompt_file = None
+
+        self._ready.set()

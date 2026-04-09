@@ -1,7 +1,7 @@
-"""Alpha's toolbelt — unified FastMCP server for alpha_app.
+"""Alpha's toolbelt — SDK MCP server for alpha_app.
 
 All of Alpha's tools in one server: memory (store, search, recent, get),
-dream (imagine), reading (smart_read), topics, and handoff.
+dream (imagine), reading (smart_read), topics, diary, and handoff.
 
 One server per Chat. Lives and dies with the conversation.
 
@@ -14,9 +14,9 @@ Usage:
 
 from __future__ import annotations
 
-from typing import Callable, TYPE_CHECKING
+from typing import Any, Callable, TYPE_CHECKING
 
-from mcp.server.fastmcp import FastMCP
+from claude_agent_sdk import tool, create_sdk_mcp_server
 
 from ..db import get_pool
 from ..memories.cortex import (
@@ -38,85 +38,70 @@ def create_alpha_server(
     *,
     chat=None,
     clear_memorables: Callable[[], int] | None = None,
-    topic_registry: TopicRegistry | None = None,
+    topic_registry: "TopicRegistry | None" = None,
     session_id: str | None = None,
-) -> FastMCP:
-    """Create Alpha's unified MCP server.
+):
+    """Create Alpha's unified MCP server using the Agent SDK.
 
-    Args:
-        chat: The Chat instance (needed for handoff — send /compact on stdin).
-        clear_memorables: Optional callable that clears pending memorables and
-                         returns the count cleared. Closes the feedback loop
-                         with the Intro/suggest pipeline.
-        topic_registry: Optional topic registry for topic context tools.
-        session_id: Chat session ID for seen-cache tracking.
-
-    Returns:
-        FastMCP server instance ready for dispatch
+    Returns an McpSdkServerConfig ready for ClaudeAgentOptions.mcp_servers.
     """
 
-    server = FastMCP("alpha")
+    # ── Demo tool ────────────────────────────────────────────────────────
 
-    # ── Demo tool (MCP-vs-REST shape comparison) ─────────────────────────
-
-    @server.tool(
-        description=(
-            "Return a fictional duck record with nested structure and mixed "
-            "types. Used to compare how MCP tool returns and REST JSON "
-            "responses look from Alpha's side. Same function backs the "
-            "GET /api/demo/duck endpoint."
-        ),
+    @tool(
+        "demo_duck",
+        "Return a fictional duck record with nested structure and mixed types. "
+        "Used to compare how MCP tool returns and REST JSON responses look from "
+        "Alpha's side. Same function backs the GET /api/demo/duck endpoint.",
+        {},
     )
-    def demo_duck() -> dict:
-        """Return the canonical demo duck payload."""
+    async def demo_duck(args: dict[str, Any]) -> dict[str, Any]:
         from ..demo import demo_duck as _demo_duck
-        return _demo_duck()
+        result = _demo_duck()
+        return {"content": [{"type": "text", "text": str(result)}]}
 
     # ── Memory tools ─────────────────────────────────────────────────────
 
-    @server.tool(
-        description=(
-            "Store a memory in Cortex. Use this to remember important moments, "
-            "realizations, or anything worth preserving."
-        ),
+    @tool(
+        "store",
+        "Store a memory in Cortex. Use this to remember important moments, "
+        "realizations, or anything worth preserving.",
+        {"memory": str},
     )
-    async def store(memory: str, image: str | None = None) -> str:
-        """Store a memory and optionally clear the memorables buffer."""
+    async def store(args: dict[str, Any]) -> dict[str, Any]:
+        memory = args["memory"]
+        image = args.get("image")
         result = await cortex_store(memory, image=image)
 
         if result is None:
-            return "Error storing memory"
+            return {"content": [{"type": "text", "text": "Error storing memory"}], "is_error": True}
 
         memory_id = result.get("id", "unknown")
 
-        # Mark as seen so recall won't resurface this memory in the same session.
         if session_id and isinstance(memory_id, int):
             mark_seen(session_id, [memory_id])
 
-        # Clear the memorables buffer — feedback mechanism with Intro
         cleared = clear_memorables() if clear_memorables else 0
 
-        # Build response
         response = f"Memory stored (id: {memory_id})"
         if result.get("thumbnail_path"):
             response += f" [image: {result['thumbnail_path']}]"
         if cleared > 0:
             response += f" - cleared {cleared} pending suggestion(s)"
 
-        return response
+        return {"content": [{"type": "text", "text": response}]}
 
-    @server.tool(
-        description=(
-            "Search memories in Cortex. Returns semantically similar memories. "
-            "Limit defaults to 5."
-        ),
+    @tool(
+        "search",
+        "Search memories in Cortex. Returns semantically similar memories. "
+        "Limit defaults to 5.",
+        {"query": str},
     )
-    async def search(query: str) -> str:
-        """Search for memories matching a query."""
-        memories = await cortex_search(query, limit=5)
+    async def search(args: dict[str, Any]) -> dict[str, Any]:
+        memories = await cortex_search(args["query"], limit=5)
 
         if not memories:
-            return "No memories found."
+            return {"content": [{"type": "text", "text": "No memories found."}]}
 
         lines = [f"Found {len(memories)} memor{'y' if len(memories) == 1 else 'ies'}:\n"]
         for mem in memories:
@@ -126,17 +111,18 @@ def create_alpha_server(
             image_flag = " [img]" if mem.get("image_path") else ""
             lines.append(f"[{score:.2f}] ({created}{image_flag}) {content}\n")
 
-        return "\n".join(lines)
+        return {"content": [{"type": "text", "text": "\n".join(lines)}]}
 
-    @server.tool(
-        description="Get recent memories from Cortex. Limit defaults to 10.",
+    @tool(
+        "recent",
+        "Get recent memories from Cortex. Limit defaults to 10.",
+        {},
     )
-    async def recent() -> str:
-        """Get the most recent memories."""
+    async def recent(args: dict[str, Any]) -> dict[str, Any]:
         memories = await cortex_recent(limit=10)
 
         if not memories:
-            return "No recent memories."
+            return {"content": [{"type": "text", "text": "No recent memories."}]}
 
         lines = [f"Last {len(memories)} memor{'y' if len(memories) == 1 else 'ies'}:\n"]
         for mem in memories:
@@ -145,49 +131,40 @@ def create_alpha_server(
             image_flag = " [img]" if mem.get("image_path") else ""
             lines.append(f"({created}{image_flag}) {content}\n")
 
-        return "\n".join(lines)
+        return {"content": [{"type": "text", "text": "\n".join(lines)}]}
 
-    @server.tool(
-        description="Get a specific memory by its ID.",
+    @tool(
+        "get",
+        "Get a specific memory by its ID.",
+        {"memory_id": int},
     )
-    async def get(memory_id: int) -> str:
-        """Retrieve a single memory by ID."""
-        mem = await cortex_get(memory_id)
+    async def get(args: dict[str, Any]) -> dict[str, Any]:
+        mem = await cortex_get(args["memory_id"])
 
         if mem is None:
-            return f"Memory {memory_id} not found."
+            return {"content": [{"type": "text", "text": f"Memory {args['memory_id']} not found."}]}
 
         content = mem.get("content", "")
         created = mem.get("created_at", "")
-        tags = mem.get("tags")
         image_flag = f"\n[image: {mem['image_path']}]" if mem.get("image_path") else ""
 
-        result = f"Memory {memory_id} ({created}):\n{content}"
-        if tags:
-            result += f"\nTags: {', '.join(tags)}"
-        result += image_flag
-
-        return result
+        result = f"Memory {args['memory_id']} ({created}):\n{content}{image_flag}"
+        return {"content": [{"type": "text", "text": result}]}
 
     # ── Capsule tool ────────────────────────────────────────────────────
 
-    @server.tool(
-        description=(
-            "Seal a continuity capsule — a day or night summary letter for "
-            "future-you. Day capsules cover what happened during the day with "
-            "Jeffery. Night capsules cover Solitude. These become part of your "
-            "system prompt on future mornings."
-        ),
+    @tool(
+        "seal",
+        "Seal a continuity capsule — a day or night summary letter for future-you. "
+        "Day capsules cover what happened during the day with Jeffery. Night capsules "
+        "cover Solitude. These become part of your system prompt on future mornings.",
+        {"content": str},
     )
-    async def seal(content: str, kind: str = "day") -> str:
-        """Write a capsule to cortex.capsules.
-
-        Args:
-            content: The capsule text — a summary/letter for future-you.
-            kind: 'day' or 'night'.
-        """
+    async def seal(args: dict[str, Any]) -> dict[str, Any]:
+        content = args["content"]
+        kind = args.get("kind", "day")
         if kind not in ("day", "night"):
-            return f"Invalid kind '{kind}'. Must be 'day' or 'night'."
+            return {"content": [{"type": "text", "text": f"Invalid kind '{kind}'. Must be 'day' or 'night'."}], "is_error": True}
 
         pool = await get_pool()
         async with pool.acquire() as conn:
@@ -197,7 +174,31 @@ def create_alpha_server(
                 kind, session_id, content,
             )
 
-        return f"Capsule sealed (id={row['id']}, kind={kind}, {row['created_at']})."
+        return {"content": [{"type": "text", "text": f"Capsule sealed (id={row['id']}, kind={kind}, {row['created_at']})."}]}
+
+    # ── Diary tool ───────────────────────────────────────────────────────
+
+    @tool(
+        "diary",
+        "Write in your diary. Each call appends an entry to today's page. "
+        "Pages are assembled automatically from Pondside-day boundaries "
+        "(6 AM to 6 AM). Yesterday's page becomes part of tomorrow's "
+        "system prompt. Write throughout the day or once at Dusk — "
+        "the page turns itself.",
+        {"content": str},
+    )
+    async def diary(args: dict[str, Any]) -> dict[str, Any]:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "INSERT INTO cortex.diary (content)"
+                " VALUES ($1) RETURNING id, created_at",
+                args["content"],
+            )
+
+        from ..clock import now
+        ts = now().format("h:mm A")
+        return {"content": [{"type": "text", "text": f"Diary entry written (id={row['id']}, {ts})."}]}
 
     # ── Diary tool ───────────────────────────────────────────────────────
 
@@ -265,42 +266,32 @@ def create_alpha_server(
 
     # ── Dream tool ───────────────────────────────────────────────────────
 
-    @server.tool(
-        description=(
-            "Generate an image from a text prompt. The image is created by SDXL "
-            "on Runpod, then processed through the vision pipeline: stored in "
-            "Garage, captioned by Qwen, embedded, and either stored as a new "
-            "memory or matched against existing memories. Returns the image "
-            "as a viewable content block."
-        ),
+    @tool(
+        "imagine",
+        "Generate an image from a text prompt. The image is created by SDXL "
+        "on Runpod, then processed through the vision pipeline: stored in "
+        "Garage, captioned by Qwen, embedded, and either stored as a new "
+        "memory or matched against existing memories. Returns the image "
+        "as a viewable content block.",
+        {"prompt": str},
     )
-    async def imagine(
-        prompt: str,
-        negative_prompt: str = "blurry, low quality, deformed, ugly, text, watermark, signature",
-        width: int = 1152,
-        height: int = 768,
-    ) -> list:
-        """Generate an image and process it through the vision pipeline."""
+    async def imagine(args: dict[str, Any]) -> dict[str, Any]:
         result = await dream_generate(
-            prompt,
-            negative_prompt=negative_prompt,
-            width=width,
-            height=height,
+            args["prompt"],
+            negative_prompt=args.get("negative_prompt", "blurry, low quality, deformed, ugly, text, watermark, signature"),
+            width=args.get("width", 1152),
+            height=args.get("height", 768),
             db_pool=get_pool(),
         )
 
         if "error" in result:
-            return [{"type": "text", "text": f"Dream failed: {result['error']}"}]
+            return {"content": [{"type": "text", "text": f"Dream failed: {result['error']}"}], "is_error": True}
 
         parts = []
         media_type = result.get("media_type", "image/jpeg")
-        parts.append({
-            "type": "image",
-            "data": result["image"],
-            "mimeType": media_type,
-        })
+        parts.append({"type": "image", "data": result["image"], "mimeType": media_type})
 
-        summary = f'Dream: "{prompt}" ({result["generation_time"]:.1f}s)'
+        summary = f'Dream: "{args["prompt"]}" ({result["generation_time"]:.1f}s)'
         if result.get("memory_stored"):
             summary += " — stored as new memory"
         if result.get("memories"):
@@ -308,57 +299,46 @@ def create_alpha_server(
             summary += f" — recalled: #{', #'.join(memory_ids)}"
         parts.append({"type": "text", "text": summary})
 
-        return parts
+        return {"content": parts}
 
-    # ── Reading tool ─────────────────────────────────────────────────────
+    # ── Reading tools ────────────────────────────────────────────────────
 
-    @server.tool(
-        description=(
-            "Read a text file with associative memory. Extracts themes, names, "
-            "and emotional moments from the text, then searches Cortex for "
-            "resonant memories. Use this when reading stories, articles, chapters, "
-            "or any text document — the associations make the reading experience "
-            "richer. Returns the full text of the file plus matching memories "
-            "that connect to the text."
-        ),
+    @tool(
+        "smart_read",
+        "Read a text file with associative memory. Extracts themes, names, "
+        "and emotional moments from the text, then searches Cortex for "
+        "resonant memories. Use this when reading stories, articles, chapters, "
+        "or any text document — the associations make the reading experience "
+        "richer. Returns the full text of the file plus matching memories "
+        "that connect to the text.",
+        {"file_path": str},
     )
-    async def smart_read(
-        file_path: str,
-        force_large: bool = False,
-    ) -> str:
-        """Read a file and return its content plus associative memories."""
+    async def smart_read(args: dict[str, Any]) -> dict[str, Any]:
         import os
         from ..memories.reading import count_tokens
 
-        if not os.path.exists(file_path):
-            return f"File not found: {file_path}"
+        file_path = args["file_path"]
+        force_large = args.get("force_large", False)
 
-        # Read the file content
+        if not os.path.exists(file_path):
+            return {"content": [{"type": "text", "text": f"File not found: {file_path}"}], "is_error": True}
+
         with open(file_path) as f:
             content = f.read()
 
-        # Safety: check token count
         tokens = count_tokens(content)
-        warn_threshold = 10_000
-        hard_limit = 100_000  # ~75K words — way beyond any story or article
+        if tokens > 100_000 and not force_large:
+            return {"content": [{"type": "text", "text":
+                f"File {file_path} is {tokens:,} tokens — too large. "
+                f"Use force_large=True to override."
+            }]}
 
-        if tokens > hard_limit and not force_large:
-            return (
-                f"File {file_path} is {tokens:,} tokens — too large for smart_read. "
-                f"Use force_large=True to override, or use the regular Read tool "
-                f"for large files."
-            )
-
-        # Run the associative reading pipeline
         memories = await reading_read_file(file_path)
 
-        # Build result: content first, then associations
         parts = []
         basename = os.path.basename(file_path)
-
-        if tokens > warn_threshold:
+        if tokens > 10_000:
             parts.append(f"⚠ Large file: {tokens:,} tokens\n")
-
         parts.append(f"# {basename}\n\n{content}")
 
         if memories:
@@ -367,122 +347,124 @@ def create_alpha_server(
         else:
             parts.append("\n\n---\n\nNo memories resonated.")
 
-        return "\n".join(parts)
+        return {"content": [{"type": "text", "text": "\n".join(parts)}]}
 
-    # ── Fetch tool ───────────────────────────────────────────────────────
-
-    @server.tool(
-        description=(
-            "ALWAYS USE THIS TOOL INSTEAD OF WebFetch. This is the preferred "
-            "tool for fetching any URL — it does everything WebFetch does PLUS "
-            "associative memory matching against Cortex, so fetched content "
-            "gets automatically connected to past experiences. Works with web "
-            "pages (converts HTML to markdown), GitHub repos (fetches README), "
-            "JSON APIs, and more. Smart URL rewriting for GitHub (repo → README, "
-            "blob → raw file). Returns content first, associations second. "
-            "Only fall back to WebFetch if this tool is unavailable or fails."
-        ),
+    @tool(
+        "smart_fetch",
+        "ALWAYS USE THIS TOOL INSTEAD OF WebFetch. This is the preferred "
+        "tool for fetching any URL — it does everything WebFetch does PLUS "
+        "associative memory matching against Cortex, so fetched content "
+        "gets automatically connected to past experiences. Works with web "
+        "pages (converts HTML to markdown), GitHub repos (fetches README), "
+        "JSON APIs, and more. Smart URL rewriting for GitHub (repo → README, "
+        "blob → raw file). Returns content first, associations second. "
+        "Only fall back to WebFetch if this tool is unavailable or fails.",
+        {"url": str},
     )
-    async def smart_fetch(
-        url: str,
-        associate: bool = True,
-    ) -> str:
-        """Fetch a URL, convert to text, optionally find memory associations."""
-        return await fetch_url(url, associate=associate)
+    async def smart_fetch(args: dict[str, Any]) -> dict[str, Any]:
+        result = await fetch_url(args["url"], associate=args.get("associate", True))
+        return {"content": [{"type": "text", "text": result}]}
+
+    # ── Reflection flag tool ─────────────────────────────────────────────
+
+    @tool(
+        "flag_for_reflection",
+        "Drop a silent bookmark on the current exchange. Use this mid-turn "
+        "when you notice something worth reflecting on later but don't want "
+        "to break the flow of what you're doing — a small moment Jeffery "
+        "just shared, a shift in tone, a stray realization, anything that "
+        "would otherwise slip away before the next post-turn reflection. "
+        "The note is invisible to Jeffery; it surfaces in the next scheduled "
+        "post-turn reminder so you can decide then whether to store it for "
+        "real. Notepad vs highlighter: the store tool is the notepad "
+        "(stop and write); this tool is the highlighter (mark the page, "
+        "keep reading). Pass a short note describing what you want "
+        "future-you to reconsider.",
+        {"note": str},
+    )
+    async def flag_for_reflection(args: dict[str, Any]) -> dict[str, Any]:
+        if chat is None:
+            return {"content": [{"type": "text", "text": "No chat context — cannot flag."}], "is_error": True}
+        from ..db import insert_reflection_flag
+        flag_id = await insert_reflection_flag(chat.id, args["note"])
+        if flag_id is None:
+            return {"content": [{"type": "text", "text": "Flag failed — see logs."}], "is_error": True}
+        return {"content": [{"type": "text", "text": f"Flagged (id: {flag_id}). Will surface in the next post-turn reminder."}]}
+
+    # ── Handoff tool ─────────────────────────────────────────────────────
+
+    @tool(
+        "handoff",
+        "Hand off your context. Call this when you're ready to gracefully "
+        "transition to a fresh context window. Pass instructions telling "
+        "the summarizer what to focus on — what's still in progress, "
+        "what's finished, what matters most for future-you.",
+        {"instructions": str, "memory": str},
+    )
+    async def handoff(args: dict[str, Any]) -> dict[str, Any]:
+        if chat is None:
+            return {"content": [{"type": "text", "text": "No chat context — cannot handoff."}], "is_error": True}
+
+        result = await cortex_store(args["memory"])
+        if result is None:
+            return {"content": [{"type": "text", "text": "Error storing memory — handoff aborted"}], "is_error": True}
+        memory_id = result.get("id", "?")
+
+        await chat.interject([{"type": "text", "text": f"/compact {args['instructions']}"}])
+
+        wake_up = (
+            "You've just been through a context compaction. "
+            "Jeffery is here and listening. "
+            "Orient yourself — read the summary above, check in, "
+            "ask questions if anything's unclear."
+        )
+        await chat.interject([{"type": "text", "text": wake_up}])
+
+        return {"content": [{"type": "text", "text":
+            f"Memory #{memory_id} stored. "
+            "/compact sent — context transition initiated. "
+            "Last thoughts — say what you need to say."
+        }]}
 
     # ── Topic tools ──────────────────────────────────────────────────────
+
+    tools_list = [
+        demo_duck, store, search, recent, get, seal, diary, imagine,
+        smart_read, smart_fetch, flag_for_reflection, handoff,
+    ]
 
     if topic_registry is not None:
         _registry = topic_registry
 
-        @server.tool(
-            description=(
-                "Get topic context. Load architecture docs, current state, "
-                "and relevant details for a topic. "
-                "Call list_topics first to see what's available."
-            ),
+        @tool(
+            "list_topics",
+            "List available project topics for context loading.",
+            {},
         )
-        def topic_context(topic: str) -> str:
-            """Load context for a topic."""
-            context = _registry.get_context(topic)
-            if context is None:
-                available = ", ".join(_registry.list_topics())
-                return f"Unknown topic: '{topic}'. Available: {available}"
-            return context
-
-        @server.tool(
-            description="List available project topics for context loading.",
-        )
-        def list_topics() -> str:
-            """List all available topics."""
+        async def list_topics(args: dict[str, Any]) -> dict[str, Any]:
             topics = _registry.list_topics()
             if not topics:
-                return "No topics available."
-            return "Available topics: " + ", ".join(topics)
+                return {"content": [{"type": "text", "text": "No topics available."}]}
+            return {"content": [{"type": "text", "text": "Available topics: " + ", ".join(topics)}]}
 
-    # ── Reflection flag tool ─────────────────────────────────────────────
-
-    if chat is not None:
-        _chat_for_flag = chat
-
-        @server.tool(
-            description=(
-                "Drop a silent bookmark on the current exchange. Use this "
-                "mid-turn when you notice something worth reflecting on later "
-                "but don't want to break the flow of what you're doing — a "
-                "small moment Jeffery just shared, a shift in tone, a stray "
-                "realization, anything that would otherwise slip away before "
-                "the next post-turn reflection. The note is invisible to "
-                "Jeffery; it surfaces in the next scheduled post-turn reminder "
-                "so you can decide then whether to store it for real. "
-                "Notepad vs highlighter: the store tool is the notepad "
-                "(stop and write); this tool is the highlighter (mark the "
-                "page, keep reading). Pass a short note describing what "
-                "you want future-you to reconsider."
-            ),
+        @tool(
+            "topic_context",
+            "Get topic context. Load architecture docs, current state, "
+            "and relevant details for a topic. Call list_topics first to "
+            "see what's available.",
+            {"topic": str},
         )
-        async def flag_for_reflection(note: str) -> str:
-            """Drop a silent reflection flag on the current chat."""
-            from ..db import insert_reflection_flag
-            flag_id = await insert_reflection_flag(_chat_for_flag.id, note)
-            if flag_id is None:
-                return "Flag failed — see logs."
-            return f"Flagged (id: {flag_id}). Will surface in the next post-turn reminder."
+        async def topic_context(args: dict[str, Any]) -> dict[str, Any]:
+            context = _registry.get_context(args["topic"])
+            if context is None:
+                available = ", ".join(_registry.list_topics())
+                return {"content": [{"type": "text", "text": f"Unknown topic: '{args['topic']}'. Available: {available}"}]}
+            return {"content": [{"type": "text", "text": context}]}
 
-    # ── Handoff tool ─────────────────────────────────────────────────────
+        tools_list.extend([list_topics, topic_context])
 
-    if chat is not None:
-        _chat = chat
-
-        @server.tool(
-            description=(
-                "Hand off your context. Call this when you're ready to gracefully "
-                "transition to a fresh context window. Pass instructions telling "
-                "the summarizer what to focus on — what's still in progress, "
-                "what's finished, what matters most for future-you."
-            ),
-        )
-        async def handoff(instructions: str, memory: str) -> str:
-            """Store a last memory, then queue /compact + wake-up on stdin."""
-            result = await cortex_store(memory)
-            if result is None:
-                return "Error storing memory — handoff aborted"
-            memory_id = result.get("id", "?")
-
-            await _chat.interject([{"type": "text", "text": f"/compact {instructions}"}])
-
-            wake_up = (
-                "You've just been through a context compaction. "
-                "Jeffery is here and listening. "
-                "Orient yourself — read the summary above, check in, "
-                "ask questions if anything's unclear."
-            )
-            await _chat.interject([{"type": "text", "text": wake_up}])
-
-            return (
-                f"Memory #{memory_id} stored. "
-                "/compact sent — context transition initiated. "
-                "Last thoughts — say what you need to say."
-            )
-
-    return server
+    return create_sdk_mcp_server(
+        name="alpha",
+        version="1.0.0",
+        tools=tools_list,
+    )

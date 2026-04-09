@@ -105,11 +105,11 @@ class BroadcastCollector:
         self.events.append(event)
 
     def by_type(self, event_type: str) -> list[dict]:
-        return [e for e in self.events if e.get("type") == event_type]
+        return [e for e in self.events if e.get("event") == event_type]
 
     @property
     def types(self) -> list[str]:
-        return [e.get("type", "?") for e in self.events]
+        return [e.get("event", "?") for e in self.events]
 
 
 # -- Tests --------------------------------------------------------------------
@@ -135,8 +135,8 @@ class TestSmartChatCallback:
 
         # Should broadcast two text-deltas
         assert broadcasts.by_type("text-delta") == [
-            {"type": "text-delta", "chatId": "test-chat", "data": "Hello"},
-            {"type": "text-delta", "chatId": "test-chat", "data": " world"},
+            {"event": "text-delta", "chatId": "test-chat", "delta": "Hello"},
+            {"event": "text-delta", "chatId": "test-chat", "delta": " world"},
         ]
 
         # Should accumulate into one text part
@@ -157,17 +157,17 @@ class TestSmartChatCallback:
     async def test_tool_use_start_broadcasts(self, chat, broadcasts):
         await chat._on_claude_event(_tool_start("tool-1", "Bash"))
 
-        starts = broadcasts.by_type("tool-use-start")
+        starts = broadcasts.by_type("tool-call-start")
         assert len(starts) == 1
-        assert starts[0]["data"]["toolCallId"] == "tool-1"
-        assert starts[0]["data"]["toolName"] == "Bash"
+        assert starts[0]["toolCallId"] == "tool-1"
+        assert starts[0]["name"] == "Bash"
 
     async def test_assistant_event_accumulates_tool_call(self, chat, broadcasts):
         await chat._on_claude_event(_assistant_event([
             {"type": "tool_use", "id": "tool-1", "name": "Bash", "input": {"command": "ls"}},
         ]))
 
-        assert len(broadcasts.by_type("tool-call")) == 1
+        assert len(broadcasts.by_type("tool-call-start")) == 1
         assert chat._current_assistant is not None
         assert chat._current_assistant.parts[-1]["type"] == "tool-call"
         assert chat._current_assistant.parts[-1]["toolName"] == "Bash"
@@ -183,7 +183,7 @@ class TestSmartChatCallback:
 
         # The tool-call part should have the result
         assert chat._current_assistant.parts[-1]["result"] == "file1.txt\nfile2.txt"
-        assert broadcasts.by_type("tool-result")[0]["data"]["result"] == "file1.txt\nfile2.txt"
+        assert broadcasts.by_type("tool-call-result")[0]["result"] == "file1.txt\nfile2.txt"
 
     async def test_result_event_finalizes_message(self, chat, broadcasts):
         # Accumulate some text
@@ -214,8 +214,8 @@ class TestSmartChatCallback:
         # and result finalization (READY).
         assert len(broadcasts.by_type("assistant-message")) == 1
         assert len(broadcasts.by_type("chat-state")) == 2
-        assert broadcasts.by_type("chat-state")[0]["data"]["state"] == "busy"  # RESPONDING
-        assert broadcasts.by_type("chat-state")[1]["data"]["state"] == "idle"  # READY
+        assert broadcasts.by_type("chat-state")[0]["state"] == "busy"  # RESPONDING
+        assert broadcasts.by_type("chat-state")[1]["state"] == "idle"  # READY
 
     async def test_result_event_captures_session_uuid(self, chat, broadcasts):
         await chat._on_claude_event(_text_delta("Hi"))
@@ -255,7 +255,7 @@ class TestSmartChatCallback:
 
         errors = broadcasts.by_type("error")
         assert len(errors) == 1
-        assert errors[0]["data"] == "subprocess died"
+        assert errors[0]["message"] == "subprocess died"
 
     async def test_compact_boundary_resets_orientation(self, chat, broadcasts):
         chat._needs_orientation = False

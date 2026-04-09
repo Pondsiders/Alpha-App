@@ -98,29 +98,34 @@ async def assemble_system_prompt(
     if bill:
         parts.append(bill)
 
-    # 3. Context — dynamic data, fetched fresh each startup
-    try:
-        from alpha_app.sources import fetch_all_orientation
-        from alpha_app.orientation import assemble_orientation
+    # 3. Context — dynamic data, fetched fresh each startup.
+    # Skip when JE_NE_SAIS_QUOI_OVERRIDE is set — the test identity
+    # shouldn't inherit context from the real Pondside tree or Postgres.
+    import os
+    if not os.environ.get("JE_NE_SAIS_QUOI_OVERRIDE"):
+        try:
+            from alpha_app.sources import fetch_all_orientation
+            from alpha_app.orientation import assemble_orientation
 
-        orientation_data = await fetch_all_orientation()
-        orientation_blocks = assemble_orientation(**orientation_data)
+            orientation_data = await fetch_all_orientation()
+            orientation_blocks = assemble_orientation(**orientation_data)
 
-        # Convert content block dicts to plain text
-        for block in orientation_blocks:
-            text = block.get("text", "")
-            if text:
-                parts.append(text)
+            for block in orientation_blocks:
+                text = block.get("text", "")
+                if text:
+                    parts.append(text)
 
-        logfire.info(
-            "system prompt assembled ({n} context blocks)",
-            n=len(orientation_blocks),
-        )
-    except Exception as e:
-        logfire.warn(
-            "failed to include context in system prompt: {err}",
-            err=str(e),
-        )
+            logfire.info(
+                "system prompt assembled ({n} context blocks)",
+                n=len(orientation_blocks),
+            )
+        except Exception as e:
+            logfire.warn(
+                "failed to include context in system prompt: {err}",
+                err=str(e),
+            )
+    else:
+        logfire.info("system prompt assembled (override mode, no context)")
 
     return "\n\n".join(parts)
 

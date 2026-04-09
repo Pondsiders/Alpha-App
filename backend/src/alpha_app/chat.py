@@ -26,7 +26,7 @@ from typing import Any
 import logfire
 
 from alpha_app import (
-    AssistantEvent, Claude, ErrorEvent, Event, ResultEvent,
+    AssistantEvent, Claude, ClaudeState, ErrorEvent, Event, ResultEvent,
     StreamEvent, SystemEvent, UserEvent,
 )
 
@@ -505,9 +505,8 @@ class Chat:
         return self._claude.usage_7d if self._claude else None
 
     def pop_api_error(self) -> dict | None:
-        """Return and clear the last API error from the proxy, if any."""
-        if self._claude and self._claude._proxy:
-            return self._claude._proxy.pop_api_error()
+        """Return and clear the last API error, if any.
+        Legacy — proxy was removed when we migrated to ClaudeSDKClient."""
         return None
 
     def to_data(self) -> dict:
@@ -563,7 +562,7 @@ class Chat:
         Callers (Turn.send, interject) call this instead of checking
         is_alive themselves. wake() and resurrect() become internal.
         """
-        if self._claude and self._claude.state not in ("stopped",):
+        if self._claude and self._claude.state != ClaudeState.STOPPED:
             return  # Already alive
 
         from alpha_app.tools import create_alpha_server

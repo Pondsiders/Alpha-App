@@ -108,10 +108,9 @@ export function useAlphaWebSocket() {
         }
 
         case "user-message": {
-          appendMessage(event.chatId, {
-            role: "user",
-            data: { content: event.content, memories: event.memories } as unknown as Message extends { role: "user"; data: infer U } ? U : never,
-          });
+          // The user message was already added optimistically by onNew.
+          // The server echo carries enrichment (memories, timestamp) —
+          // TODO: reconcile instead of re-appending. For now, skip.
           break;
         }
 

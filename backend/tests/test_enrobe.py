@@ -164,4 +164,4 @@ class TestEnrobeOrientation:
 
         await enrobe(user_content, chat=chat, broadcast_fn=capture)
 
-        assert any(e["type"] == "user-message" for e in broadcasts)
+        assert any(e["event"] == "user-message" for e in broadcasts)
