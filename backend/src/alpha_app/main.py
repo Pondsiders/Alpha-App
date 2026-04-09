@@ -19,7 +19,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from alpha_app import assemble_system_prompt
 from alpha_app.constants import JE_NE_SAIS_QUOI
 from alpha_app.memories import init_schema as init_cortex_schema, close as close_cortex
 from alpha_app.chat import Chat, ConversationState
@@ -53,15 +52,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     topic_registry = TopicRegistry(topics_dir)
     topic_registry.scan()
 
-    try:
-        soul = await assemble_system_prompt()
-    except (RuntimeError, FileNotFoundError):
-        soul = ""
-
     app.state.chats = {}  # dict[str, Chat]
     app.state.connections = set()  # set[WebSocket] — all live WS connections (the switch)
-    app.state.system_prompt = soul  # Initial assembly — used as fallback only
-    app.state.get_system_prompt = assemble_system_prompt  # Fresh assembly on every call
     app.state.topic_registry = topic_registry  # Stored for MCP tool + enrobe
 
     # Scheduler — only when --with-scheduler is set (alpha-pi Docker, not Primer bare metal)

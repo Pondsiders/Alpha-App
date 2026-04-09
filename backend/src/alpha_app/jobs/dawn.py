@@ -49,7 +49,6 @@ async def run(app, **kwargs) -> str | None:
 
         # -- Step 2: Create today's chat --
         chat = Chat(id=generate_chat_id())
-        chat._system_prompt = await app.state.get_system_prompt()
         chat._topic_registry = getattr(app.state, "topic_registry", None)
         # _ensure_claude will auto-start on first send — no explicit wake needed
         app.state.chats[chat.id] = chat
@@ -98,15 +97,12 @@ async def _nightnight(app, span) -> str | None:
     # wake() starts fresh by default, but we need --resume for continuity.
     # Set session_uuid so _make_claude picks it up for resume.
     mcp_servers = _create_nightnight_servers(yesterday_chat, app=app)
-    yesterday_chat._system_prompt = await app.state.get_system_prompt()
-
     # Manually start Claude with resume — wake() can't resume, _ensure_claude
     # doesn't support custom MCP servers. This is the one place we need explicit
     # lifecycle control because nightnight has a special tool.
     from alpha_app.constants import DISALLOWED_TOOLS, MODEL
     yesterday_chat._claude = _make_claude(
         model=MODEL,
-        system_prompt=await app.state.get_system_prompt(),
         permission_mode="bypassPermissions",
         mcp_servers=mcp_servers,
         disallowed_tools=DISALLOWED_TOOLS,

@@ -4,7 +4,7 @@ The only stateful object in the SDK. Wraps the claude binary over
 newline-delimited JSON stdio, with an HTTP proxy for token counting.
 
 Usage (callback mode — the only mode):
-    claude = Claude(system_prompt="You are a frog.")
+    claude = Claude()  # system prompt assembled automatically at startup
     claude.on_event = my_handler     # events flow through callback
     await claude.start()             # New session
     await claude.start("abc-123")    # Resume session
@@ -396,7 +396,6 @@ class Claude:
     def __init__(
         self,
         model: str = "claude-sonnet-4-20250514",
-        system_prompt: str | None = None,
         mcp_config: str | None = None,
         permission_mode: str = "bypassPermissions",
         extra_args: list[str] | None = None,
@@ -407,7 +406,6 @@ class Claude:
         use_proxy: bool = True,
     ):
         self.model = model
-        self.system_prompt = system_prompt
         self.mcp_config = mcp_config
         self.permission_mode = permission_mode
         self.extra_args: list[str] = extra_args or []
@@ -1108,15 +1106,15 @@ class Claude:
             "--effort", "medium",
         ]
 
-        if self.system_prompt is not None:
-            # Write system prompt to a temp file to avoid argv size limits.
-            # A 50K-token orientation can exceed Linux's MAX_ARG_STRLEN.
-            import tempfile
-            fd, path = tempfile.mkstemp(suffix=".md", prefix="alpha-sysprompt-")
-            with os.fdopen(fd, "w") as f:
-                f.write(self.system_prompt)
-            self._system_prompt_file = Path(path)
-            cmd.extend(["--system-prompt-file", path])
+        # Claude assembles its own system prompt — fresh on every start.
+        from alpha_app.system_prompt import assemble_system_prompt
+        self._assembled_system_prompt = await assemble_system_prompt()
+        import tempfile
+        fd, path = tempfile.mkstemp(suffix=".md", prefix="alpha-sysprompt-")
+        with os.fdopen(fd, "w") as f:
+            f.write(self._assembled_system_prompt)
+        self._system_prompt_file = Path(path)
+        cmd.extend(["--system-prompt-file", path])
 
         mcp_config = self._build_mcp_config()
         if mcp_config:

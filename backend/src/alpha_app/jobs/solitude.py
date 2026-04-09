@@ -108,9 +108,6 @@ async def breathe(app, **kwargs) -> str | None:
             logfire.info("solitude: no chat today, skipping")
             return None
 
-        # Store system prompt so _ensure_claude (auto-start) can use it
-        chat._system_prompt = await app.state.get_system_prompt()
-
         # Run each prompt in the timeslot sequentially
         output_parts = []
         for i, prompt_file in enumerate(entry.prompts):

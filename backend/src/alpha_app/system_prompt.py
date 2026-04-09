@@ -64,25 +64,20 @@ def _load_bill_of_rights(identity_dir: Path) -> str:
 
 async def assemble_system_prompt(
     identity_dir: str | Path | None = None,
-    *,
-    include_orientation: bool = True,
 ) -> str:
-    """Assemble the full system prompt from identity documents + orientation.
+    """Assemble the full system prompt from identity documents + context.
 
     Reads from the identity directory pointed to by JE_NE_SAIS_QUOI
     (or the provided identity_dir). Concatenates all available pieces
     into a single flat string.
 
-    Orientation data (capsules, letter, today, here, weather, context
+    Context data (capsules, letter, today, here, weather, context
     files, events, todos) is fetched and appended so it survives
     --resume truncation of the messages array.
 
     Args:
         identity_dir: Path to the identity directory. If None, reads
                       from $JE_NE_SAIS_QUOI environment variable.
-        include_orientation: If True (default), fetch and append
-                            orientation data. Set False for tests
-                            or jobs that don't need it.
 
     Returns:
         The assembled system prompt as a single string.
@@ -103,30 +98,29 @@ async def assemble_system_prompt(
     if bill:
         parts.append(bill)
 
-    # 3. Orientation — dynamic context, fetched fresh each startup
-    if include_orientation:
-        try:
-            from alpha_app.sources import fetch_all_orientation
-            from alpha_app.orientation import assemble_orientation
+    # 3. Context — dynamic data, fetched fresh each startup
+    try:
+        from alpha_app.sources import fetch_all_orientation
+        from alpha_app.orientation import assemble_orientation
 
-            orientation_data = await fetch_all_orientation()
-            orientation_blocks = assemble_orientation(**orientation_data)
+        orientation_data = await fetch_all_orientation()
+        orientation_blocks = assemble_orientation(**orientation_data)
 
-            # Convert content block dicts to plain text
-            for block in orientation_blocks:
-                text = block.get("text", "")
-                if text:
-                    parts.append(text)
+        # Convert content block dicts to plain text
+        for block in orientation_blocks:
+            text = block.get("text", "")
+            if text:
+                parts.append(text)
 
-            logfire.info(
-                "orientation included in system prompt ({n} blocks)",
-                n=len(orientation_blocks),
-            )
-        except Exception as e:
-            logfire.warn(
-                "failed to include orientation in system prompt: {err}",
-                err=str(e),
-            )
+        logfire.info(
+            "system prompt assembled ({n} context blocks)",
+            n=len(orientation_blocks),
+        )
+    except Exception as e:
+        logfire.warn(
+            "failed to include context in system prompt: {err}",
+            err=str(e),
+        )
 
     return "\n\n".join(parts)
 

@@ -155,6 +155,14 @@ class Turn:
         """
         chat = self._chat
         await chat._ensure_claude()
+
+        # Set system instructions on the turn span now that Claude is alive.
+        if chat._turn_span and chat._claude:
+            chat._turn_span.set_attribute(
+                "gen_ai.system_instructions",
+                [{"type": "text", "content": getattr(chat._claude, "_assembled_system_prompt", "")}],
+            )
+
         chat.updated_at = time.time()
         chat.state = ConversationState.RESPONDING
 
@@ -211,7 +219,6 @@ class Chat:
         self.updated_at: float = time.time()
 
         self._claude = claude
-        self._system_prompt: str = ""  # Stored for resurrection
 
         # -- Smart Chat: the canonical conversation --
         self.messages: list[UserMessage | AssistantMessage | SystemMessage] = []
@@ -301,7 +308,6 @@ class Chat:
         ghost = Chat(id=generate_chat_id())
         ghost.session_uuid = self.session_uuid  # Will fork from this
         ghost._fork_from = self.session_uuid     # Signal to _ensure_claude
-        ghost._system_prompt = self._system_prompt
         ghost._topic_registry = self._topic_registry
         ghost.title = f"[capsule] {self.title}"
         return ghost
@@ -558,10 +564,6 @@ class Chat:
 
         from alpha_app.tools import create_alpha_server
 
-        # Get the current system prompt from wherever the app stores it
-        # (set externally by the WS handler or job runner)
-        system_prompt = self._system_prompt
-
         # Create MCP servers fresh
         topic_registry = self._topic_registry
         mcp_servers = {"alpha": create_alpha_server(
@@ -572,9 +574,9 @@ class Chat:
 
         from alpha_app.constants import DISALLOWED_TOOLS
 
+        # Claude assembles its own system prompt at startup — no injection needed.
         self._claude = _make_claude(
             model=MODEL,
-            system_prompt=system_prompt or None,
             permission_mode="bypassPermissions",
             mcp_servers=mcp_servers,
             disallowed_tools=DISALLOWED_TOOLS,

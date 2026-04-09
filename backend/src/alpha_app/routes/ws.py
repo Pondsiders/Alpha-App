@@ -79,8 +79,6 @@ async def _run_human_turn(
     chat_id = chat.id
     prompt_preview = build_prompt_preview(content)
 
-    # Store the system prompt on Chat so _ensure_claude can use it
-    chat._system_prompt = getattr(ws.app.state, "system_prompt", "")
     chat._topic_registry = getattr(ws.app.state, "topic_registry", None)
 
     # Open Logfire span (covers enrobe + send + Claude response).
@@ -94,9 +92,6 @@ async def _run_human_turn(
             "gen_ai.provider.name": "anthropic",
             "gen_ai.request.model": MODEL,
             "gen_ai.conversation.id": chat_id,
-            "gen_ai.system_instructions": [
-                {"type": "text", "content": getattr(ws.app.state, "system_prompt", "")}
-            ],
             "gen_ai.input.messages": format_input_messages(content),
             "client_name": "alpha",
             "chat.id": chat_id,
@@ -392,7 +387,6 @@ async def websocket_chat(ws: WebSocket) -> None:
                     )
 
                     # Set up for _ensure_claude auto-start
-                    chat._system_prompt = await ws.app.state.get_system_prompt()
                     chat._topic_registry = getattr(ws.app.state, "topic_registry", None)
 
                     try:

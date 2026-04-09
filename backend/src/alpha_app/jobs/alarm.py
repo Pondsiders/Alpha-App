@@ -24,9 +24,6 @@ async def run(app, **kwargs) -> None:
             logfire.warn("alarm: no chat today, message lost: {msg}", msg=message)
             return
 
-        # Store system prompt so _ensure_claude can use it
-        chat._system_prompt = await app.state.get_system_prompt()
-
         content = [{"type": "text", "text": f"[Alpha] {message}"}]
         await chat.interject(content)  # auto-starts Claude if cold
         logfire.info("alarm: interjected to chat {chat_id}", chat_id=chat.id)

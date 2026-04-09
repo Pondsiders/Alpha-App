@@ -55,10 +55,8 @@ async def _write_capsule(app, chat: Chat) -> bool:
         "chat.id": chat.id,
         "chat.session_uuid": chat.session_uuid,
     }):
-        from alpha_app.system_prompt import assemble_system_prompt
-
         ghost = chat.clone()
-        ghost._system_prompt = await assemble_system_prompt(include_orientation=False)
+        # Ghost assembles its own system prompt at startup — same as everyone.
 
         try:
             async with await ghost.turn() as t:
