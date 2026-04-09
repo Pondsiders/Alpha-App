@@ -9,12 +9,11 @@ title: Claude
 
 ## Construction
 
-### `Claude(model, system_prompt, mcp_config, permission_mode, extra_args, mcp_servers, permission_handler, disallowed_tools, on_event, use_proxy)`
+### `Claude(model, mcp_config, permission_mode, extra_args, mcp_servers, permission_handler, disallowed_tools, on_event, use_proxy)`
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `model` | `str` | `"claude-sonnet-4-20250514"` | Model name (overridden by Chat to use `constants.CLAUDE_MODEL`) |
-| `system_prompt` | `str \| None` | `None` | Written to a temp file, passed via `--system-prompt-file` |
 | `mcp_config` | `str \| None` | `None` | Path to MCP config JSON |
 | `permission_mode` | `str` | `"bypassPermissions"` | Claude Code permission mode |
 | `extra_args` | `list[str] \| None` | `None` | Additional CLI arguments |
@@ -166,6 +165,8 @@ The dispatch is fully async. Tool results are sent back on stdin as `control_res
 
 ### `_spawn() -> Process`
 
+**Assembles the system prompt** by calling `assemble_system_prompt()` from `system_prompt.py`, writes it to a temp file, and passes it via `--system-prompt-file`. This happens on every start — no caching, always fresh.
+
 Builds the command line:
 
 ```
@@ -173,7 +174,7 @@ claude --output-format stream-json --input-format stream-json
        --verbose --model {model} --permission-mode {mode}
        --include-partial-messages --replay-user-messages
        --effort medium
-       [--system-prompt-file {path}]
+       --system-prompt-file {temp_file}
        [--mcp-config {path}]
        [--resume {session_id}] [--fork-session]
        [--disallowedTools {tools}]

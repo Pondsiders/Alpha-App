@@ -11,7 +11,7 @@ Alpha-App is a monorepo with a Python backend and a React frontend. This page do
 
 ### `main.py`
 
-FastAPI application. Lifespan initializes database pools (app + Cortex), loads system prompt, starts scheduler (if `--with-scheduler`), loads chats from Postgres, and starts the frontend auto-rebuild watcher. Serves the built frontend SPA as static files. Health endpoint at `/health`.
+FastAPI application. Lifespan initializes database pools (app + Cortex), discovers topics, starts scheduler (if `--with-scheduler`). Serves the built frontend SPA as static files. Health endpoint at `/health`. Note: the system prompt is not assembled here — Claude handles its own system prompt at startup.
 
 ## Core classes
 
@@ -128,20 +128,22 @@ REST API for the scheduler:
 
 ### `system_prompt.py`
 
-Assembles the full system prompt from identity documents:
+Assembles the full system prompt from identity documents + dynamic context:
 1. Soul doc (`prompts/system/soul.md`) — required
 2. Bill of Rights (`prompts/system/bill-of-rights.md`) — optional
-3. Orientation — dynamic context fetched from `sources.py` and assembled by `orientation.py`
+3. Context — capsules, letter, today-so-far, here narrative, weather, calendar events, todos, context files — fetched from `sources.py` and assembled by `orientation.py`
 
-The result is a single flat string passed via `--system-prompt-file` to the Claude binary.
+**Claude owns its own system prompt.** The `Claude` class calls `assemble_system_prompt()` directly in `_spawn()` — no external injection. Every Claude subprocess gets a freshly assembled system prompt at startup. No caching, no stale state.
+
+The result is a single flat string written to a temp file and passed via `--system-prompt-file` to the Claude binary.
 
 ### `orientation.py`
 
-Pure assembly functions that build orientation content blocks from fetched data. Three public functions: `assemble_orientation`, `check_venue_change`, `get_here`.
+Pure assembly functions that build context content blocks from fetched data. `assemble_orientation` takes pre-fetched source data as kwargs and returns a list of content block dicts. `get_here` detects the runtime environment.
 
 ### `sources.py`
 
-Fetch functions for orientation data. All resilient — return None on error.
+Fetch functions for context data. All resilient — return None on error.
 
 | Source | Backend | Function |
 |--------|---------|----------|
@@ -149,7 +151,7 @@ Fetch functions for orientation data. All resilient — return None on error.
 | Letter from last night | `app.state` (Postgres) | `fetch_letter()` |
 | Today so far | `app.state` (Postgres) | `fetch_today()` |
 | Here narrative + weather | Local config + Redis | `fetch_here()` |
-| Calendar events | Redis (`hud:calendar`) | `fetch_events()` |
+| Calendar events | `gws` CLI (Google Calendar API) | `fetch_events()` |
 | Todos | Redis (`hud:todos`) | `fetch_todos()` |
 | Context files (ALPHA.md) | Filesystem | `fetch_context()` |
 | All of the above | Parallel fetch | `fetch_all_orientation()` |

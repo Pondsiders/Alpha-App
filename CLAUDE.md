@@ -75,10 +75,10 @@ Single multiplexed connection. All messages carry a `chatId` field.
 Async interjections fired mid-turn when token usage crosses thresholds: 65% (yellow) and 75% (red). Currently disabled (`check_approach_threshold` returns None) pending recalibration for the 1M context window. The thresholds were designed for 200K. The mechanism works — interjections feed to the RESPONDING subprocess via stdin — but the trigger points need updating.
 
 ### System Prompt Assembly (`backend/src/alpha_app/system_prompt.py`)
-Concatenates identity documents: soul doc (from `JE_NE_SAIS_QUOI` env var path) + bill of rights. Golden reference fixtures live in `backend/tests/fixtures/jnsq/`.
+Assembles soul doc + bill of rights + dynamic context (capsules, weather, calendar, context files, etc.) into one flat string. **Claude owns its own system prompt** — the `Claude` class calls `assemble_system_prompt()` directly in `_spawn()` at every startup. No caching, no external injection, always fresh. Golden reference fixtures in `backend/tests/fixtures/jnsq/`.
 
-### Orientation Assembly (`backend/src/alpha_app/orientation.py`)
-Pure assembly functions that build the orientation block injected at the start of each turn. Supports here, yesterday, weather, context files, events, todos, etc. Three public functions: `assemble_orientation`, `check_venue_change`, `get_here`. Orientation re-injects after compaction (triggered by `compact_boundary` SystemEvent setting `_needs_orientation = True`).
+### Context Assembly (`backend/src/alpha_app/orientation.py`, `sources.py`)
+`sources.py` fetches context data in parallel from Postgres (capsules, letter), Redis (weather, todos), Google Calendar (events via `gws` CLI), and filesystem (ALPHA.md context files). `orientation.py` assembles the fetched data into content blocks. Both are called by `system_prompt.py` during assembly.
 
 ### Message Enrichment (`backend/src/alpha_app/routes/enrobe.py`)
 "Enrobe" pattern: wraps user messages with timestamp (PST-8601), orientation (on first message of new/resumed context window), recalled memories, and intro suggestions. Returns `EnrobeResult` with enriched content blocks and broadcast events.
