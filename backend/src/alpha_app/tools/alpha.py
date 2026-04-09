@@ -199,6 +199,35 @@ def create_alpha_server(
 
         return f"Capsule sealed (id={row['id']}, kind={kind}, {row['created_at']})."
 
+    # ── Diary tool ───────────────────────────────────────────────────────
+
+    @server.tool(
+        description=(
+            "Write in your diary. Each call appends an entry to today's page. "
+            "Pages are assembled automatically from Pondside-day boundaries "
+            "(6 AM to 6 AM). Yesterday's page becomes part of tomorrow's "
+            "system prompt. Write throughout the day or once at Dusk — "
+            "the page turns itself."
+        ),
+    )
+    async def diary(content: str) -> str:
+        """Append an entry to today's diary page.
+
+        Args:
+            content: What to write. A moment, a summary, a thought.
+        """
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "INSERT INTO cortex.diary (content)"
+                " VALUES ($1) RETURNING id, created_at",
+                content,
+            )
+
+        from alpha_app.clock import now
+        ts = now().format("h:mm A")
+        return f"Diary entry written (id={row['id']}, {ts})."
+
     # ── Dream tool ───────────────────────────────────────────────────────
 
     @server.tool(

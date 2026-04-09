@@ -49,8 +49,10 @@ def get_here() -> str:
 def assemble_orientation(
     *,
     here: str,
-    yesterday: str | None = None,
-    last_night: str | None = None,
+    yesterday: str | None = None,   # capsule — legacy, being replaced by diary
+    last_night: str | None = None,  # capsule — legacy, being replaced by diary
+    diary_yesterday: str | None = None,
+    diary_today: str | None = None,
     letter: str | None = None,
     today_so_far: str | None = None,
     weather: str | None = None,
@@ -93,13 +95,15 @@ def assemble_orientation(
     def _add(text: str) -> None:
         blocks.append({"type": "text", "text": text})
 
-    # yesterday — passed through as-is (capsule, already has ## header)
-    if yesterday:
-        _add(yesterday)
-
-    # last_night — passed through as-is (capsule, already has ## header)
-    if last_night:
-        _add(last_night)
+    # Diary — yesterday's page and today's entries so far.
+    # Each page has its own ## date header; we wrap both under # Diary.
+    diary_parts = []
+    if diary_yesterday:
+        diary_parts.append(diary_yesterday)
+    if diary_today:
+        diary_parts.append(diary_today)
+    if diary_parts:
+        _add("# Diary\n\n" + "\n\n".join(diary_parts))
 
     # letter — passed through as-is
     if letter:

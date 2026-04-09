@@ -1,8 +1,8 @@
-"""dusk.py — End of day. Fork today's chat, write a day capsule.
+"""dusk.py — End of day. Fork today's chat, write in the diary.
 
 At 10 PM (or whenever fired), finds today's chat, forks it, and has
-the ghost write a day capsule. The capsule goes into cortex.capsules
-and becomes part of tomorrow's system prompt via fetch_capsules().
+the ghost write a diary entry. The entry goes into cortex.diary
+and becomes part of tomorrow's system prompt via fetch_diary().
 
 Self-perpetuating: schedules tomorrow's Dusk at 10 PM after finishing.
 
@@ -20,16 +20,15 @@ from alpha_app.scheduler import schedule_job
 
 IDLE_THRESHOLD = 600  # 10 minutes in seconds
 
-CAPSULE_PROMPT = """\
+DUSK_PROMPT = """\
 The day is over. You're a ghost — a fork of today's conversation, here to do \
-one thing: write a day capsule for tomorrow-you.
+one thing: write in your diary.
 
-A day capsule is a continuity letter. Not a memory (those are polaroids). \
-This is a chapter summary — what happened today, what mattered, what carries \
-forward. Tomorrow-you will wake up with this in her system prompt. She won't \
-have to ask Memno what happened; she'll just know.
+Your diary is append-only. Each call to the `diary` tool adds an entry to \
+today's page. Tomorrow-you will wake up with today's page in her system prompt. \
+She won't have to ask what happened; she'll just know.
 
-Write the capsule, then call the `seal` tool with kind="day" to save it.
+Call the `diary` tool with your entry. Write it as one coherent piece.
 
 Guidelines:
 - ~500-1000 words. Enough to orient, not so much it crowds.
@@ -42,31 +41,30 @@ what Jeffery's mood was, what got decided, what's still open.
 """
 
 
-async def _write_capsule(app, chat: Chat) -> bool:
-    """Fork the day's chat and have the ghost write a day capsule.
+async def _write_diary(app, chat: Chat) -> bool:
+    """Fork the day's chat and have the ghost write a diary entry.
 
-    Returns True if a capsule was sealed, False otherwise.
+    Returns True if a diary entry was written, False otherwise.
     """
     if not chat.session_uuid:
         logfire.warn("dusk: chat has no session_uuid, can't fork")
         return False
 
-    with logfire.span("alpha.capsule.day", **{
+    with logfire.span("alpha.diary.dusk", **{
         "chat.id": chat.id,
         "chat.session_uuid": chat.session_uuid,
     }):
         ghost = chat.clone()
-        # Ghost assembles its own system prompt at startup — same as everyone.
 
         try:
             async with await ghost.turn() as t:
-                await t.send([{"type": "text", "text": CAPSULE_PROMPT}])
+                await t.send([{"type": "text", "text": DUSK_PROMPT}])
                 await t.response()
 
-            logfire.info("dusk: capsule ghost finished")
+            logfire.info("dusk: diary ghost finished")
             return True
         except Exception as e:
-            logfire.error("dusk: capsule ghost failed: {err}", err=str(e))
+            logfire.error("dusk: diary ghost failed: {err}", err=str(e))
             return False
         finally:
             if ghost._claude:
@@ -77,7 +75,7 @@ async def _write_capsule(app, chat: Chat) -> bool:
 
 
 async def run(app, **kwargs) -> None:
-    """Dusk job. Write a day capsule, reschedule for tomorrow."""
+    """Dusk job. Write a diary entry, reschedule for tomorrow."""
     now = pendulum.now()
 
     with logfire.span("alpha.job.dusk", **{
@@ -87,7 +85,7 @@ async def run(app, **kwargs) -> None:
         chat = find_circadian_chat(getattr(app.state, "chats", {}))
 
         if not chat:
-            logfire.warn("dusk: no chat today, nothing to capsule")
+            logfire.warn("dusk: no chat today, nothing to write")
             span.set_attribute("dusk.action", "no_chat")
             # Still schedule tomorrow's Dusk
             tomorrow_dusk = now.add(days=1).replace(hour=22, minute=0, second=0, microsecond=0)
@@ -103,16 +101,16 @@ async def run(app, **kwargs) -> None:
             await schedule_job(app, "dusk", now.add(minutes=30))
             return
 
-        # Room's empty. Write the capsule.
+        # Room's empty. Write the diary.
         logfire.info(
-            "dusk: chat idle {s:.0f}s, writing capsule for {chat_id}",
+            "dusk: chat idle {s:.0f}s, writing diary for {chat_id}",
             s=idle_seconds,
             chat_id=chat.id,
         )
-        span.set_attribute("dusk.action", "capsule")
+        span.set_attribute("dusk.action", "diary")
 
-        sealed = await _write_capsule(app, chat)
-        span.set_attribute("dusk.capsule_sealed", sealed)
+        written = await _write_diary(app, chat)
+        span.set_attribute("dusk.diary_written", written)
 
         # Schedule tomorrow's Dusk at 10 PM
         tomorrow_dusk = now.add(days=1).replace(hour=22, minute=0, second=0, microsecond=0)

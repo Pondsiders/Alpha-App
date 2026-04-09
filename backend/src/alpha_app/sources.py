@@ -90,13 +90,8 @@ def _pondside_yesterday() -> tuple[pendulum.DateTime, pendulum.DateTime]:
     A Pondside day runs 6 AM to 6 AM. "Yesterday" is the 24-hour window
     ending at the most recently passed 6 AM boundary.
     """
-    now = pendulum.now()  # Reads TZ from environment
-    if now.hour >= 6:
-        today_dawn = now.replace(hour=6, minute=0, second=0, microsecond=0)
-    else:
-        today_dawn = now.subtract(days=1).replace(hour=6, minute=0, second=0, microsecond=0)
-    yesterday_dawn = today_dawn.subtract(days=1)
-    return yesterday_dawn, today_dawn
+    from alpha_app.clock import yesterday_dawn, today_dawn
+    return yesterday_dawn(), today_dawn()
 
 
 async def fetch_capsules() -> tuple[str | None, str | None]:
@@ -140,6 +135,66 @@ async def fetch_capsules() -> tuple[str | None, str | None]:
             last_night = f"{header}\n\n{night_row['content']}"
 
         return yesterday, last_night
+
+    except Exception:
+        return None, None
+
+
+# ---------------------------------------------------------------------------
+# Diary (Postgres)
+# ---------------------------------------------------------------------------
+
+async def fetch_diary() -> tuple[str | None, str | None]:
+    """Fetch yesterday's and today's diary pages from cortex.diary.
+
+    A diary "page" is all entries from one Pondside day (6 AM to 6 AM),
+    concatenated with timestamp headers.
+
+    Returns:
+        (yesterday_page, today_page) — both pre-formatted markdown,
+        or None if no entries exist for that day.
+    """
+    try:
+        from alpha_app.clock import yesterday_dawn, today_dawn, now
+
+        yd = yesterday_dawn()
+        td = today_dawn()
+        n = now()
+
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            yesterday_rows = await conn.fetch(
+                "SELECT content, created_at FROM cortex.diary"
+                " WHERE created_at >= $1 AND created_at < $2"
+                " ORDER BY created_at",
+                yd, td,
+            )
+            today_rows = await conn.fetch(
+                "SELECT content, created_at FROM cortex.diary"
+                " WHERE created_at >= $1 AND created_at < $2"
+                " ORDER BY created_at",
+                td, n,
+            )
+
+        local_tz = pendulum.now().timezone
+
+        def _format_page(rows, date_header: str) -> str | None:
+            if not rows:
+                return None
+            parts = [f"## {date_header}"]
+            for row in rows:
+                ts = pendulum.instance(row["created_at"]).in_tz(local_tz).format("h:mm A")
+                parts.append(f"\n[{ts}]\n\n{row['content']}")
+            return "\n".join(parts)
+
+        # PSO-8601 date format for headers
+        yesterday_header = pendulum.instance(yd).format("ddd MMM D YYYY")
+        today_header = pendulum.instance(td).format("ddd MMM D YYYY")
+
+        return (
+            _format_page(yesterday_rows, yesterday_header),
+            _format_page(today_rows, f"{today_header} (so far)"),
+        )
 
     except Exception:
         return None, None
@@ -524,14 +579,14 @@ async def fetch_all_orientation(
     """
     # Async sources — fetch in parallel
     (
-        (yesterday, last_night),
+        (diary_yesterday, diary_today),
         letter,
         today_so_far,
         here,
         events,
         todos,
     ) = await asyncio.gather(
-        fetch_capsules(),
+        fetch_diary(),
         fetch_letter(),
         fetch_today(),
         fetch_here(client=client, hostname=hostname),
@@ -543,8 +598,10 @@ async def fetch_all_orientation(
     context_files, context_available = fetch_context()
 
     return {
-        "yesterday": yesterday,
-        "last_night": last_night,
+        "yesterday": None,      # capsules — legacy, replaced by diary
+        "last_night": None,     # capsules — legacy, replaced by diary
+        "diary_yesterday": diary_yesterday,
+        "diary_today": diary_today,
         "letter": letter,
         "today_so_far": today_so_far,
         "here": here,

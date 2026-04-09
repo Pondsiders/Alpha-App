@@ -165,6 +165,20 @@ async def init_pool() -> None:
             " ON cortex.capsules (kind, created_at DESC)"
         )
 
+        # Diary — append-only daily journal. Each row is one entry.
+        # Pages are assembled at read time via Pondside-day boundaries.
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS cortex.diary (
+                id BIGSERIAL PRIMARY KEY,
+                content TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        """)
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_diary_created"
+            " ON cortex.diary (created_at DESC)"
+        )
+
         # Job persistence — our own table, plain JSON, no pickle.
         # APScheduler is pure in-memory; this is the source of truth.
         await conn.execute("""

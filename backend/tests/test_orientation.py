@@ -75,10 +75,13 @@ class TestAssembleOrientation:
             "**BLOCKING REQUIREMENT:** Read the file BEFORE proceeding."
         )
 
+        diary_yesterday = "## Wed Mar 10 2026\n\n[10:00 PM]\n\nThe monorepo day."
+        diary_today = "## Thu Mar 11 2026 (so far)\n\n[8:00 AM]\n\nMoving day."
+
         result = assemble_orientation(
             here=HERE,
-            yesterday=YESTERDAY,
-            last_night=LAST_NIGHT,
+            diary_yesterday=diary_yesterday,
+            diary_today=diary_today,
             letter=LETTER,
             today_so_far=TODAY_SO_FAR,
             weather=WEATHER,
@@ -93,28 +96,29 @@ class TestAssembleOrientation:
         assert all(isinstance(b, dict) for b in result)
         assert all(b["type"] == "text" for b in result)
 
-        # Count: 1 yesterday + 1 last_night + 1 letter + 1 today +
+        # Count: 1 diary (wraps yesterday + today) + 1 letter + 1 today +
         #        1 here + 1 weather + 2 context files + 1 context_available +
-        #        1 events + 1 todos = 11 blocks
-        assert len(result) == 11
+        #        1 events + 1 todos = 10 blocks
+        assert len(result) == 10
 
         texts = [b["text"] for b in result]
 
-        # Verify order matches Duckpond capture:
-        # capsules → letter → today → here → weather → context files →
+        # Verify order:
+        # diary → letter → today → here → weather → context files →
         # context available → events → todos
-        assert "## Tuesday, March 10" in texts[0]               # yesterday
-        assert "## Tuesday night" in texts[1]                   # last night
-        assert "## Letter from last night" in texts[2]          # letter
-        assert "## Today so far" in texts[3]                    # today so far
-        assert "[Narrator]" in texts[4]                         # here
-        assert "Alpha v1.0.0" in texts[4]                       # here (content)
-        assert "☀️" in texts[5]                                 # weather (no header)
-        assert "## Context: ALPHA.md" in texts[6]               # context file 1
-        assert "## Context: Barn/Duckpond/ALPHA.md" in texts[7] # context file 2
-        assert "## Context available" in texts[8]               # context available
-        assert "## Events" in texts[9]                          # events (header added)
-        assert "## Todos" in texts[10]                          # todos (header added)
+        assert "# Diary" in texts[0]                            # diary wrapper
+        assert "Wed Mar 10" in texts[0]                         # yesterday's page
+        assert "Thu Mar 11" in texts[0]                         # today's page
+        assert "## Letter from last night" in texts[1]          # letter
+        assert "## Today so far" in texts[2]                    # today so far
+        assert "[Narrator]" in texts[3]                         # here
+        assert "Alpha v1.0.0" in texts[3]                       # here (content)
+        assert "☀️" in texts[4]                                 # weather (no header)
+        assert "## Context: ALPHA.md" in texts[5]               # context file 1
+        assert "## Context: Barn/Duckpond/ALPHA.md" in texts[6] # context file 2
+        assert "## Context available" in texts[7]               # context available
+        assert "## Events" in texts[8]                          # events (header added)
+        assert "## Todos" in texts[9]                           # todos (header added)
 
     def test_here_only(self):
         """Only required source (here) present. Minimal valid orientation."""
@@ -128,13 +132,13 @@ class TestAssembleOrientation:
         """Some sources present, others missing. No gaps, no placeholders."""
         result = assemble_orientation(
             here=HERE,
-            yesterday=YESTERDAY,
+            diary_yesterday="## Wed Mar 10 2026\n\n[10:00 PM]\n\nThe day.",
             weather=WEATHER,
         )
 
         assert len(result) == 3
         texts = [b["text"] for b in result]
-        assert "## Tuesday" in texts[0]         # yesterday (capsules before here)
+        assert "# Diary" in texts[0]            # diary before here
         assert "Alpha v1.0.0" in texts[1]       # here
         assert "☀️" in texts[2]                 # weather
 
