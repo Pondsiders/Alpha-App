@@ -34,6 +34,8 @@ export function useAlphaWebSocket() {
   const setIsRunning = useStore((s) => s.setIsRunning);
   const setTokenCount = useStore((s) => s.setTokenCount);
   const setWsSend = useStore((s) => s.setWsSend);
+  const replaceLastUserMessage = useStore((s) => s.replaceLastUserMessage);
+  const ensureAssistantMessage = useStore((s) => s.ensureAssistantMessage);
 
   const handleRawEvent = useCallback(
     (raw: { type: string; [key: string]: unknown }) => {
@@ -77,6 +79,7 @@ export function useAlphaWebSocket() {
           // Select this chat and persist to localStorage for next startup.
           setCurrentChatId(event.chatId);
           try { localStorage.setItem("alpha-lastChatId", event.chatId); } catch { /* noop */ }
+
           break;
         }
 
@@ -108,9 +111,32 @@ export function useAlphaWebSocket() {
         }
 
         case "user-message": {
-          // The user message was already added optimistically by onNew.
-          // The server echo carries enrichment (memories, timestamp) —
-          // TODO: reconcile instead of re-appending. For now, skip.
+          // Server echo carries enrichment (memories, timestamp).
+          // Reconcile by messageId: find the optimistic message and replace it.
+          // If not found (suggest turns, narrator, etc.), append.
+          const enriched: Message = {
+            role: "user",
+            data: {
+              id: event.messageId,
+              source: "human",
+              content: event.content,
+              memories: event.memories ?? [],
+              timestamp: event.timestamp,
+            } as any,
+          };
+
+          const chatState = useStore.getState().chats[event.chatId];
+          const existingIdx = chatState?.messages.findIndex(
+            (m) => m.role === "user" && (m.data as any).id === event.messageId
+          ) ?? -1;
+
+          if (existingIdx >= 0) {
+            // Found optimistic message — replace with enriched version
+            replaceLastUserMessage(event.chatId, enriched);
+          } else {
+            // New message (suggest, narrator, etc.) — append
+            appendMessage(event.chatId, enriched);
+          }
           break;
         }
 
@@ -120,7 +146,8 @@ export function useAlphaWebSocket() {
         }
 
         case "text-delta": {
-          // TODO: wire to appendTextDelta once we have message IDs in deltas
+          const aid = ensureAssistantMessage(event.chatId);
+          appendTextDelta(event.chatId, aid, event.delta);
           break;
         }
 
@@ -140,15 +167,44 @@ export function useAlphaWebSocket() {
         }
 
         case "assistant-message": {
-          appendMessage(event.chatId, {
-            role: "assistant",
-            data: { parts: event.content } as unknown as Message extends { role: "assistant"; data: infer A } ? A : never,
-          });
+          // Replace the streaming placeholder with the complete message.
+          // The placeholder (from ensureAssistantMessage) is the last message
+          // if we've been streaming. The complete version has all parts + metadata.
+          const chatForAssist = useStore.getState().chats[event.chatId];
+          const lastMsg = chatForAssist?.messages[chatForAssist.messages.length - 1];
+          const isStreamingPlaceholder = lastMsg?.role === "assistant"
+            && (lastMsg.data as any).id?.startsWith("ast-");
+
+          if (isStreamingPlaceholder) {
+            // Replace in place
+            useStore.setState((state) => {
+              const c = state.chats[event.chatId];
+              if (c && c.messages.length > 0) {
+                c.messages[c.messages.length - 1] = {
+                  role: "assistant",
+                  data: {
+                    id: event.messageId,
+                    parts: event.content,
+                  } as any,
+                };
+              }
+            });
+          } else {
+            appendMessage(event.chatId, {
+              role: "assistant",
+              data: {
+                id: event.messageId,
+                parts: event.content,
+              } as any,
+            });
+          }
           break;
         }
 
         case "turn-complete": {
-          setIsRunning(event.chatId, false);
+          // Don't set isRunning=false here — let chat-state handle it.
+          // The suggest pipeline fires a second turn after the main response,
+          // and setting false between them would disengage scroll follow.
           setTokenCount(event.chatId, event.tokenCount);
           break;
         }

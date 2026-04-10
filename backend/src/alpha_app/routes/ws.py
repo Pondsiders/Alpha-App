@@ -171,7 +171,8 @@ async def cmd_send(ctx: WsContext, cmd: SendCommand) -> None:
         await chat._active_turn.send(cmd.content)
     else:
         task = asyncio.create_task(
-            _run_human_turn(ctx, chat, cmd.content, source="human")
+            _run_human_turn(ctx, chat, cmd.content, source="human",
+                           msg_id=getattr(cmd, "messageId", None))
         )
         ctx.streaming_tasks[cmd.chatId] = task
 

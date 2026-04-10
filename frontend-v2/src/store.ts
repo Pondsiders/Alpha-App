@@ -128,6 +128,12 @@ interface AppState {
   /** Append a new message to a chat (user send, or server-initiated). */
   appendMessage: (chatId: string, message: Message) => void;
 
+  /** Replace the last user message with an enriched version from the server. */
+  replaceLastUserMessage: (chatId: string, message: Message) => void;
+
+  /** Ensure an in-progress assistant message exists. Returns its ID. */
+  ensureAssistantMessage: (chatId: string) => string;
+
   /** Append a text delta to the last assistant message (streaming). */
   appendTextDelta: (chatId: string, messageId: string, delta: string) => void;
 
@@ -211,6 +217,69 @@ export const useStore = create<AppState>()(
         const chat = state.chats[chatId];
         if (chat) chat.messages.push(message);
       }),
+
+    replaceLastUserMessage: (chatId, message) =>
+      set((state) => {
+        const chat = state.chats[chatId];
+        if (!chat) return;
+        const messageId = (message.data as any)?.id;
+        if (messageId) {
+          // Match by ID — the correct way
+          const idx = chat.messages.findIndex(
+            (m) => m.role === "user" && (m.data as any).id === messageId
+          );
+          if (idx >= 0) {
+            chat.messages[idx] = message;
+            return;
+          }
+        }
+        // Fallback: replace last user message by position
+        for (let i = chat.messages.length - 1; i >= 0; i--) {
+          if (chat.messages[i].role === "user") {
+            chat.messages[i] = message;
+            return;
+          }
+        }
+        chat.messages.push(message);
+      }),
+
+    ensureAssistantMessage: (chatId) => {
+      const state = useStore.getState();
+      const chat = state.chats[chatId];
+      if (!chat) return "";
+
+      // Check if the last message is already an in-progress assistant message
+      const last = chat.messages[chat.messages.length - 1];
+      if (last?.role === "assistant") {
+        return (last.data as any).id;
+      }
+
+      // Create a new streaming assistant message
+      const id = `ast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      useStore.setState((s) => {
+        const c = s.chats[chatId];
+        if (c) {
+          c.messages.push({
+            role: "assistant",
+            data: {
+              id,
+              parts: [],
+              input_tokens: 0,
+              output_tokens: 0,
+              cache_creation_tokens: 0,
+              cache_read_tokens: 0,
+              context_window: 1_000_000,
+              model: null,
+              stop_reason: null,
+              cost_usd: 0,
+              duration_ms: 0,
+              inference_count: 0,
+            } as AssistantMessage,
+          });
+        }
+      });
+      return id;
+    },
 
     appendTextDelta: (chatId, messageId, delta) =>
       set((state) => {
@@ -311,9 +380,12 @@ export function convertMessage(msg: Message): ThreadMessageLike {
 
   if (msg.role === "assistant") {
     const data = msg.data;
+    // Streaming placeholders have ast- prefix IDs. They're still generating.
+    const isStreaming = data.id?.startsWith("ast-");
     return {
       id: data.id,
       role: "assistant",
+      status: isStreaming ? { type: "running" as const } : { type: "complete" as const },
       content: data.parts.map((part) => {
         if (part.type === "text") {
           return { type: "text" as const, text: part.text };

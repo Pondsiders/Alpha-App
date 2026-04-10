@@ -30,6 +30,7 @@ export const SendCommand = z.object({
   command: z.literal("send"),
   id: z.string().optional(),
   chatId: z.string(),
+  messageId: z.string().optional(),
   content: z.array(z.record(z.string(), z.unknown())),
 });
 

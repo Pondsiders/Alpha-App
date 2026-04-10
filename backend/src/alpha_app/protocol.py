@@ -41,6 +41,7 @@ class SendCommand(_CommandBase):
     """Send a user message to Claude."""
     command: Literal["send"]
     chatId: str  # Required.
+    messageId: str | None = None  # Frontend-generated ID for reconciliation.
     content: list[dict[str, Any]]  # Messages API content blocks.
 
 

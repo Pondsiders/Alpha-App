@@ -20,6 +20,7 @@ import {
   selectCurrentChat,
   useStore,
   type Message,
+  type UserMessage,
 } from "@/store";
 
 // Stable empty-array reference so render-time reads don't churn when
@@ -51,9 +52,27 @@ export function RuntimeProvider({
 
       if (content.length === 0) return;
 
+      // Generate message ID at the first instant it exists.
+      // This ID follows the message everywhere: store, WebSocket, backend, echo.
+      const messageId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+      // Optimistic add — message appears instantly.
+      const appendMessage = useStore.getState().appendMessage;
+      appendMessage(currentChatId, {
+        role: "user",
+        data: {
+          id: messageId,
+          source: "human",
+          content,
+          timestamp: null,
+        } as UserMessage,
+      });
+
+      // Send with the ID so the backend echoes it back for reconciliation.
       wsSend({
         command: "send",
         chatId: currentChatId,
+        messageId,
         content,
       });
     },
