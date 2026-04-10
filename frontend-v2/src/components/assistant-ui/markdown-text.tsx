@@ -87,8 +87,14 @@ const MarkdownTextImpl: FC = () => {
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeInlineCodeProperty]}
         components={{
-          code({ inline, className, children, ...props }) {
-            if (inline) {
+          code({ className, children, ...props }) {
+            // react-markdown v9+ no longer passes `inline` as a prop.
+            // Detect fenced blocks by the presence of a `language-*` class
+            // (remark-parse always sets one on fenced code, even for blocks
+            // with no language — it just sets `language-` with an empty
+            // suffix). Inline code has no language class at all.
+            const isFenced = /language-/.test(className || "");
+            if (!isFenced) {
               return (
                 <code
                   className="rounded-md border border-border/50 bg-muted/50 px-1.5 py-0.5 font-mono text-[0.85em]"

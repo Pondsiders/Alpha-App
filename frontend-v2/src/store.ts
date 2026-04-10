@@ -156,7 +156,7 @@ interface AppState {
 }
 
 export const useStore = create<AppState>()(
-  immer((set) => ({
+  immer((set, get) => ({
     connected: false,
     chats: {},
     currentChatId: null,
@@ -243,20 +243,22 @@ export const useStore = create<AppState>()(
         chat.messages.push(message);
       }),
 
-    ensureAssistantMessage: (chatId) => {
-      const state = useStore.getState();
-      const chat = state.chats[chatId];
+    ensureAssistantMessage: (chatId: string): string => {
+      // Use get() / set() from the immer callback closure above instead of
+      // useStore.getState() / useStore.setState() — the latter creates a
+      // circular type reference that collapses the whole store to `any`.
+      const chat = get().chats[chatId];
       if (!chat) return "";
 
       // Check if the last message is already an in-progress assistant message
       const last = chat.messages[chat.messages.length - 1];
       if (last?.role === "assistant") {
-        return (last.data as any).id;
+        return (last.data as AssistantMessage).id;
       }
 
       // Create a new streaming assistant message
       const id = `ast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      useStore.setState((s) => {
+      set((s) => {
         const c = s.chats[chatId];
         if (c) {
           c.messages.push({
@@ -385,7 +387,9 @@ export function convertMessage(msg: Message): ThreadMessageLike {
     return {
       id: data.id,
       role: "assistant",
-      status: isStreaming ? { type: "running" as const } : { type: "complete" as const },
+      status: isStreaming
+        ? { type: "running" as const }
+        : { type: "complete" as const, reason: "stop" as const },
       content: data.parts.map((part) => {
         if (part.type === "text") {
           return { type: "text" as const, text: part.text };

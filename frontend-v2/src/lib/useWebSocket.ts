@@ -2,73 +2,31 @@
  * useWebSocket — persistent bidirectional connection to the Alpha backend.
  *
  * Generic transport hook. Knows how to open a WebSocket to the backend,
- * handle reconnects with exponential backoff, parse incoming messages as
- * ServerEvents, and send ClientMessages. Does NOT know about our store —
- * the caller dispatches events via the `onEvent` callback.
+ * handle reconnects with exponential backoff, receive raw JSON messages,
+ * and send raw JSON messages. Does NOT know about the protocol shape —
+ * the caller (useAlphaWebSocket) owns all validation and discrimination
+ * via Zod schemas from lib/protocol.ts.
+ *
+ * This hook was previously hardcoded to an older protocol shape (with
+ * `type:` discriminators on both sides). That coupling is gone — the
+ * transport layer now speaks raw objects and leaves typing to the
+ * consumer, which means protocol changes don't ripple into this file.
  *
  * For the app-specific event routing, see src/hooks/useAlphaWebSocket.ts.
  *
- * Ported from frontend/src/lib/useWebSocket.ts with only path updates.
- *
  * Usage:
  *   const { send, connected } = useWebSocket({
- *     onEvent: (event) => { ... }
+ *     onEvent: (raw) => { ... },       // raw is unknown; validate it
  *   });
- *   send({ type: "send", chatId: "abc123", content: "Hello" });
+ *   send({ command: "join-chat", chatId: "abc123" });
  */
 
 import { useEffect, useRef, useState, useCallback } from "react";
 
-// Messages FROM the server
-export interface ServerEvent {
-  type:
-    | "text-delta"
-    | "thinking-delta"
-    | "tool-call"
-    | "tool-use-start"
-    | "tool-use-delta"
-    | "tool-result"
-    | "chat-created"
-    | "chat-state"
-    | "chat-list"
-    | "context-update"
-    | "approach-light"
-    | "enrichment-timestamp"
-    | "user-message"
-    | "assistant-message"
-    | "error"
-    | "exception"
-    | "done"
-    | "interrupted"
-    | "replay-done"
-    | "chat-data"
-    | "system-message"
-    | "agent-started"
-    | "agent-progress"
-    | "agent-done";
-  chatId?: string;
-  data?: unknown;
-}
-
-// Messages TO the server
-export interface ClientMessage {
-  type:
-    | "send"
-    | "interrupt"
-    | "create-chat"
-    | "list-chats"
-    | "buzz"
-    | "replay"
-    | "join-chat";
-  chatId?: string;
-  content?: string | Array<Record<string, unknown>>;
-  messageId?: string;
-  topics?: string[];
-}
-
 interface UseWebSocketOptions {
-  /** Called for each event from the server */
-  onEvent: (event: ServerEvent) => void;
+  /** Called for each raw JSON message from the server. The caller is
+   *  responsible for validating the shape (e.g. via Zod). */
+  onEvent: (raw: unknown) => void;
   /** Called when connection state changes */
   onConnectionChange?: (connected: boolean) => void;
 }
@@ -125,7 +83,7 @@ export function useWebSocket({
 
     ws.onmessage = (event) => {
       try {
-        const parsed = JSON.parse(event.data) as ServerEvent;
+        const parsed: unknown = JSON.parse(event.data);
         onEventRef.current(parsed);
       } catch (err) {
         console.warn("[Alpha WS] Failed to parse message:", event.data, err);
@@ -184,8 +142,10 @@ export function useWebSocket({
     };
   }, [connect]);
 
-  // Send a message to the server
-  const send = useCallback((message: ClientMessage) => {
+  // Send a message to the server. Accepts any JSON-serializable object —
+  // the protocol schema is owned by the consumer (useAlphaWebSocket), not
+  // this generic transport layer.
+  const send = useCallback((message: unknown) => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       console.warn("[Alpha WS] Cannot send — not connected");

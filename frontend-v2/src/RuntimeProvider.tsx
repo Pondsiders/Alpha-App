@@ -45,12 +45,16 @@ export function RuntimeProvider({
   // IMPORTANT: only depend on currentChatId, not the full chatsMap.
   // If chatsMap is in deps, every store update creates a new threadList
   // object, which the runtime interprets as a thread switch → forced scroll.
+  //
+  // Note: in @assistant-ui/core the thread list adapter now lives at
+  // `adapters.threadList`, not at the top level. Each ExternalStoreThreadData
+  // uses `id` (not `threadId`) as the per-item key.
   const threadList = useMemo(() => ({
     threadId: currentChatId ?? undefined,
     threads: currentChatId
-      ? [{ threadId: currentChatId, status: "regular" as const, title: "" }]
+      ? ([{ status: "regular" as const, id: currentChatId, title: "" }] as const)
       : [],
-    archivedThreads: [] as { threadId: string; status: "archived"; title: string }[],
+    archivedThreads: [] as const,
     onSwitchToThread: (threadId: string) => {
       setCurrentChatId(threadId);
     },
@@ -64,7 +68,7 @@ export function RuntimeProvider({
     messages,
     isRunning,
     convertMessage,
-    threadList,
+    adapters: { threadList },
     onNew: async (message: AppendMessage) => {
       if (!wsSend || !currentChatId) return;
 
