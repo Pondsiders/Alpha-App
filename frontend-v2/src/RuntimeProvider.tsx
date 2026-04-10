@@ -8,7 +8,7 @@
  * (see src/hooks/useAlphaWebSocket.ts).
  */
 
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import {
   AssistantRuntimeProvider,
   useExternalStoreRuntime,
@@ -37,11 +37,34 @@ export function RuntimeProvider({
 
   const wsSend = useStore((s) => s.wsSend);
   const currentChatId = useStore((s) => s.currentChatId);
+  const setCurrentChatId = useStore((s) => s.setCurrentChatId);
+
+  // Thread list adapter — tells assistant-ui about our multi-thread setup.
+  // This makes lifecycle events fire (thread.initialize, threadListItem.switchedTo)
+  // which drives scroll-to-bottom on load and thread switch.
+  // IMPORTANT: only depend on currentChatId, not the full chatsMap.
+  // If chatsMap is in deps, every store update creates a new threadList
+  // object, which the runtime interprets as a thread switch → forced scroll.
+  const threadList = useMemo(() => ({
+    threadId: currentChatId ?? undefined,
+    threads: currentChatId
+      ? [{ threadId: currentChatId, status: "regular" as const, title: "" }]
+      : [],
+    archivedThreads: [] as { threadId: string; status: "archived"; title: string }[],
+    onSwitchToThread: (threadId: string) => {
+      setCurrentChatId(threadId);
+    },
+    onSwitchToNewThread: () => {
+      const send = useStore.getState().wsSend;
+      send?.({ command: "create-chat" });
+    },
+  }), [currentChatId, setCurrentChatId]);
 
   const runtime = useExternalStoreRuntime<Message>({
     messages,
     isRunning,
     convertMessage,
+    threadList,
     onNew: async (message: AppendMessage) => {
       if (!wsSend || !currentChatId) return;
 
