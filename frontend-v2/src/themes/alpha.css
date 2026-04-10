@@ -58,6 +58,12 @@
 }
 
 .dark {
+  /* Declare this is a dark-themed context so CSS `light-dark()`
+     resolves to the dark branch. This is what shiki-highlighter's
+     `defaultColor="light-dark()"` relies on to pick kanagawa-wave
+     over kanagawa-lotus in code blocks. */
+  color-scheme: dark;
+
   --background: oklch(0.2679 0.0036 106.6427);
   --foreground: oklch(0.8074 0.0142 93.0137);
   --card: oklch(0.30 0.008 106.6);

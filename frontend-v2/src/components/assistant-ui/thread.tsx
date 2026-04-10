@@ -3,20 +3,11 @@ import {
   ComposerAttachments,
   UserMessageAttachments,
 } from "@/components/assistant-ui/attachment";
-import { UserMarkdownText } from "@/components/assistant-ui/markdown-text";
-import { MarkdownTextPrimitive } from "@assistant-ui/react-markdown";
-import remarkGfm from "remark-gfm";
+import {
+  MarkdownText,
+  UserMarkdownText,
+} from "@/components/assistant-ui/markdown-text";
 import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
-
-// Smooth streaming markdown text — uses assistant-ui's built-in smooth
-// interpolation for character-by-character text animation during streaming.
-const SmoothMarkdownText = () => (
-  <MarkdownTextPrimitive
-    remarkPlugins={[remarkGfm]}
-    className="prose prose-base prose-invert text-foreground font-light prose-p:my-2 prose-headings:mt-4 prose-headings:mb-2 prose-headings:text-foreground prose-h1:font-[500] prose-h2:font-[600] prose-strong:text-foreground prose-a:text-primary prose-blockquote:text-muted-foreground prose-code:text-foreground prose-code:font-light prose-pre:my-0 prose-pre:bg-transparent prose-pre:p-0 prose-li:marker:text-primary prose-hr:border-primary/30 prose-blockquote:border-primary/40"
-    smooth
-  />
-);
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { Button } from "@/components/ui/button";
 import {
@@ -218,7 +209,7 @@ const AssistantMessage: FC = () => {
       <div className="aui-assistant-message-content flex flex-col gap-2 wrap-break-word px-2 text-foreground leading-relaxed">
         <MessagePrimitive.Parts
           components={{
-            Text: SmoothMarkdownText,
+            Text: MarkdownText,
             tools: {
               Fallback: ToolFallback,
             },
