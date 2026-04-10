@@ -236,13 +236,14 @@ Response to `send`. Means "I received it, enrichment is running, Claude is about
 ```
 
 #### `user-message`
-The enriched user message echoed back from the server. Includes memories, timestamp, and any other enrichment. This is the authoritative version — the frontend's optimistic local copy gets replaced by this.
+The enriched user message echoed back from the server. Includes source, memories, timestamp, and any other enrichment. This is the authoritative version — the frontend's optimistic local copy gets replaced by this.
 
 ```json
 {
   "event": "user-message",
   "chatId": "xyz",
   "messageId": "msg_1",
+  "source": "human",
   "content": [
     { "type": "text", "text": "Hello there" }
   ],
@@ -252,6 +253,22 @@ The enriched user message echoed back from the server. Includes memories, timest
   "timestamp": "Mon Apr 6 2026, 3:45 PM"
 }
 ```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `source` | `"human" \| "buzzer" \| "reflection" \| "approach-light"` | always | Who initiated this user message. Determines how the frontend renders it and whether it blocks input. |
+| `content` | `list[block]` | always | Content blocks in Messages API format. |
+| `memories` | `list[memory] \| null` | always | Recalled memories attached by enrobe (null if none). |
+| `timestamp` | `string` | always | PSO-8601 formatted creation time, e.g. `"Fri Apr 10 2026, 11:27 AM"`. Set by `UserMessage`'s constructor via `default_factory`. |
+
+**Source values and their semantics:**
+
+- `"human"` — initiated by Jeffery typing in the composer. Blocks input (composer shows stop button, new sends rejected until turn completes).
+- `"buzzer"` — initiated by the 🦆 button. Blocks input, same as human.
+- `"reflection"` — injected by the backend as a post-turn reflection prompt. **Does not block input** (composer stays idle). If a new human message arrives mid-reflection, the backend interrupts the reflection and the human wins.
+- `"approach-light"` — async mid-turn interjection for context pressure. Does not block input. Currently disabled.
+
+The `blocks_input` property is derivable from `source` on both backend (`UserMessage.blocks_input` in `models.py`) and frontend (same set: `{"human", "buzzer"}`). Sources not in the blocking set are interruptible.
 
 #### `thinking-delta`
 A fragment of Claude's extended thinking.

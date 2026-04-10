@@ -97,7 +97,7 @@ class TestFirstTurnShape:
 
             with (
                 patch(
-                    "alpha_app.routes.enrobe._format_timestamp",
+                    "alpha_app.models.pso_timestamp",
                     return_value="Wed Mar 11 2026, 12:25 PM",
                 ),
                 patch(
@@ -172,7 +172,7 @@ class TestNormalTurnShape:
 
             with (
                 patch(
-                    "alpha_app.routes.enrobe._format_timestamp",
+                    "alpha_app.models.pso_timestamp",
                     return_value="Wed Mar 11 2026, 12:32 PM",
                 ),
                 patch(

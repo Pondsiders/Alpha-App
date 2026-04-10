@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from alpha_app.clock import pso_timestamp
+
 
 # ---------------------------------------------------------------------------
 # Enrichment parts — capsules and memories
@@ -110,6 +112,14 @@ class Orientation:
 # ---------------------------------------------------------------------------
 
 
+# Sources that put the frontend into "isRunning" mode: the composer shows a
+# stop button, new sends are rejected until the turn completes. The dual of
+# this set is the interruptible sources — non-blocking messages that can be
+# interrupted by a new human message (reflection, approach-light, future
+# solitude). Adding a new source is a one-line change here.
+_BLOCKING_SOURCES: frozenset[str] = frozenset({"human", "buzzer"})
+
+
 @dataclass
 class UserMessage:
     """A user message with all its enrichment.
@@ -121,8 +131,12 @@ class UserMessage:
 
     id: str
     content: list[dict]                       # Raw user input (Messages API blocks)
-    source: str = "human"                     # human, buzzer, intro, approach-light
-    timestamp: str | None = None
+    source: str = "human"                     # human, buzzer, reflection, approach-light
+    # Auto-stamped at creation. The lambda indirection means tests can patch
+    # `alpha_app.models.pso_timestamp` and the factory will pick up the patch,
+    # whereas a direct `default_factory=pso_timestamp` would capture the
+    # function object at class-definition time and ignore later patches.
+    timestamp: str = field(default_factory=lambda: pso_timestamp())
     orientation: Orientation | None = None    # First turn only
     intro: str | None = None                  # Intro memorables from previous turn
     memories: list[RecalledMemory] = field(default_factory=list)
@@ -130,6 +144,19 @@ class UserMessage:
     topic_names: list[str] = field(default_factory=list)  # Which topics were injected
     _dirty: bool = field(default=True, repr=False)  # Born dirty — flush writes to Postgres
     _confirmed: bool = field(default=False, repr=False)  # Pencil (False) until Claude echoes it (True)
+
+    @property
+    def blocks_input(self) -> bool:
+        """Does this message block frontend input while in flight?
+
+        True for human and buzzer (they initiate a turn the user is waiting
+        on — composer shows stop button). False for reflection, approach
+        lights, and other non-human sources (they run invisibly; if a new
+        human message arrives mid-flight, the human wins and the in-flight
+        message gets interrupted). The dual of this property is
+        "interruptible" — non-blocking messages are interruptible.
+        """
+        return self.source in _BLOCKING_SOURCES
 
     @staticmethod
     def _to_display_block(block: dict) -> dict:
@@ -301,14 +328,14 @@ class SystemMessage:
     """A system event rendered as a first-class message in the conversation.
 
     Not from the human. Not from me. From the infrastructure.
-    Task notifications, post-turn bookkeeping, compact boundaries —
+    Task notifications, reflection bookkeeping, compact boundaries —
     events that I react to as endogenous stimuli.
     """
 
     id: str
     text: str
-    source: str = "system"  # "task_notification", "post_turn", "compact", ...
-    timestamp: str | None = None
+    source: str = "system"  # "task_notification", "reflection", "compact", ...
+    timestamp: str = field(default_factory=lambda: pso_timestamp())
     _dirty: bool = field(default=True, repr=False)  # Born dirty — flush writes to Postgres
 
     def to_wire(self) -> dict:

@@ -125,13 +125,6 @@ class ConversationState(Enum):
         return _CONVERSATION_WIRE.get(self.value, self.value)
 
 
-class SuggestState(Enum):
-    """Second dimension of the state vector: the metacognitive pipeline."""
-    DISARMED = "disarmed"
-    ARMED = "armed"
-    FIRING = "firing"
-
-
 # Backward compatibility — existing imports of ChatState still resolve.
 ChatState = ConversationState
 
@@ -181,6 +174,7 @@ class Turn:
                 "event": "user-message",
                 "chatId": chat.id,
                 "messageId": wire.get("id", ""),
+                "source": wire.get("source", "human"),
                 "content": wire.get("content", []),
                 "memories": wire.get("memories", []),
                 "timestamp": wire.get("timestamp", ""),
@@ -214,9 +208,7 @@ class Chat:
         self.id = id
         self.session_uuid: str | None = None
 
-        # State vector: two orthogonal dimensions
         self.state = ConversationState.READY if claude else ConversationState.COLD
-        self.suggest = SuggestState.DISARMED
 
         self.title: str = ""
         self.created_at: float = time.time()
@@ -786,6 +778,7 @@ class Chat:
                         "event": "user-message",
                         "chatId": chat_id,
                         "messageId": wire.get("id", ""),
+                        "source": wire.get("source", "human"),
                         "content": wire.get("content", []),
                         "memories": wire.get("memories", []),
                         "timestamp": wire.get("timestamp", ""),
@@ -876,17 +869,17 @@ class Chat:
         self._output_parts = []
         self.set_trace_context(None)
 
-        # State transitions
+        # State transition
         self.state = ConversationState.READY
-        self.suggest = SuggestState.ARMED
 
-        # Release the turn lock — this turn is over. Jobs/suggest can proceed.
+        # Release the turn lock — this turn is over. Jobs and reflection
+        # can proceed.
         self._active_turn = None
         if self._turn_lock.locked():
             self._turn_lock.release()
 
-        # Fire suggest — ONLY after human-initiated turns.
-        # The guard is HERE, not in _post_turn_suggest. Suggest simply
+        # Fire reflection — ONLY after human-initiated turns.
+        # The guard is HERE, not in _post_turn_reflection. Reflection simply
         # doesn't get called unless the turn was human-initiated.
         last_user = next(
             (m for m in reversed(self.messages) if isinstance(m, UserMessage)),
@@ -904,23 +897,24 @@ class Chat:
             # want. Persisted in app.chats JSONB via to_data(); survives reap.
             self._human_turn_count += 1
 
-            # N=3 cadence: fire suggest on turns 1, 4, 7, 10, 13, ...
+            # N=3 cadence: fire reflection on turns 1, 4, 7, 10, 13, ...
             # (first term 1, common difference 3 — arithmetic sequence).
-            should_suggest = (
+            should_reflect = (
                 self._human_turn_count == 1
                 or self._human_turn_count % 3 == 1
             )
 
-            if should_suggest:
+            if should_reflect:
                 user_text = " ".join(
                     b.get("text", "") for b in last_user.content if b.get("type") == "text"
                 )
                 if user_text.strip():
-                    # Empty context so the suggest span is a SIBLING of alpha.turn,
-                    # not a child. asyncio.create_task() inherits the parent's trace
-                    # context; an empty Context() starts clean.
+                    # Empty context so the reflection span is a SIBLING of
+                    # alpha.turn, not a child. asyncio.create_task() inherits
+                    # the parent's trace context; an empty Context() starts
+                    # clean.
                     asyncio.create_task(
-                        self._post_turn_suggest(user_text, finalized_msg.text),
+                        self._post_turn_reflection(user_text, finalized_msg.text),
                         context=contextvars.Context(),
                     )
 
@@ -1071,7 +1065,7 @@ class Chat:
             )
             self.messages.append(self._current_assistant)
 
-    async def _post_turn_suggest(self, user_text: str, assistant_text: str) -> None:
+    async def _post_turn_reflection(self, user_text: str, assistant_text: str) -> None:
         """Post-turn: send a system-reminder prompting Alpha to store anything
         worth remembering from the previous exchange.
 
@@ -1082,22 +1076,21 @@ class Chat:
 
         Own Logfire span (sibling to the turn span) with gen_ai attributes.
         """
-        from alpha_app.suggest import build_post_turn_reminder
+        from alpha_app.reflection import build_reflection_reminder
         from alpha_app.db import fetch_unclaimed_flags, claim_flags
-        self.suggest = SuggestState.FIRING
 
         # Highlighter: surface any silent flags dropped during the exchange.
         flags = await fetch_unclaimed_flags(self.id)
         flag_notes = [f["note"] for f in flags]
-        reminder_text = build_post_turn_reminder(flag_notes)
+        reminder_text = build_reflection_reminder(flag_notes)
 
-        with logfire.span("alpha.suggest", **{
+        with logfire.span("alpha.reflection", **{
             "gen_ai.operation.name": "chat",
             "gen_ai.system": "anthropic",
             "chat.id": self.id,
-            "suggest.user_text_len": len(user_text),
-            "suggest.assistant_text_len": len(assistant_text),
-            "suggest.flag_count": len(flag_notes),
+            "reflection.user_text_len": len(user_text),
+            "reflection.assistant_text_len": len(assistant_text),
+            "reflection.flag_count": len(flag_notes),
         }) as span:
             try:
                 span.set_attribute("gen_ai.input.messages", [
@@ -1105,13 +1098,15 @@ class Chat:
                     {"role": "assistant", "content": assistant_text[:200]},
                 ])
 
-                # Send as own turn with source="suggest" so the source guard
-                # in _handle_result sees it and does NOT fire this again.
+                # Send as own turn with source="reflection" so the source
+                # guard in _handle_result sees it and does NOT fire this
+                # again. The UserMessage constructor auto-stamps timestamp
+                # via default_factory — no explicit timestamp kwarg needed.
                 from alpha_app.models import UserMessage as UM
                 msg = UM(
-                    id=f"suggest-{uuid.uuid4().hex[:8]}",
+                    id=f"reflection-{uuid.uuid4().hex[:8]}",
                     content=[{"type": "text", "text": reminder_text}],
-                    source="suggest",
+                    source="reflection",
                 )
                 async with await self.turn() as t:
                     # Set trace context so stdout drain and proxy attach to this span
@@ -1121,7 +1116,7 @@ class Chat:
                     self.set_trace_context(None)
 
                 if response:
-                    span.set_attribute("suggest.had_text_output", bool(response.text))
+                    span.set_attribute("reflection.had_text_output", bool(response.text))
                     span.set_attribute("gen_ai.output.messages", [
                         {"role": "assistant", "content": response.text[:200] if response.text else ""}
                     ])
@@ -1135,9 +1130,7 @@ class Chat:
 
             except Exception as e:
                 span.set_attribute("error.type", type(e).__name__)
-                logfire.debug("post-turn suggest failed: {error}", error=str(e))
-            finally:
-                self.suggest = SuggestState.DISARMED
+                logfire.debug("post-turn reflection failed: {error}", error=str(e))
 
     # -- Approach light -------------------------------------------------------
 
@@ -1229,12 +1222,11 @@ class Chat:
         )
         self._claude = None
         self.state = ConversationState.COLD
-        self.suggest = SuggestState.DISARMED
         if self.on_reap:
             await self.on_reap(self.id)
 
     async def reap(self) -> None:
-        """Kill the subprocess. * -> COLD, suggest -> DISARMED."""
+        """Kill the subprocess. * -> COLD."""
         if self._claude:
             self._snapshot_token_state()
             logfire.info(
@@ -1252,7 +1244,6 @@ class Chat:
                 )
             self._claude = None
         self.state = ConversationState.COLD
-        self.suggest = SuggestState.DISARMED
 
     # wake() and resurrect() removed — CHAT-V2.
     # _ensure_claude() handles all lifecycle: auto-starts on send, resumes if

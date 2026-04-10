@@ -1,17 +1,18 @@
 """enrobe.py — Message enrichment pipeline.
 
-The place where user messages get wrapped in memories, intro suggestions,
-and timestamps before being sent to Claude.
+The place where user messages get wrapped in memories before being sent
+to Claude.
 
 The name: to enrobe is to coat something in chocolate. The user message
 is the truffle center; everything we add is the shell.
 
 Implements:
-  1. Orientation (full data: capsules, letter, today, here, context,
-     events, todos — fetched from Postgres, Redis, and filesystem)
-  2. Memory recall (dual-strategy search, session dedup, formatted blocks)
-  3. Timestamp injection (PSO-8601 format)
-  (Intro memorables removed — suggest fires as own post-turn via Chat.)
+  1. Memory recall (dual-strategy search, session dedup, formatted blocks)
+  2. Topic context injection (per-chat, once-per-window)
+
+Timestamp is no longer an enrobe step — UserMessage auto-stamps itself
+at construction time via a default_factory on the domain model. See
+alpha_app.clock.pso_timestamp and alpha_app.models.UserMessage.
 
 Returns a UserMessage domain object with two serializations:
   - to_wire()           → labeled JSON for the frontend
@@ -28,7 +29,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import logfire
-import pendulum
 
 from alpha_app.images import process_image_blocks
 from alpha_app.memories.recall import recall, format_memory
@@ -51,12 +51,6 @@ class EnrobeResult:
     message: UserMessage
     content: list[dict]
     events: list[dict] = field(default_factory=list)
-
-
-def _format_timestamp() -> str:
-    """Current time in PSO-8601 format. Always local to the Pi."""
-    now = pendulum.now("America/Los_Angeles")
-    return now.format("ddd MMM D YYYY, h:mm A")
 
 
 def _build_capsules(orientation_data: dict) -> list[Capsule]:
@@ -123,6 +117,7 @@ async def enrobe(
                 "event": "user-message",
                 "chatId": chat.id,
                 "messageId": wire.get("id", ""),
+                "source": wire.get("source", "human"),
                 "content": wire.get("content", []),
                 "memories": wire.get("memories", []),
                 "timestamp": wire.get("timestamp", ""),
@@ -134,13 +129,13 @@ async def enrobe(
     if chat._needs_orientation:
         chat._needs_orientation = False
 
-    # 2. (Removed: intro injection. Suggest fires as own post-turn now.)
-
-    # 3. Timestamp — computed instantly, broadcast immediately
-    msg.timestamp = _format_timestamp()
+    # 2. Initial snapshot — broadcast the bare UserMessage immediately.
+    #    Timestamp is already present (set by the UserMessage constructor
+    #    via default_factory=pso_timestamp). Frontend can start rendering
+    #    the message before recall finishes.
     await _broadcast_snapshot()
 
-    # 4. Memory recall — unified pipeline for text + images
+    # 3. Memory recall — unified pipeline for text + images
     memories = await recall(content, session_id=chat.id)
     for mem in memories:
         msg.memories.append(RecalledMemory(

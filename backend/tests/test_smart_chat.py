@@ -22,7 +22,7 @@ from alpha_app import (
     SystemEvent,
     UserEvent,
 )
-from alpha_app.chat import Chat, ConversationState, SuggestState
+from alpha_app.chat import Chat, ConversationState
 from alpha_app.models import AssistantMessage, UserMessage
 
 
@@ -207,7 +207,6 @@ class TestSmartChatCallback:
 
         # State should transition
         assert chat.state == ConversationState.READY
-        assert chat.suggest == SuggestState.ARMED
 
         # Should have broadcast assistant-message and chat-state.
         # Two chat-state broadcasts: spontaneous response detection (RESPONDING)
@@ -291,13 +290,13 @@ class TestSmartChatCallback:
 
     async def test_human_turn_counter_increments_on_human_turn(self, chat, broadcasts):
         """_human_turn_count should increment once per completed human-initiated turn."""
-        # Stub out the suggest dispatch so we don't need Ollama.
+        # Stub out the reflection dispatch so we don't need Claude.
         fired: list[int] = []
 
-        async def fake_suggest(user_text: str, assistant_text: str) -> None:
+        async def fake_reflection(user_text: str, assistant_text: str) -> None:
             fired.append(chat._human_turn_count)
 
-        chat._post_turn_suggest = fake_suggest
+        chat._post_turn_reflection = fake_reflection
 
         assert chat._human_turn_count == 0
 
@@ -311,16 +310,16 @@ class TestSmartChatCallback:
 
         assert chat._human_turn_count == 3
 
-    async def test_suggest_cadence_fires_on_1_4_7(self, chat, broadcasts):
-        """N=3 cadence: suggest fires on turns 1, 4, 7, 10, ... (and nowhere else)."""
+    async def test_reflection_cadence_fires_on_1_4_7(self, chat, broadcasts):
+        """N=3 cadence: reflection fires on turns 1, 4, 7, 10, ... (and nowhere else)."""
         fired_on: list[int] = []
 
-        async def fake_suggest(user_text: str, assistant_text: str) -> None:
+        async def fake_reflection(user_text: str, assistant_text: str) -> None:
             fired_on.append(chat._human_turn_count)
 
-        chat._post_turn_suggest = fake_suggest
+        chat._post_turn_reflection = fake_reflection
 
-        # Run 10 human turns and record which ones fired suggest.
+        # Run 10 human turns and record which ones fired reflection.
         for i in range(10):
             chat.messages.append(
                 UserMessage(id=f"u{i}", content=[{"type": "text", "text": f"msg {i}"}], source="human")

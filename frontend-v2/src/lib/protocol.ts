@@ -121,13 +121,41 @@ export const SendAckEvent = z.object({
   chatId: z.string(),
 });
 
+/**
+ * Source of a user message — who initiated it.
+ *
+ * - `"human"` and `"buzzer"` block input: composer shows stop button,
+ *   new sends are rejected until the turn completes.
+ * - `"reflection"` and `"approach-light"` do NOT block input: composer
+ *   stays idle and accepts input. If a new human message arrives
+ *   mid-flight, the backend interrupts and the human wins.
+ *
+ * The `blocksInput` helper (below) is the dual of the interruptible
+ * property — it derives from source via a single lookup.
+ */
+export const UserMessageSource = z.enum([
+  "human",
+  "buzzer",
+  "reflection",
+  "approach-light",
+]);
+export type UserMessageSource = z.infer<typeof UserMessageSource>;
+
+const _BLOCKING_SOURCES = new Set<UserMessageSource>(["human", "buzzer"]);
+
+/** Does a user message with this source block frontend input while in flight? */
+export function blocksInput(source: UserMessageSource): boolean {
+  return _BLOCKING_SOURCES.has(source);
+}
+
 export const UserMessageEvent = z.object({
   event: z.literal("user-message"),
   chatId: z.string(),
   messageId: z.string(),
+  source: UserMessageSource,
   content: z.array(z.record(z.string(), z.unknown())),
   memories: z.array(z.record(z.string(), z.unknown())).nullable().default([]),
-  timestamp: z.string().default(""),
+  timestamp: z.string(),
 });
 
 export const ThinkingDeltaEvent = z.object({
