@@ -10,6 +10,9 @@ let Page = App;
 if (path.endsWith('/dev/tool-fallback')) {
   const { default: DevToolFallback } = await import('./pages/DevToolFallback.tsx');
   Page = DevToolFallback;
+} else if (path.endsWith('/dev/context-ring')) {
+  const { default: DevContextRing } = await import('./pages/DevContextRing.tsx');
+  Page = DevContextRing;
 }
 
 createRoot(document.getElementById('root')!).render(

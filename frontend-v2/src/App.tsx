@@ -10,9 +10,14 @@ import { useState } from "react";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Thread } from "@/components/assistant-ui/thread";
 import { GroupedThreadList } from "@/components/grouped-thread-list";
-import { ChatInfo } from "@/components/ChatInfo";
-import { ContextMeter } from "@/components/ContextMeter";
+import { ContextRing, contextColorClass } from "@/components/ContextRing";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@/components/ui/hover-card";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Sidebar,
   SidebarContent,
@@ -70,29 +75,68 @@ function AppSidebar() {
   );
 }
 
-// -- Header -------------------------------------------------------------------
+// -- Floating Context Ring ----------------------------------------------------
+//
+// Sits in the top-right corner of the chat area. Shows context usage as
+// a Lucide-styled progress ring. HoverCard opens with the full details
+// (model, tokens, percentage) for when you need the numbers.
+//
+// Threshold treatment:
+//   <80%  — neutral tile (bg-card), ring is muted, hover brightens to white
+//   80-90% — amber tile (bg-primary/15), ring is amber, hover saturates
+//   >=90% — red tile (bg-destructive/15), ring is red, hover saturates
+// In warning states, the tile itself carries the signal color so the ring
+// can keep its threshold color on hover instead of losing it.
 
-function Header() {
+function contextTileClasses(percent: number): string {
+  if (percent >= 90) {
+    return "bg-destructive/15 text-destructive hover:bg-destructive/25";
+  }
+  if (percent >= 80) {
+    return "bg-primary/15 text-primary hover:bg-primary/25";
+  }
+  return "bg-card text-muted-foreground hover:bg-muted hover:text-foreground";
+}
+
+// Shared tile class suffix for both floating buttons.
+const FLOATING_TILE = "size-9 rounded-lg shadow-md transition-colors";
+
+function FloatingContextRing() {
   // Mock data — will come from the runtime/store when backend is connected
-  const mockChatId = "eG1S5JgkBShM";
-  const mockSessionUuid = "23c558d0-ca83-480b-93ee-e2f9f6ab5ddb";
-  const mockPercent = 15.9;
-  const mockTokenCount = 159_000;
+  const mockPercent = 48.3;
+  const mockTokenCount = 483_000;
   const mockTokenLimit = 1_000_000;
 
+  const display = mockPercent.toFixed(1) + "%";
+  const tokenDisplay =
+    `${mockTokenCount.toLocaleString()} / ${mockTokenLimit.toLocaleString()}`;
+
   return (
-    <header className="relative z-10 flex h-14 shrink-0 items-center gap-2 bg-sidebar px-4 border-b border-sidebar-border shadow-lg">
-      <SidebarTrigger className="size-9 text-muted-foreground hover:text-foreground transition-colors" />
-      <ChatInfo chatId={mockChatId} sessionUuid={mockSessionUuid} />
-      <div className="ml-auto">
-        <ContextMeter
-          percent={mockPercent}
-          model="claude-opus-4-6"
-          tokenCount={mockTokenCount}
-          tokenLimit={mockTokenLimit}
-        />
-      </div>
-    </header>
+    <HoverCard openDelay={200} closeDelay={100}>
+      <HoverCardTrigger asChild>
+        <button
+          type="button"
+          className={`flex items-center justify-center ${FLOATING_TILE} ${contextTileClasses(mockPercent)}`}
+          aria-label={`Context ${display}`}
+        >
+          <ContextRing percent={mockPercent} className="size-4" />
+        </button>
+      </HoverCardTrigger>
+      <HoverCardContent side="bottom" align="end" className="w-auto min-w-[180px]">
+        <div className="space-y-2">
+          <div className="space-y-0.5">
+            <span className="text-[10px] text-muted-foreground tracking-wide">Context</span>
+            <div className={`text-xs tabular-nums ${contextColorClass(mockPercent)}`}>
+              {display}
+            </div>
+          </div>
+          <div className="space-y-0.5">
+            <span className="text-[10px] text-muted-foreground tracking-wide">Tokens</span>
+            <div className="text-xs tabular-nums text-foreground">{tokenDisplay}</div>
+          </div>
+        </div>
+      </HoverCardContent>
+    </HoverCard>
   );
 }
 
@@ -116,9 +160,25 @@ export default function App() {
           onOpenChange={(open) => { setSidebarOpen(open); try { localStorage.setItem("alpha-sidebarOpen", String(open)); } catch { /* noop */ } }}
         >
           <AppSidebar />
-          <SidebarInset>
-            <Header />
-            <main className="flex-1 overflow-hidden">
+          <SidebarInset
+            style={{
+              ["--thread-max-width" as string]: "44rem",
+              ["--composer-radius" as string]: "24px",
+              ["--composer-padding" as string]: "10px",
+            }}
+          >
+            <main className="relative flex-1 overflow-hidden">
+              {/* Floating sidebar trigger — top-left corner, over the chat */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <SidebarTrigger className={`absolute left-3 top-3 z-20 ${FLOATING_TILE} bg-card text-muted-foreground hover:bg-muted hover:text-foreground dark:hover:bg-muted`} />
+                </TooltipTrigger>
+                <TooltipContent side="bottom">Toggle sidebar</TooltipContent>
+              </Tooltip>
+              {/* Floating context ring — top-right corner, with hover details */}
+              <div className="absolute right-3 top-3 z-20">
+                <FloatingContextRing />
+              </div>
               <Thread />
             </main>
           </SidebarInset>
