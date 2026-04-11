@@ -60,6 +60,7 @@ export function useAlphaWebSocket() {
               updatedAt: c.updatedAt,
               tokenCount: c.tokenCount,
               contextWindow: c.contextWindow,
+              sessionUuid: c.sessionUuid,
             }),
           );
           setChatList(chats);
@@ -74,6 +75,7 @@ export function useAlphaWebSocket() {
             updatedAt: event.updatedAt,
             tokenCount: event.tokenCount,
             contextWindow: event.contextWindow,
+            sessionUuid: event.sessionUuid,
           });
           setMessages(event.chatId, event.messages as unknown as Message[]);
           // Select this chat and persist to localStorage for next startup.

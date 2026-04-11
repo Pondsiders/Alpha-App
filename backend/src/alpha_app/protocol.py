@@ -108,6 +108,7 @@ class ChatLoadedEvent(_EventBase):
     state: str
     tokenCount: int
     contextWindow: int
+    sessionUuid: str | None = None
     messages: list[dict[str, Any]]
 
 

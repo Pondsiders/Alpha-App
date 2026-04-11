@@ -1,5 +1,5 @@
 /**
- * GroupedThreadList — Week-grouped, day-collapsible sidebar thread list.
+ * GroupedThreadList — Week-grouped, fully-expanded sidebar thread list.
  *
  * Reads chats from the Zustand store (populated by the WebSocket handler
  * in useAlphaWebSocket), groups them by week then circadian day, and
@@ -9,12 +9,15 @@
  * list runtime, no derived contexts. Just: read the store, render buttons,
  * wire onClick.
  *
- * Single-thread days render as a plain day-name item.
- * Multi-thread days render as a collapsible with sub-items.
+ * Single-thread days render as a plain day-name item (clickable).
+ * Multi-thread days render as a non-clickable day label plus an always-
+ * visible list of time entries underneath. No collapse affordance —
+ * everything the sidebar can show, it shows. The circadian architecture
+ * means most days are single-chat anyway; multi-chat days are the
+ * exception worth spreading out visually.
  */
 
-import { useMemo, useState } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { useMemo } from "react";
 
 import {
   SidebarGroup,
@@ -27,16 +30,7 @@ import {
   SidebarMenuSubItem,
   SidebarMenuSubButton,
 } from "@/components/ui/sidebar";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+import { ChatHoverCard } from "@/components/ChatHoverCard";
 
 import { useStore, type Chat } from "@/store";
 
@@ -210,18 +204,15 @@ function ThreadSubItem({ chat }: { chat: Chat }) {
   const isActive = useStore((s) => s.currentChatId === chat.id);
 
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <SidebarMenuSubButton
-          className="cursor-pointer"
-          isActive={isActive}
-          onClick={() => setCurrentChatId(chat.id)}
-        >
-          {toTimeOnly(chat.createdAt)}
-        </SidebarMenuSubButton>
-      </TooltipTrigger>
-      <TooltipContent side="right">{toPSO8601(chat.createdAt)}</TooltipContent>
-    </Tooltip>
+    <ChatHoverCard chat={chat}>
+      <SidebarMenuSubButton
+        className="cursor-pointer data-active:bg-primary data-active:text-primary-foreground"
+        isActive={isActive}
+        onClick={() => setCurrentChatId(chat.id)}
+      >
+        {toTimeOnly(chat.createdAt)}
+      </SidebarMenuSubButton>
+    </ChatHoverCard>
   );
 }
 
@@ -238,52 +229,41 @@ function SingleThreadDayItem({
 
   return (
     <SidebarMenuItem>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <SidebarMenuButton
-            className="w-full cursor-pointer"
-            isActive={isActive}
-            onClick={() => setCurrentChatId(chat.id)}
-          >
-            {dayLabel}
-          </SidebarMenuButton>
-        </TooltipTrigger>
-        <TooltipContent side="right">
-          {toPSO8601(chat.createdAt)}
-        </TooltipContent>
-      </Tooltip>
+      <ChatHoverCard chat={chat}>
+        <SidebarMenuButton
+          className="w-full cursor-pointer data-active:bg-primary data-active:text-primary-foreground"
+          isActive={isActive}
+          onClick={() => setCurrentChatId(chat.id)}
+        >
+          {dayLabel}
+        </SidebarMenuButton>
+      </ChatHoverCard>
     </SidebarMenuItem>
   );
 }
 
-/** Collapsible menu for a day that has multiple chats. */
+/**
+ * Non-collapsible menu for a day that has multiple chats. Day label
+ * uses the same visual layout as SidebarMenuButton (default size) but
+ * is a non-interactive <div> with muted text color — so it reads as
+ * "a day item, but this one's a header not a link."
+ */
 function MultiThreadDayItem({ day }: { day: DayBucket }) {
-  const [open, setOpen] = useState(false);
-
   return (
-    <Collapsible open={open} onOpenChange={setOpen}>
-      <SidebarMenuItem>
-        <CollapsibleTrigger asChild>
-          <SidebarMenuButton className="w-full">
-            {day.dayLabel}
-            {open ? (
-              <ChevronDown className="ml-auto size-3.5" />
-            ) : (
-              <ChevronRight className="ml-auto size-3.5" />
-            )}
-          </SidebarMenuButton>
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          <SidebarMenuSub>
-            {day.threads.map((t) => (
-              <SidebarMenuSubItem key={t.id}>
-                <ThreadSubItem chat={t} />
-              </SidebarMenuSubItem>
-            ))}
-          </SidebarMenuSub>
-        </CollapsibleContent>
-      </SidebarMenuItem>
-    </Collapsible>
+    <SidebarMenuItem>
+      <div
+        className="flex h-8 w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm text-muted-foreground select-none cursor-default"
+      >
+        {day.dayLabel}
+      </div>
+      <SidebarMenuSub>
+        {day.threads.map((t) => (
+          <SidebarMenuSubItem key={t.id}>
+            <ThreadSubItem chat={t} />
+          </SidebarMenuSubItem>
+        ))}
+      </SidebarMenuSub>
+    </SidebarMenuItem>
   );
 }
 

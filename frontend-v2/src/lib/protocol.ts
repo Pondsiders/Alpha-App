@@ -75,6 +75,7 @@ export const AppStateEvent = z.object({
       state: z.string(),
       tokenCount: z.number(),
       contextWindow: z.number(),
+      sessionUuid: z.string().optional(),
     })
   ),
   solitude: z.boolean().default(false),
@@ -91,6 +92,7 @@ export const ChatLoadedEvent = z.object({
   state: z.string(),
   tokenCount: z.number(),
   contextWindow: z.number(),
+  sessionUuid: z.string().optional(),
   messages: z.array(
     z.object({
       role: z.enum(["user", "assistant", "system"]),

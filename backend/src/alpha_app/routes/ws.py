@@ -42,6 +42,16 @@ from alpha_app.tools import create_alpha_server
 router = APIRouter()
 
 
+# TEMP feature flag — eager warmup is disabled to test whether it's the root
+# cause of the Safari sidebar bug (Apr 11 2026). When cmd_join_chat awaits
+# _ensure_claude() for ~300ms, Safari's WebSocket state desyncs server-side
+# and the next receive_json() raises
+# RuntimeError("WebSocket is not connected. Need to call 'accept' first.").
+# Flip back to True when we want eager warmup again, or delete the block
+# entirely if Safari proves this was the culprit.
+_EAGER_WARMUP_ENABLED = False
+
+
 # =============================================================================
 # Shared state container (passed to every handler)
 # =============================================================================
@@ -128,12 +138,14 @@ async def cmd_join_chat(ctx: WsContext, cmd: JoinChatCommand) -> None:
         state=ws.get("state", "dead"),
         tokenCount=ws.get("tokenCount", 0),
         contextWindow=ws.get("contextWindow", 1_000_000),
+        sessionUuid=ws.get("sessionUuid") or None,
         messages=messages,
     ))
 
     # Eager warmup: if COLD with a session, start the subprocess now.
     if (
-        chat.state == ConversationState.COLD
+        _EAGER_WARMUP_ENABLED
+        and chat.state == ConversationState.COLD
         and chat.session_uuid is not None
     ):
         chat._topic_registry = getattr(ctx.ws.app.state, "topic_registry", None)
