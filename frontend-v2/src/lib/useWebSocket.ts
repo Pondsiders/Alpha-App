@@ -129,16 +129,31 @@ export function useWebSocket({
         clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
       }
-      if (wsRef.current) {
-        // Null handlers BEFORE closing to prevent stale callbacks from
-        // firing after StrictMode remount and clobbering the fresh WS ref.
-        wsRef.current.onopen = null;
-        wsRef.current.onclose = null;
-        wsRef.current.onerror = null;
-        wsRef.current.onmessage = null;
-        wsRef.current.close(1000, "Component unmounting");
-        wsRef.current = null;
+      const ws = wsRef.current;
+      if (!ws) return;
+
+      // Null stale handlers first so nothing fires during teardown.
+      // (Original fix for StrictMode remount clobbering wsRef.current
+      // via async onclose — still needed.)
+      ws.onmessage = null;
+      ws.onerror = null;
+      ws.onclose = null;
+
+      if (ws.readyState === WebSocket.CONNECTING) {
+        // WebKit bug 247943 — closing a CONNECTING WebSocket breaks
+        // every subsequent WebSocket to the same origin in Safari.
+        // Defer the close until onopen fires, then close cleanly.
+        // The socket finishes its handshake, fires the replacement
+        // onopen, closes itself, and gets garbage-collected. No leak.
+        // Rails hit this first and landed the same pattern in
+        // rails/rails#44304.
+        ws.onopen = () => ws.close(1000, "Component unmounting");
+      } else {
+        ws.onopen = null;
+        ws.close(1000, "Component unmounting");
       }
+
+      wsRef.current = null;
     };
   }, [connect]);
 
