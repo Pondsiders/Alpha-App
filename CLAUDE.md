@@ -6,11 +6,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Alpha-App is a multi-chat AI application ("the duck in the machine"). A FastAPI backend manages Claude subprocesses, and a React frontend provides the chat UI. Communication is over a single multiplexed WebSocket.
 
+**Two frontends currently coexist.** `frontend/` is the legacy UI; `frontend-v2/` is the in-progress rewrite on assistant-ui primitives (active branch: `frontend-v2`). New frontend work happens in `frontend-v2/` — see its own `CLAUDE.md` for details.
+
 ## Commands
 
-### Frontend (from `frontend/`)
+### `pixelfuck.sh` — frontend-v2 dev loop
+The blessed way to develop on frontend-v2. Starts a bare-metal backend on port 18020 pointed at the `alpha_pixelfuck` Postgres database, plus the Vite dev server on 5173. Ctrl+C kills both.
 ```bash
-npm run dev          # Vite dev server on port 18011
+./pixelfuck.sh
+```
+
+### Frontend v2 (from `frontend-v2/`)
+```bash
+npm run dev          # Vite dev server (TLS, primer.tail8bd569.ts.net)
+npm run build        # tsc -b && vite build
+npm run lint         # ESLint
+```
+The dev server proxies `/api` and `/ws` to `primer:18020` (the pixelfuck backend), not `:18010`.
+
+### Frontend legacy (from `frontend/`)
+```bash
+npm run dev          # Vite dev server on port 18011 (proxies to :18010)
 npm run build        # Production build to dist/
 npm run typecheck    # TypeScript type checking
 ```
@@ -21,7 +37,7 @@ uv sync --group dev                    # Install dependencies
 uv run pytest tests/ -v                # Run all backend tests
 uv run pytest tests/test_claude.py -v  # Run a single test file
 uv run pytest tests/ -k "test_name"    # Run a single test by name
-uv run alpha                                   # Run backend (port 18010)
+uv run alpha                                   # Run backend (port 18010 by default; PORT env overrides)
 uv run alpha --with-scheduler                  # Run with APScheduler jobs (production)
 ```
 
@@ -60,16 +76,18 @@ The core abstraction. `Chat` objects each own a Claude subprocess with a 2D stat
 - Idle chats are reaped after 60 min (`_ALPHA_REAP_TIMEOUT`, default 3600s), resurrected via `--resume`
 - Wire value mapping converts internal states for the WebSocket protocol: READY→"idle", ENRICHING/RESPONDING→"busy", COLD→"dead"
 
-### Turn Lifecycle (`backend/src/alpha_app/routes/turn_smart.py`)
-Smart Chat architecture: a background task drains Claude's stdout forever (no gap between turns). A turn flows: resurrect (if COLD) → enrobe → send. Send returns immediately — Claude's response flows through a callback on `Chat._on_claude_event` to the WebSocket via broadcast. No streaming loop or generator; `Chat.messages[]` is the authoritative conversation record.
+### Turn Lifecycle (`backend/src/alpha_app/routes/handlers.py`)
+Smart Chat architecture: a background task drains Claude's stdout forever (no gap between turns). A turn flows: resurrect (if COLD) → enrobe → send. Send returns immediately — Claude's response flows through a callback on `Chat._on_claude_event` to the WebSocket via broadcast. No streaming loop or generator; `Chat.messages[]` is the authoritative conversation record. Event dispatch inside `Chat` runs through the `_EVENT_HANDLERS` table — see `CHAT-V2.md`.
 
-### WebSocket Protocol (`backend/src/alpha_app/routes/ws.py`)
-Single multiplexed connection. All messages carry a `chatId` field.
-- Client → Server: `create-chat`, `send`, `interrupt`, `list-chats`, `buzz`, `replay`
-- Server → Client: `chat-created`, `chat-state`, `text-delta`, `thinking-delta`, `tool-call`, `done`, `context-update`, `approach-light`, `error`
-- Streaming events are broadcast to all connected clients (multi-tab sync)
-- `replay` loads events from `app.events` table in Postgres
-- `join-chat` loads complete messages from `app.messages` table (the "gimme the fucking chat" protocol — preferred over replay)
+### WebSocket Protocol (`backend/src/alpha_app/routes/ws.py`, `backend/src/alpha_app/protocol.py`)
+Single multiplexed connection. Wire schemas live in `protocol.py` (Pydantic on the backend) and `frontend-v2/src/lib/protocol.ts` (Zod on the frontend). The authoritative spec is `PROTOCOL.md`.
+
+- **Client → Server commands:** `join-chat`, `create-chat`, `send`, `interrupt`, `buzz`
+- **Server → Client events:** `app-state`, `chat-loaded`, `chat-created`, `chat-state`, `send-ack`, `user-message`, `thinking-delta`, `text-delta`, `tool-call-start`, `tool-call-delta`, `tool-call-result`, `assistant-message`, `turn-complete`, `context-update`, `buzz-ack`, `error`
+- On connect, the server pushes `app-state` immediately, then `chat-loaded` for the startup chat (selected via `?lastChat=` query param, or most-recent). No handshake.
+- Streaming events broadcast to all connected clients (multi-tab sync).
+- `join-chat` loads complete messages from the `app.messages` table — the "gimme the fucking chat" path, and the only load path (legacy `replay` is gone).
+- Commands carrying an `id` expect a correlated response event echoing that `id`; commands without `id` are fire-and-forget.
 
 ### Approach Lights (Context Pressure) — DISABLED
 Async interjections fired mid-turn when token usage crosses thresholds: 65% (yellow) and 75% (red). Currently disabled (`check_approach_threshold` returns None) pending recalibration for the 1M context window. The thresholds were designed for 200K. The mechanism works — interjections feed to the RESPONDING subprocess via stdin — but the trigger points need updating.
@@ -114,12 +132,15 @@ APScheduler bolted onto FastAPI via `--with-scheduler`. Runs on alpha-pi 24/7. J
 asyncpg pool (min 2, max 10 connections). Three tables in the `app` schema:
 - `app.chats` — chat metadata as JSONB (title, session UUID, token counts, seen IDs), upserted on each turn
 - `app.messages` — complete UserMessage/AssistantMessage/SystemMessage objects as JSONB, keyed by (chat_id, ordinal). The "gimme the fucking chat" table — `join-chat` loads from here
-- `app.events` — raw WebSocket events with sequence numbers, used by legacy `replay` protocol
+- `app.events` — raw WebSocket events with sequence numbers (legacy; `replay` is no longer in the protocol)
 
 JSONB codec registered per-connection for automatic dict serialization. Connection pools in both `db.py` and `memories/db.py` are lazily initialized. Redis (via `alpha-pi:6379`) stores ephemeral state: weather, calendar, todos, today-so-far summaries, and letter-to-self.
 
-### Frontend State (`frontend/src/store.ts`)
+### Frontend State — legacy (`frontend/src/store.ts`)
 Zustand store with Immer middleware, multi-chat aware. `chats` map + `activeChatId`. Messages for the active chat in `messages`, background chats in `messageCache` (streaming deltas update cache so switching back is instant). Context meter tracks token usage with approach lights at 65% (yellow) and 75% (red).
+
+### Frontend State — v2 (`frontend-v2/src/store.ts`)
+Zustand + Immer. Single source of truth for the assistant-ui rewrite. Shape: `{ connected, chats: Record<id, Chat>, currentChatId }`. Backend message formats are stored as-is; conversion to assistant-ui's `ThreadMessageLike` happens only at the render boundary (`RuntimeProvider.tsx` → `useExternalStoreRuntime`). The WebSocket layer is split: `lib/useWebSocket.ts` is the generic transport (connect, exponential-backoff reconnect, JSON parse), and `hooks/useAlphaWebSocket.ts` routes server events to store actions and sends `join-chat` when `currentChatId` changes. Wire validation is Zod v4 — invalid events throw, no silent defaults.
 
 ### Test Suites
 - **Backend unit tests** (`backend/tests/`) — fast, no external services; integration tests marked with `@pytest.mark.integration`
@@ -148,13 +169,13 @@ Zustand store with Immer middleware, multi-chat aware. `chats` map + `activeChat
 
 - Python async throughout the backend — `asyncio_mode = "auto"` in pytest
 - `@pytest.mark.integration` for tests requiring a live Claude process or database
-- Path alias `@/*` maps to `frontend/src/*` in TypeScript
-- Backend port 18010 (`uv run alpha` and `docker compose up` both serve on this port, from `constants.py`)
-- Frontend dev port 18011 (Vite dev server, `npm run dev` — proxies `/api` and `/ws` to backend on 18010)
-- Vite proxies `/api` and `/ws` to the backend in dev mode (ports configurable via `VITE_PORT` and `VITE_BACKEND_PORT` env vars)
+- Path alias `@/*` maps to `src/*` in both `frontend/` and `frontend-v2/`
+- Backend port 18010 by default (`uv run alpha` and `docker compose up`, from `constants.py`). The `pixelfuck.sh` dev loop runs a second backend on 18020 against the `alpha_pixelfuck` database for frontend-v2 work.
+- Legacy frontend dev: Vite on 18011, proxies `/api` and `/ws` to backend on 18010.
+- Frontend-v2 dev: Vite on 5173 (or TLS via the Tailscale cert), proxies `/api` and `/ws` to `primer:18020`.
 - Session transcripts stored as JSONL in `data/claude/`
 - Chat metadata TTL: 29 days (before Claude's ~30 day JSONL auto-prune)
-- `KERNEL.md` is the approved design doc for the multi-chat kernel architecture; `SMART-CHAT.md` documents the callback-based refactor
+- Design docs: `PROTOCOL.md` is the wire-protocol spec; `KERNEL.md` and `KERNEL-V2.md` cover the multi-chat kernel; `SMART-CHAT.md` documents the callback-based refactor; `CHAT-V2.md` documents the event-handler dispatch table inside `Chat`.
 - Docker runs as non-root user `alpha` (UID 1001, matching `alpha` on Primer; GID 1003 `pondside` for shared `/Pondside` access)
 - Multi-stage Dockerfile: Node 22 builds frontend, Python 3.12 runs backend
 
@@ -181,3 +202,4 @@ Zustand store with Immer middleware, multi-chat aware. `chats` map + `activeChat
 - Redis: `alpha-pi:6379` (orientation data, ephemeral state)
 - Ollama: `primer:11434` (embeddings + chat)
 - Ollama num_ctx: 16384 (shared across recall/suggest/reading to prevent model reloads)
+- `DISALLOWED_TOOLS`: a hardcoded list of Claude Code tools removed from the model's context entirely via `--disallowedTools` (e.g. `EnterPlanMode`, `AskUserQuestion`, `NotebookEdit`, `Cron*`, `RemoteTrigger`, worktree tools). The principle: "I don't want allowed tools to exist as a concept" — everything else stays available.

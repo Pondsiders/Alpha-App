@@ -37,7 +37,7 @@
   --sidebar-ring: oklch(0.7040 0.0400 256.7880);
   --font-sans: Inter, ui-sans-serif, sans-serif, system-ui;
   --font-serif: Lora, ui-serif, serif;
-  --font-mono: Fira Code, ui-monospace, monospace;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
   --radius: 0.5rem;
   --shadow-x: 0;
   --shadow-y: 1px;
@@ -55,6 +55,13 @@
   --shadow-2xl: 0 1px 3px 0px hsl(0 0% 0% / 0.25);
   --tracking-normal: 0em;
   --spacing: 0.22rem;
+
+  /* Markdown code styling — tunable per theme file.
+     Spans are inline <code>; blocks are fenced <pre><code>. */
+  --md-code-span-size: 0.95em;      /* em → scales with body */
+  --md-code-span-weight: 200;
+  --md-code-block-size: 0.8125rem;  /* rem → anchored to root */
+  --md-code-block-weight: 100;
 }
 
 .dark {
@@ -100,7 +107,7 @@
   --sidebar-ring: oklch(0.7541 0.0853 67.1037);
   --font-sans: Inter, ui-sans-serif, sans-serif, system-ui;
   --font-serif: Lora, ui-serif, serif;
-  --font-mono: Fira Code, ui-monospace, monospace;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
   --radius: 0.5rem;
   --shadow-x: 0;
   --shadow-y: 1px;

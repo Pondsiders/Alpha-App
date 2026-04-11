@@ -16,12 +16,14 @@
  * One markdown rendering path across the app. No hand-rolled ReactMarkdown.
  */
 
-import type { CSSProperties, FC } from "react";
+import { useState, type CSSProperties, type FC } from "react";
 import remarkGfm from "remark-gfm";
 import {
   MarkdownTextPrimitive,
   unstable_memoizeMarkdownComponents as memoizeMarkdownComponents,
+  type CodeHeaderProps,
 } from "@assistant-ui/react-markdown";
+import { CheckIcon, CopyIcon } from "lucide-react";
 
 import { SyntaxHighlighter } from "./shiki-highlighter";
 
@@ -37,8 +39,59 @@ import { SyntaxHighlighter } from "./shiki-highlighter";
 // renders so MarkdownTextPrimitive doesn't re-render the whole tree every
 // streaming tick.
 
+// ---------------------------------------------------------------------------
+// CodeHeader — language label + copy button above fenced code blocks
+// ---------------------------------------------------------------------------
+//
+// Rounded-top to match the pre's rounded-bottom. Returns null when no
+// language is set, so plain ``` fences don't get an awkward empty bar.
+
+// Language label on the left, copy button on the right. Rounded-top
+// corners to match the pre's rounded-bottom. Returns null when no
+// language is set so plain ``` fences don't get an awkward empty bar.
+//
+// Uses a plain <button> with a native `title` attribute for the hover
+// tooltip, NOT Radix's TooltipIconButton. There's an open interaction
+// between Radix Tooltip's attribute mutations and assistant-ui's thread
+// viewport auto-scroll MutationObserver that can cause unwanted
+// scroll-to-bottom on hover. Native title tooltip sidesteps it entirely.
+const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
+  const [copied, setCopied] = useState(false);
+  if (!language) return null;
+
+  const handleCopy = () => {
+    if (!code) return;
+    void navigator.clipboard.writeText(code).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  return (
+    <div className="flex items-center justify-between rounded-t-lg border border-b-0 border-border bg-card px-3 py-1 text-xs">
+      <span className="font-mono lowercase text-muted-foreground">
+        {language}
+      </span>
+      <button
+        type="button"
+        onClick={handleCopy}
+        title={copied ? "Copied" : "Copy code"}
+        aria-label={copied ? "Copied" : "Copy code"}
+        className="flex size-6 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+      >
+        {copied ? (
+          <CheckIcon className="size-3.5" />
+        ) : (
+          <CopyIcon className="size-3.5" />
+        )}
+      </button>
+    </div>
+  );
+};
+
 const defaultComponents = memoizeMarkdownComponents({
   SyntaxHighlighter,
+  CodeHeader,
 });
 
 // ---------------------------------------------------------------------------
@@ -73,8 +126,16 @@ const PROSE_CLASSES = [
   "prose-strong:text-foreground",
   "prose-a:text-primary",
   "prose-blockquote:text-muted-foreground prose-blockquote:border-primary/40",
-  "prose-code:text-foreground prose-code:font-light",
-  "prose-pre:my-0 prose-pre:bg-transparent prose-pre:p-0",
+  // Note: inline code font size/weight are driven by theme variables
+  // (--md-code-span-*) via global CSS rules in index.css. We only keep
+  // the color here; everything else is tunable per-theme.
+  "prose-code:text-foreground",
+  // Code blocks: let Shiki own the background (its theme paints it via
+   // inline style); we add the border + bottom-radius so the <pre> visually
+   // continues from the CodeHeader sitting above it.
+   "prose-pre:my-0 prose-pre:bg-transparent prose-pre:p-0",
+   "prose-pre:border prose-pre:border-t-0 prose-pre:border-border",
+   "prose-pre:rounded-t-none prose-pre:rounded-b-lg",
   "prose-li:marker:text-primary",
   "prose-hr:border-primary/30",
   "prose-th:border-primary/30 prose-td:border-primary/20",

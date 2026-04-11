@@ -1,5 +1,5 @@
 /* Alpha theme — swap this import to change the entire look */
-@import "./themes/alpha.css";
+@import "./themes/ex-amber-minimal.css";
 
 /* Typography — prose class for markdown content */
 @plugin "@tailwindcss/typography";
@@ -8,14 +8,31 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-/* Font */
+/* Fonts */
 @import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
 
 :root {
   --font-sans: 'Inter Variable', sans-serif;
 }
 .dark {
   --font-sans: 'Inter Variable', sans-serif;
+}
+
+/* Markdown code styling — size and weight driven by theme variables
+   (--md-code-span-* and --md-code-block-* defined in alpha.css). This
+   lets each theme file tune code typography independently. The
+   `:not(pre) > code` selector targets inline <code> only, so spans
+   and blocks stay independent. Tailwind Typography's own rules use
+   :where() (zero specificity), so ours win cleanly. */
+.prose :not(pre) > code {
+  font-size: var(--md-code-span-size);
+  font-weight: var(--md-code-span-weight);
+}
+.prose pre,
+.prose pre code {
+  font-size: var(--md-code-block-size);
+  font-weight: var(--md-code-block-weight);
 }
 
 /* Task list checkboxes — remark-gfm renders these as <input type="checkbox">.
