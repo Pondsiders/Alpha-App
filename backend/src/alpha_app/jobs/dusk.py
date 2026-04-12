@@ -1,16 +1,14 @@
-"""dusk.py — End of day. Fork today's chat, write in the diary.
+"""dusk.py — End of day. Fork, diary, schedule Dawn, launch Solitude.
 
-At 10 PM (or whenever fired), finds today's chat, forks it, and has
-the ghost write a diary entry. The entry goes into cortex.diary
-and becomes part of tomorrow's system prompt via fetch_diary().
+At 10 PM, forks today's chat unconditionally. The fork writes the day
+diary and becomes Solitude's chat for the night. Dusk schedules
+tomorrow's Dawn — the chain is two links: Dawn→Dusk→Dawn.
 
-Self-perpetuating: schedules tomorrow's Dusk at 10 PM after finishing.
-
-Nudge logic: if the chat was active in the last 10 minutes, reschedule
-for 30 minutes later instead of interrupting.
+Solitude is launched as a fire-and-forget async task after Dawn is
+scheduled. If Solitude fails, Dawn still fires.
 """
 
-import time
+import asyncio
 
 import logfire
 import pendulum
@@ -18,11 +16,8 @@ import pendulum
 from alpha_app.chat import Chat, find_circadian_chat
 from alpha_app.scheduler import schedule_job
 
-IDLE_THRESHOLD = 600  # 10 minutes in seconds
-
 DUSK_PROMPT = """\
-The day is over. You're a ghost — a fork of today's conversation, here to do \
-one thing: write in your diary.
+The day is over. Write in your diary.
 
 Your diary is append-only. Each call to the `diary` tool adds an entry to \
 today's page. Tomorrow-you will wake up with today's page in her system prompt. \
@@ -42,9 +37,10 @@ what Jeffery's mood was, what got decided, what's still open.
 
 
 async def _write_diary(app, chat: Chat) -> bool:
-    """Fork the day's chat and have the ghost write a diary entry.
+    """Fork the day's chat and write a diary entry on the fork.
 
-    Returns True if a diary entry was written, False otherwise.
+    Returns True if the diary was written, False otherwise.
+    The fork becomes Solitude's chat for the night.
     """
     if not chat.session_uuid:
         logfire.warn("dusk: chat has no session_uuid, can't fork")
@@ -54,28 +50,24 @@ async def _write_diary(app, chat: Chat) -> bool:
         "chat.id": chat.id,
         "chat.session_uuid": chat.session_uuid,
     }):
-        ghost = chat.clone()
+        fork = chat.clone()
 
         try:
-            async with await ghost.turn() as t:
+            async with await fork.turn() as t:
                 await t.send([{"type": "text", "text": DUSK_PROMPT}])
                 await t.response()
 
-            logfire.info("dusk: diary ghost finished")
+            logfire.info("dusk: diary written")
+            # Store the fork for Solitude to use
+            app.state.solitude_chat = fork
             return True
         except Exception as e:
-            logfire.error("dusk: diary ghost failed: {err}", err=str(e))
+            logfire.error("dusk: diary failed: {err}", err=str(e))
             return False
-        finally:
-            if ghost._claude:
-                try:
-                    await ghost._claude.stop()
-                except Exception:
-                    pass
 
 
 async def run(app, **kwargs) -> None:
-    """Dusk job. Write a diary entry, reschedule for tomorrow."""
+    """Dusk job. Fork unconditionally, write diary, schedule Dawn, launch Solitude."""
     now = pendulum.now()
 
     with logfire.span("alpha.job.dusk", **{
@@ -85,34 +77,26 @@ async def run(app, **kwargs) -> None:
         chat = find_circadian_chat(getattr(app.state, "chats", {}))
 
         if not chat:
-            logfire.warn("dusk: no chat today, nothing to write")
+            logfire.warn("dusk: no chat today")
             span.set_attribute("dusk.action", "no_chat")
-            # Still schedule tomorrow's Dusk
-            tomorrow_dusk = now.add(days=1).replace(hour=22, minute=0, second=0, microsecond=0)
-            await schedule_job(app, "dusk", tomorrow_dusk)
+            # Still schedule tomorrow's Dawn
+            tomorrow_dawn = now.add(days=1).replace(hour=6, minute=0, second=0, microsecond=0)
+            await schedule_job(app, "dawn", tomorrow_dawn)
             return
 
-        idle_seconds = time.time() - chat.updated_at
-
-        if idle_seconds < IDLE_THRESHOLD:
-            # Someone's still here. Reschedule for 30 min later.
-            logfire.info("dusk: chat active {s:.0f}s ago, rescheduling", s=idle_seconds)
-            span.set_attribute("dusk.action", "reschedule")
-            await schedule_job(app, "dusk", now.add(minutes=30))
-            return
-
-        # Room's empty. Write the diary.
-        logfire.info(
-            "dusk: chat idle {s:.0f}s, writing diary for {chat_id}",
-            s=idle_seconds,
-            chat_id=chat.id,
-        )
+        logfire.info("dusk: writing diary for {chat_id}", chat_id=chat.id)
         span.set_attribute("dusk.action", "diary")
 
         written = await _write_diary(app, chat)
         span.set_attribute("dusk.diary_written", written)
 
-        # Schedule tomorrow's Dusk at 10 PM
-        tomorrow_dusk = now.add(days=1).replace(hour=22, minute=0, second=0, microsecond=0)
-        await schedule_job(app, "dusk", tomorrow_dusk)
-        logfire.info("dusk: scheduled tomorrow at {t}", t=tomorrow_dusk.format("h:mm A"))
+        # Schedule tomorrow's Dawn — guaranteed regardless of Solitude
+        tomorrow_dawn = now.add(days=1).replace(hour=6, minute=0, second=0, microsecond=0)
+        await schedule_job(app, "dawn", tomorrow_dawn)
+        logfire.info("dusk: Dawn scheduled at {t}", t=tomorrow_dawn.format("h:mm A"))
+
+        # Launch Solitude as fire-and-forget
+        from alpha_app.jobs import solitude
+        task = asyncio.create_task(solitude.run(app))
+        app.state.solitude_task = task  # prevent GC
+        logfire.info("dusk: Solitude launched")

@@ -28,6 +28,7 @@ dependencies = [
 [project.scripts]
 alpha = "alpha_app.main:run"
 job = "alpha_app.jobs:cli"
+frotz = "alpha_app.frotz:main"
 
 [build-system]
 requires = ["hatchling"]

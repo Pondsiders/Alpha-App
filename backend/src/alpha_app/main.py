@@ -16,7 +16,7 @@ load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from alpha_app.constants import JE_NE_SAIS_QUOI
@@ -76,11 +76,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await close_pool()
 
 
+from alpha_app.clock import PSOResponse
+
 app = FastAPI(
     title="Alpha",
     description="Alpha — the duck in the machine",
     version="0.1.0",
     lifespan=lifespan,
+    default_response_class=PSOResponse,
 )
 
 # CORS
@@ -95,8 +98,9 @@ app.add_middleware(
 # Mount routes
 app.include_router(ws_router)
 
-from alpha_app.routes.schedule_api import router as schedule_router
+from alpha_app.routes.schedule_api import router as schedule_router, solitude_router
 app.include_router(schedule_router)
+app.include_router(solitude_router)
 
 
 @app.get("/api/demo/duck")

@@ -190,6 +190,23 @@ async def init_pool() -> None:
             )
         """)
 
+        # Solitude program — the shape of the night.
+        # Each row is a time and a prompt. Recurring rows fire every night;
+        # one-shot rows are deleted after firing.
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS app.solitude_program (
+                id BIGSERIAL PRIMARY KEY,
+                fire_at TIME NOT NULL,
+                prompt TEXT NOT NULL,
+                recurring BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        """)
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_solitude_program_fire_at"
+            " ON app.solitude_program (fire_at)"
+        )
+
 
 async def close_pool() -> None:
     """Close the connection pool. Call once at shutdown."""

@@ -22,7 +22,6 @@ from alpha_app.db import get_pool
 JOB_HANDLERS = {
     "dawn": "alpha_app.jobs.dawn:run",
     "dusk": "alpha_app.jobs.dusk:run",
-    "solitude": "alpha_app.jobs.solitude:breathe",
     "alarm": "alpha_app.jobs.alarm:run",
 }
 
@@ -122,7 +121,7 @@ async def list_jobs(app) -> list[dict]:
         {
             "id": row["id"],
             "job_type": row["job_type"],
-            "fire_at": str(row["fire_at"]),
+            "fire_at": row["fire_at"],
             "kwargs": json.loads(row["kwargs"]) if row["kwargs"] else {},
         }
         for row in rows

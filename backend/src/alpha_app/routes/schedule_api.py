@@ -1,22 +1,28 @@
-"""schedule_api.py — HTTP API for the circadian chain + alarms.
+"""schedule_api.py — HTTP API for the circadian chain, Solitude program, and alarms.
 
-Two separate concerns:
+Three concerns:
 
-    /api/schedule/next   — the circadian linked-list pointer (one slot)
-    /api/schedule/alarms — one-shot alarms (a list, separate concern)
+    /api/schedule/...    — the circadian chain (Dawn↔Dusk)
+    /api/solitude/...    — the Solitude program (editable at runtime)
+    /api/schedule/alarms — one-shot alarms (fire and forget)
 
 The circadian chain self-perpetuates: each event schedules the next.
-This API lets you inspect, repair, or break the chain.
-Alarms are independent fire-and-forget messages.
+Solitude is a fire-and-forget task launched by Dusk; the program is
+editable at runtime via these endpoints. controlpanel is a thin CLI
+that calls these endpoints.
 """
 
+import asyncio
 from typing import Literal
 
 import pendulum
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
-router = APIRouter(prefix="/api/schedule", tags=["schedule"])
+from alpha_app.clock import PSOResponse
+
+router = APIRouter(prefix="/api/schedule", tags=["schedule"], default_response_class=PSOResponse)
+solitude_router = APIRouter(prefix="/api/solitude", tags=["solitude"], default_response_class=PSOResponse)
 
 
 def _parse_local(time_str: str) -> pendulum.DateTime:
@@ -55,12 +61,10 @@ async def get_next(request: Request):
     """What's the next circadian event? Returns the one slot, or null."""
     from alpha_app.scheduler import list_jobs
     jobs = await list_jobs(request.app)
-    # Filter to circadian jobs only (not alarms)
     circadian = [j for j in jobs if j["job_type"] in ("dawn", "solitude", "dusk")]
     if not circadian:
-        return None
-    # Return the soonest one
-    return min(circadian, key=lambda j: j["fire_at"])
+        return PSOResponse(content=None)
+    return PSOResponse(content=min(circadian, key=lambda j: j["fire_at"]))
 
 
 @router.post("/next")
@@ -157,7 +161,7 @@ async def set_alarms(request: Request, alarms: list[AlarmRequest]):
 async def get_all(request: Request):
     """List ALL pending jobs (circadian + alarms). Legacy endpoint."""
     from alpha_app.scheduler import list_jobs
-    return await list_jobs(request.app)
+    return PSOResponse(content=await list_jobs(request.app))
 
 
 @router.delete("")
@@ -166,3 +170,93 @@ async def delete_all(request: Request):
     from alpha_app.scheduler import remove_all_jobs
     await remove_all_jobs(request.app)
     return {"cleared": True}
+
+
+# -- Solitude program: /api/solitude ------------------------------------------
+
+
+class SolitudeEntryRequest(BaseModel):
+    """A Solitude program entry."""
+    fire_at: str  # HH:MM (24-hour)
+    prompt: str
+    recurring: bool = True
+
+
+class SolitudeStopRequest(BaseModel):
+    """Stop Solitude for the night."""
+    reason: str = ""
+
+
+@solitude_router.get("")
+async def get_program(request: Request):
+    """Show the Solitude program."""
+    from alpha_app.db import get_pool
+    pool = get_pool()
+    rows = await pool.fetch(
+        "SELECT id, fire_at, prompt, recurring, created_at"
+        " FROM app.solitude_program ORDER BY (fire_at + interval '6 hours')"
+    )
+    return PSOResponse(content=[
+        {
+            "id": row["id"],
+            "fire_at": row["fire_at"],
+            "prompt": row["prompt"],
+            "recurring": row["recurring"],
+            "created_at": row["created_at"],
+        }
+        for row in rows
+    ])
+
+
+@solitude_router.post("")
+async def set_entry(request: Request, body: SolitudeEntryRequest):
+    """Add or update a Solitude program entry."""
+    from alpha_app.db import get_pool
+    import datetime
+
+    pool = get_pool()
+    parts = body.fire_at.split(":")
+    fire_time = datetime.time(int(parts[0]), int(parts[1]))
+
+    row = await pool.fetchrow("""
+        INSERT INTO app.solitude_program (fire_at, prompt, recurring)
+        VALUES ($1, $2, $3)
+        RETURNING id
+    """, fire_time, body.prompt, body.recurring)
+
+    # Signal the running Solitude task to reload
+    changed = getattr(request.app.state, "solitude_changed", None)
+    if changed:
+        changed.set()
+
+    return {"id": row["id"], "fire_at": body.fire_at, "prompt": body.prompt}
+
+
+@solitude_router.delete("/{entry_id}")
+async def delete_entry(request: Request, entry_id: int):
+    """Delete a Solitude program entry."""
+    from alpha_app.db import get_pool
+    pool = get_pool()
+    await pool.execute("DELETE FROM app.solitude_program WHERE id = $1", entry_id)
+
+    changed = getattr(request.app.state, "solitude_changed", None)
+    if changed:
+        changed.set()
+
+    return {"deleted": entry_id}
+
+
+@solitude_router.post("/stop")
+async def stop_solitude(request: Request, body: SolitudeStopRequest | None = None):
+    """Stop Solitude for the night. Shuts down the scheduler directly."""
+    import logfire
+
+    reason = body.reason if body else ""
+    logfire.warn("solitude: stopped via API: {reason}", reason=reason or "(no reason)")
+
+    # Shut down the scheduler — this causes the Solitude task to exit
+    scheduler = getattr(request.app.state, "solitude_scheduler", None)
+    if scheduler:
+        scheduler.shutdown(wait=False)
+
+    return {"stopped": True, "reason": reason}

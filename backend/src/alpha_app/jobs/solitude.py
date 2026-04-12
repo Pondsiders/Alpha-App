@@ -1,193 +1,183 @@
 """solitude.py — Alpha's nighttime existence.
 
-A personal program: a YAML file of (hour, prompt_file) pairs.
-Each breath loads its prompt, sends it to the night's Chat,
-then schedules the next entry. The last entry schedules Dawn.
+A fire-and-forget async task launched by Dusk. Owns its own local
+APScheduler instance (cheap to create, cheap to destroy). Reads the
+program from app.solitude_program in Postgres. Each breath is its
+own Logfire span.
 
-The program lives at JNSQ/prompts/solitude/program.yaml.
-Editable during the night — re-read on each breath.
+When the program changes at runtime, the old scheduler is destroyed
+and a new one is created from scratch. No diffing, no clearing jobs,
+no stale state. Clean slate every time.
+
+Not part of the chain. The chain is Dawn↔Dusk. If this crashes,
+Dawn still fires.
 """
 
-from dataclasses import dataclass
-from pathlib import Path
+import asyncio
 
 import logfire
 import pendulum
-import yaml
+from apscheduler.events import EVENT_JOB_EXECUTED
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.date import DateTrigger
 
-from alpha_app import AssistantEvent, ResultEvent, SystemEvent
-from alpha_app.chat import Chat, ConversationState, find_circadian_chat, generate_chat_id
 from alpha_app.db import get_pool
 from alpha_app.routes.enrobe import enrobe
-from alpha_app.tools import create_alpha_server
-from alpha_app.scheduler import schedule_job
-
-PROGRAM_PATH = "/Pondside/Alpha-Home/Alpha/prompts/solitude/program.yaml"
-PROMPTS_DIR = "/Pondside/Alpha-Home/Alpha/prompts/solitude"
-# Base DISALLOWED_TOOLS from constants.py already covers EnterPlanMode,
-# ExitPlanMode, AskUserQuestion. No extra disallowed tools needed for Solitude.
-DISALLOWED_INTERACTIVE: list[str] = []
 
 
-@dataclass
-class SolitudeEntry:
-    hour: int
-    prompts: list[str]   # one or more prompt filenames
-    last: bool = False
+async def run(app) -> None:
+    """Solitude's entry point. Launched by Dusk as asyncio.create_task().
 
-
-def load_program() -> list[SolitudeEntry]:
-    """Load the Solitude program from YAML.
-
-    Accepts both singular and plural prompt formats:
-        prompt_file: foo.md       -> prompts: ["foo.md"]
-        prompts: [foo.md, bar.md] -> prompts: ["foo.md", "bar.md"]
+    Wraps the inner loop in exception handling so crashes log cleanly.
     """
-    with open(PROGRAM_PATH) as f:
-        raw = yaml.safe_load(f)
-    entries = []
-    for item in raw:
-        p = item.get("prompts") or item.get("prompt_file")
-        if isinstance(p, str):
-            p = [p]
-        entries.append(SolitudeEntry(
-            hour=item["hour"],
-            prompts=p,
-            last=item.get("last", False),
-        ))
-    return entries
+    try:
+        await _solitude_loop(app)
+    except Exception as e:
+        logfire.error("solitude: crashed: {err}", err=str(e))
 
 
-def _create_mcp_servers(chat, app=None):
-    topic_registry = getattr(app.state, "topic_registry", None) if app else None
-    return {"alpha": create_alpha_server(chat=chat, topic_registry=topic_registry)}
-
-
-async def start(app) -> None:
-    """Start the Solitude program. Called by Dusk.
-
-    Does NOT create a new Chat. Uses today's chat — the same context
-    window Dawn created. Night-me has the full day in context.
-    Schedules the first breath.
-    """
-    program = load_program()
-
-    if not program:
-        logfire.warn("solitude: empty program, skipping night")
+async def _solitude_loop(app) -> None:
+    """The loop. Create scheduler, run program, react to changes."""
+    chat = getattr(app.state, "solitude_chat", None)
+    if not chat:
+        logfire.warn("solitude: no chat available, exiting")
         return
 
-    first = program[0]
-    fire_time = _next_occurrence(first.hour)
-    await schedule_job(app, "solitude", fire_time, entry_index=0)
-    logfire.info("solitude: started, first breath at {time}", time=fire_time)
+    # The event that signals "program changed, rebuild scheduler"
+    if not hasattr(app.state, "solitude_changed"):
+        app.state.solitude_changed = asyncio.Event()
+
+    while True:
+        program = await _load_program()
+        if not program:
+            logfire.warn("solitude: empty program, exiting")
+            return
+
+        logfire.info("solitude: scheduling {n} entries", n=len(program))
+
+        # Create a fresh scheduler
+        scheduler = AsyncIOScheduler()
+        app.state.solitude_scheduler = scheduler
+        done = asyncio.Event()
+        jobs_remaining = len(program)
+
+        def _on_job_done(event):
+            nonlocal jobs_remaining
+            jobs_remaining -= 1
+            if jobs_remaining <= 0:
+                done.set()
+
+        scheduler.add_listener(_on_job_done, EVENT_JOB_EXECUTED)
+
+        # Schedule each entry
+        for i, entry in enumerate(program):
+            fire_at = _resolve_fire_time(entry["fire_at"])
+            now = pendulum.now()
+
+            if fire_at <= now:
+                # Already past this time — fire immediately
+                fire_at = now.add(seconds=2 + i)  # stagger slightly
+
+            scheduler.add_job(
+                _breathe,
+                DateTrigger(run_date=fire_at),
+                args=[app, chat, entry, i],
+                id=f"solitude-breath-{i}",
+            )
+
+        scheduler.start()
+
+        # Wait for either: all jobs done, program changed, or stop
+        changed = app.state.solitude_changed
+        changed.clear()
+
+        # Wait for whichever comes first
+        done_task = asyncio.create_task(done.wait())
+        changed_task = asyncio.create_task(changed.wait())
+
+        finished, pending = await asyncio.wait(
+            [done_task, changed_task],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        # Cancel the loser
+        for task in pending:
+            task.cancel()
+
+        # Shut down the scheduler (clean slate)
+        scheduler.shutdown(wait=False)
+        app.state.solitude_scheduler = None
+
+        if done_task in finished:
+            # All jobs fired — program complete
+            logfire.info("solitude: program complete")
+            return
+
+        if changed_task in finished:
+            # Program changed — loop back, create new scheduler
+            changed.clear()
+            logfire.info("solitude: program changed, rebuilding scheduler")
+            continue
 
 
-async def breathe(app, **kwargs) -> str | None:
-    """One Solitude breath. Self-schedules the next entry, or Dawn."""
-    entry_index = kwargs.get("entry_index", 0)
-    program = load_program()
-
-    if entry_index >= len(program):
-        logfire.warn("solitude: entry_index {i} out of range", i=entry_index)
-        return None
-
-    entry = program[entry_index]
+async def _breathe(app, chat, entry: dict, index: int) -> None:
+    """One Solitude breath. Send the prompt, wait for the response."""
+    prompt = entry["prompt"]
     now = pendulum.now()
 
-    with logfire.span("alpha.job.solitude.breath", **{
-        "job.name": "solitude",
-        "job.breath_index": entry_index,
-        "job.prompts": entry.prompts,
-        "job.trigger": kwargs.get("trigger", "scheduled"),
+    with logfire.span("alpha.solitude.breath", **{
+        "breath.index": index,
+        "breath.time": now.isoformat(),
+        "breath.prompt_preview": prompt[:80],
     }) as span:
+        time_prefix = f"It's {now.format('h:mm A')}.\n\n"
+        content = [{"type": "text", "text": f"{time_prefix}{prompt}"}]
 
-        # -- Do the breath FIRST (work before schedule) --
-        # Find the circadian day's chat (6 AM to 6 AM, not midnight to midnight)
-        chat = find_circadian_chat(getattr(app.state, "chats", {}))
-        if not chat:
-            logfire.info("solitude: no chat today, skipping")
-            return None
+        result = await enrobe(content, chat=chat, source="solitude")
+        async with await chat.turn() as t:
+            await t.send(result.message)
+            await t.response()
 
-        # Run each prompt in the timeslot sequentially
-        output_parts = []
-        for i, prompt_file in enumerate(entry.prompts):
-            prompt_path = Path(PROMPTS_DIR) / prompt_file
-            prompt_content = prompt_path.read_text().strip()
-            time_prefix = f"It's {now.format('h:mm A')}.\n\n" if i == 0 else ""
-            prompt = f"{time_prefix}{prompt_content}"
+        span.set_attribute("gen_ai.usage.input_tokens", chat.total_input_tokens)
+        span.set_attribute("gen_ai.usage.output_tokens", chat.output_tokens)
 
-            content = [{"type": "text", "text": prompt}]
-            result = await enrobe(content, chat=chat, source="solitude")
-            async with await chat.turn() as t:
-                await t.send(result.message)
-                response = await t.response()
-            output_parts.append(response.text if response else "")
-
-        output = "\n\n".join(output_parts)
-
-        # -- Work succeeded — now schedule what's next --
-        if entry.last:
-            # Don't reap the chat — Dawn will resume it for Nightnight
-            next_dawn = await _get_next_dawn_time()
-            await schedule_job(app, "dawn", next_dawn)
-            logfire.info("solitude: last breath, Dawn at {time}", time=next_dawn)
-        else:
-            next_entry = program[entry_index + 1]
-            fire_time = _next_occurrence(next_entry.hour)
-            await schedule_job(app, "solitude", fire_time, entry_index=entry_index + 1)
-
-        return output
+    # Delete one-shot entries after firing
+    if not entry.get("recurring", True):
+        pool = get_pool()
+        await pool.execute(
+            "DELETE FROM app.solitude_program WHERE id = $1",
+            entry["id"],
+        )
 
 
-    # _find_todays_chat removed — replaced by find_circadian_chat() in chat.py
+async def _load_program() -> list[dict]:
+    """Load tonight's program from Postgres, sorted by fire_at."""
+    pool = get_pool()
+    rows = await pool.fetch(
+        "SELECT id, fire_at, prompt, recurring"
+        " FROM app.solitude_program"
+        " ORDER BY fire_at"
+    )
+    return [dict(row) for row in rows]
 
 
-def _next_occurrence(hour: int) -> pendulum.DateTime:
-    """Next wall-clock occurrence of the given hour."""
-    now = pendulum.now()
-    target = now.replace(hour=hour, minute=0, second=0, microsecond=0)
-    if target <= now:
-        target = target.add(days=1)
-    return target
+def _resolve_fire_time(fire_at) -> pendulum.DateTime:
+    """Convert a TIME value to tonight's datetime.
 
-
-async def _get_next_dawn_time() -> pendulum.DateTime:
-    """Next Dawn time — checks override in app.state, then defaults to 6 AM."""
-    from alpha_app.db import get_state, clear_state
-
-    override = await get_state("dawn_override")
-    if override and override.get("time"):
-        dt = pendulum.parse(override["time"])
-        if dt > pendulum.now():
-            await clear_state("dawn_override")
-            return dt
-
-    now = pendulum.now()
-    dawn = now.replace(hour=6, minute=0, second=0, microsecond=0)
-    if dawn <= now:
-        dawn = dawn.add(days=1)
-    return dawn
-
-
-async def _collect_response(chat, span) -> str:
-    """Wait for Claude to finish, set observability attributes.
-
-    Works regardless of whether a WebSocket listener is attached —
-    wait_until_ready() uses the Claude-level _ready Event, not the
-    event stream or conversation state.
+    Times before 6 AM are assumed to be after midnight (tomorrow).
+    Times from 6 PM onward are assumed to be tonight (today).
     """
-    await chat._claude.wait_until_ready()
+    now = pendulum.now()
+    hour = fire_at.hour if hasattr(fire_at, "hour") else int(str(fire_at).split(":")[0])
+    minute = fire_at.minute if hasattr(fire_at, "minute") else int(str(fire_at).split(":")[1])
 
-    span.set_attribute("gen_ai.usage.input_tokens", chat.total_input_tokens)
-    span.set_attribute("gen_ai.usage.output_tokens", chat.output_tokens)
+    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
 
-    # Extract text from the last assistant message
-    if chat.messages:
-        last = chat.messages[-1]
-        if hasattr(last, "parts"):
-            return "".join(
-                block.get("text", "")
-                for block in last.parts
-                if block.get("type") == "text"
-            ).strip()
-    return ""
+    if hour < 6:
+        # After midnight — if we haven't reached this time yet today,
+        # it's later tonight (technically tomorrow)
+        if target <= now:
+            target = target.add(days=1)
+    # Evening hours (>= 18): keep as today
+
+    return target
