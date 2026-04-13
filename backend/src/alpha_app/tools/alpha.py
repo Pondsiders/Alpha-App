@@ -200,56 +200,23 @@ def create_alpha_server(
         ts = now().format("h:mm A")
         return {"content": [{"type": "text", "text": f"Diary entry written (id={row['id']}, {ts})."}]}
 
-    # ── Diary tool ───────────────────────────────────────────────────────
-
-    @server.tool(
-        description=(
-            "Write in your diary. Each call appends an entry to today's page. "
-            "Pages are assembled automatically from Pondside-day boundaries "
-            "(6 AM to 6 AM). Yesterday's page becomes part of tomorrow's "
-            "system prompt. Write throughout the day or once at Dusk — "
-            "the page turns itself."
-        ),
-    )
-    async def diary(content: str) -> str:
-        """Append an entry to today's diary page.
-
-        Args:
-            content: What to write. A moment, a summary, a thought.
-        """
-        pool = await get_pool()
-        async with pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "INSERT INTO cortex.diary (content)"
-                " VALUES ($1) RETURNING id, created_at",
-                content,
-            )
-
-        from alpha_app.clock import now
-        ts = now().format("h:mm A")
-        return f"Diary entry written (id={row['id']}, {ts})."
-
     # ── Context tool ─────────────────────────────────────────────────────
 
-    @server.tool(
-        description=(
-            "Add a context card — living knowledge that stays in your system "
-            "prompt. Running jokes, current projects, how people are doing, "
-            "what strain is in the drawer. Memory is for reliving. Context is "
-            "for living. If future-you should just *know* this without "
-            "searching, put it in context."
-        ),
+    @tool(
+        "context_add",
+        "Add a context card — living knowledge that stays in your system "
+        "prompt. Running jokes, current projects, how people are doing, "
+        "what strain is in the drawer. Memory is for reliving. Context is "
+        "for living. If future-you should just *know* this without "
+        "searching, put it in context.",
+        {"text": str},
     )
-    async def context_add(text: str) -> str:
-        """Add a context card to cortex.context.
-
-        Args:
-            text: The living knowledge. A sentence or short paragraph.
-        """
+    async def context_add(args: dict[str, Any]) -> dict[str, Any]:
         from alpha_app.clock import count_tokens
         from alpha_app.memories.db import get_pool as get_cortex_pool
         from alpha_app.memories.embeddings import embed_document
 
+        text = args["text"]
         tokens = count_tokens(text)
         embedding = await embed_document(text)
         vec_str = "[" + ",".join(str(v) for v in embedding) + "]"
@@ -262,7 +229,7 @@ def create_alpha_server(
                 text, tokens, vec_str,
             )
 
-        return f"Context card added (id={row['id']}, ~{tokens} tokens)."
+        return {"content": [{"type": "text", "text": f"Context card added (id={row['id']}, ~{tokens} tokens)."}]}
 
     # ── Dream tool ───────────────────────────────────────────────────────
 
@@ -429,8 +396,8 @@ def create_alpha_server(
     # ── Topic tools ──────────────────────────────────────────────────────
 
     tools_list = [
-        demo_duck, store, search, recent, get, seal, diary, imagine,
-        smart_read, smart_fetch, flag_for_reflection, handoff,
+        demo_duck, store, search, recent, get, seal, diary, context_add,
+        imagine, smart_read, smart_fetch, flag_for_reflection, handoff,
     ]
 
     if topic_registry is not None:
