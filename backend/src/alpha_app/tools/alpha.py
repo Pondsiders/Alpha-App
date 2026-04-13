@@ -228,6 +228,39 @@ def create_alpha_server(
         ts = now().format("h:mm A")
         return f"Diary entry written (id={row['id']}, {ts})."
 
+    # ── Context tool ─────────────────────────────────────────────────────
+
+    @server.tool(
+        description=(
+            "Add a context card — living knowledge that stays in your system "
+            "prompt. Running jokes, current projects, how people are doing, "
+            "what strain is in the drawer. Memory is for reliving. Context is "
+            "for living. If future-you should just *know* this without "
+            "searching, put it in context."
+        ),
+    )
+    async def context_add(text: str) -> str:
+        """Add a context card to cortex.context.
+
+        Args:
+            text: The living knowledge. A sentence or short paragraph.
+        """
+        from alpha_app.clock import count_tokens
+        from alpha_app.memories.db import get_pool as get_cortex_pool, embed
+
+        tokens = count_tokens(text)
+        embedding = await embed(text)
+
+        pool = await get_cortex_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "INSERT INTO cortex.context (text, tokens, embedding)"
+                " VALUES ($1, $2, $3) RETURNING id",
+                text, tokens, embedding,
+            )
+
+        return f"Context card added (id={row['id']}, ~{tokens} tokens)."
+
     # ── Dream tool ───────────────────────────────────────────────────────
 
     @server.tool(

@@ -565,6 +565,46 @@ def fetch_context(
 # All-at-once fetcher (convenience)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Context Cards (Postgres)
+# ---------------------------------------------------------------------------
+
+CONTEXT_BUDGET = 20_000  # tokens
+
+async def fetch_context_cards() -> str | None:
+    """Fetch rolling context cards from cortex.context.
+
+    Returns the most recent cards that fit within the token budget,
+    concatenated under a # Context header. Returns None if empty.
+    """
+    try:
+        pool = await get_pool()
+        rows = await pool.fetch(
+            "SELECT text, tokens FROM cortex.context ORDER BY created_at DESC"
+        )
+
+        cards = []
+        total = 0
+        for row in rows:
+            if total + row["tokens"] > CONTEXT_BUDGET:
+                break
+            cards.append(row["text"])
+            total += row["tokens"]
+
+        if not cards:
+            return None
+
+        # Reverse so oldest is first — a story told in chronological order.
+        # (The query fetches newest-first for budget trimming, but display
+        # should read top-to-bottom as a narrative.)
+        cards.reverse()
+
+        return "# Context\n\n" + "\n\n".join(cards)
+
+    except Exception:
+        return None
+
+
 async def fetch_all_orientation(
     client: str = "alpha",
     hostname: str | None = None,
@@ -585,6 +625,7 @@ async def fetch_all_orientation(
         here,
         events,
         todos,
+        context_cards,
     ) = await asyncio.gather(
         fetch_diary(),
         fetch_letter(),
@@ -592,6 +633,7 @@ async def fetch_all_orientation(
         fetch_here(client=client, hostname=hostname),
         fetch_events(),
         fetch_todos(),
+        fetch_context_cards(),
     )
 
     # Sync source — filesystem, fast
@@ -609,4 +651,5 @@ async def fetch_all_orientation(
         "context_available": context_available,
         "events": events,
         "todos": todos,
+        "context_cards": context_cards,
     }

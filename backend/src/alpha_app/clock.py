@@ -81,6 +81,28 @@ def pso_time(t) -> str:
     return str(t)
 
 
+def count_tokens(text: str) -> int:
+    """Count tokens using Anthropic's token-counting endpoint.
+
+    Requires ANTHROPIC_API_KEY in the environment. The endpoint is free;
+    the key is for rate limiting. Returns the exact token count.
+    """
+    import os
+    import anthropic
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        # Fallback: rough estimate if no key available
+        return len(text.split()) * 2
+
+    client = anthropic.Anthropic(api_key=api_key)
+    result = client.messages.count_tokens(
+        model="claude-opus-4-6",
+        messages=[{"role": "user", "content": text}],
+    )
+    return result.input_tokens
+
+
 class PSOResponse(JSONResponse):
     """JSON response with PSO-8601 formatted datetimes.
 

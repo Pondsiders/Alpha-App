@@ -98,9 +98,10 @@ app.add_middleware(
 # Mount routes
 app.include_router(ws_router)
 
-from alpha_app.routes.schedule_api import router as schedule_router, solitude_router
+from alpha_app.routes.schedule_api import router as schedule_router, solitude_router, context_router
 app.include_router(schedule_router)
 app.include_router(solitude_router)
+app.include_router(context_router)
 
 
 @app.get("/api/demo/duck")

@@ -260,3 +260,53 @@ async def stop_solitude(request: Request, body: SolitudeStopRequest | None = Non
         scheduler.shutdown(wait=False)
 
     return {"stopped": True, "reason": reason}
+
+
+# -- Context cards: /api/context ----------------------------------------------
+
+context_router = APIRouter(prefix="/api/context", tags=["context"])
+
+
+class ContextCardRequest(BaseModel):
+    """A context card — living knowledge."""
+    text: str
+
+
+@context_router.get("")
+async def get_context(request: Request):
+    """Show recent context cards."""
+    from alpha_app.memories.db import get_pool as get_cortex_pool
+    pool = await get_cortex_pool()
+    rows = await pool.fetch(
+        "SELECT id, text, tokens, created_at"
+        " FROM cortex.context ORDER BY created_at DESC LIMIT 100"
+    )
+    return PSOResponse(content=[
+        {
+            "id": row["id"],
+            "text": row["text"],
+            "tokens": row["tokens"],
+            "created_at": row["created_at"],
+        }
+        for row in rows
+    ])
+
+
+@context_router.post("")
+async def add_context(request: Request, body: ContextCardRequest):
+    """Add a context card."""
+    from alpha_app.clock import count_tokens
+    from alpha_app.memories.db import get_pool as get_cortex_pool, embed
+
+    tokens = count_tokens(body.text)
+    embedding = await embed(body.text)
+
+    pool = await get_cortex_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "INSERT INTO cortex.context (text, tokens, embedding)"
+            " VALUES ($1, $2, $3) RETURNING id",
+            body.text, tokens, embedding,
+        )
+
+    return {"id": row["id"], "tokens": tokens}

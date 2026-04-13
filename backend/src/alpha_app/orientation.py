@@ -60,6 +60,7 @@ def assemble_orientation(
     context_available: str | None = None,
     events: str | None = None,
     todos: str | None = None,
+    context_cards: str | None = None,
 ) -> list[dict]:
     """Assemble the orientation block for a new context window.
 
@@ -104,6 +105,10 @@ def assemble_orientation(
         diary_parts.append(diary_today)
     if diary_parts:
         _add("# Diary\n\n" + "\n\n".join(diary_parts))
+
+    # context_cards — rolling front-of-mind knowledge, passed through as-is
+    if context_cards:
+        _add(context_cards)
 
     # letter — passed through as-is
     if letter:

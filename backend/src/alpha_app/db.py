@@ -207,6 +207,23 @@ async def init_pool() -> None:
             " ON app.solitude_program (fire_at)"
         )
 
+        # Context cards — rolling front-of-mind knowledge.
+        # Living vocabulary: jokes, projects, relationships, preferences.
+        # Memory is for reliving. Context is for living.
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS cortex.context (
+                id BIGSERIAL PRIMARY KEY,
+                text TEXT NOT NULL,
+                tokens INTEGER NOT NULL,
+                embedding vector(2560),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        """)
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_context_created"
+            " ON cortex.context (created_at DESC)"
+        )
+
 
 async def close_pool() -> None:
     """Close the connection pool. Call once at shutdown."""

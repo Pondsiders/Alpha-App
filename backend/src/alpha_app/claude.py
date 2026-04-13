@@ -1137,6 +1137,9 @@ class Claude:
             cmd.extend(["--plugin-dir", str(JE_NE_SAIS_QUOI)])
 
         env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+        # Blank ANTHROPIC_API_KEY so the subprocess uses OAuth (CLAUDE_CODE_OAUTH_TOKEN)
+        # instead of the API key. The API key is for token counting only.
+        env.pop("ANTHROPIC_API_KEY", None)
         env["CLAUDE_CONFIG_DIR"] = str(CLAUDE_CONFIG_DIR)
         if self._proxy and self._proxy.port:
             env["ANTHROPIC_BASE_URL"] = self._proxy.base_url
