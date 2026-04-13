@@ -10,7 +10,7 @@
  * a header, every chat is a time item. Consistency beats compactness.
  */
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo } from "react";
 import { CheckIcon, CopyIcon, EllipsisIcon } from "lucide-react";
 
 import {
