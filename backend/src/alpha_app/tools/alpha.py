@@ -251,13 +251,14 @@ def create_alpha_server(
 
         tokens = count_tokens(text)
         embedding = await embed_document(text)
+        vec_str = "[" + ",".join(str(v) for v in embedding) + "]"
 
         pool = await get_cortex_pool()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 "INSERT INTO cortex.context (text, tokens, embedding)"
                 " VALUES ($1, $2, $3) RETURNING id",
-                text, tokens, embedding,
+                text, tokens, vec_str,
             )
 
         return f"Context card added (id={row['id']}, ~{tokens} tokens)."
