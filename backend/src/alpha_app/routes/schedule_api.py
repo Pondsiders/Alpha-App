@@ -296,10 +296,11 @@ async def get_context(request: Request):
 async def add_context(request: Request, body: ContextCardRequest):
     """Add a context card."""
     from alpha_app.clock import count_tokens
-    from alpha_app.memories.db import get_pool as get_cortex_pool, embed
+    from alpha_app.memories.db import get_pool as get_cortex_pool
+    from alpha_app.memories.embeddings import embed_document
 
     tokens = count_tokens(body.text)
-    embedding = await embed(body.text)
+    embedding = await embed_document(body.text)
 
     pool = await get_cortex_pool()
     async with pool.acquire() as conn:

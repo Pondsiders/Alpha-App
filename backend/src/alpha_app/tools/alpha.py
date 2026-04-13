@@ -246,10 +246,11 @@ def create_alpha_server(
             text: The living knowledge. A sentence or short paragraph.
         """
         from alpha_app.clock import count_tokens
-        from alpha_app.memories.db import get_pool as get_cortex_pool, embed
+        from alpha_app.memories.db import get_pool as get_cortex_pool
+        from alpha_app.memories.embeddings import embed_document
 
         tokens = count_tokens(text)
-        embedding = await embed(text)
+        embedding = await embed_document(text)
 
         pool = await get_cortex_pool()
         async with pool.acquire() as conn:

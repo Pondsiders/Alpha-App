@@ -40,3 +40,4 @@ Icon-iOS-Default-1024x1024@1x.png
 backend/tests/captures/
 .stignore
 backend/scripts/seed_context.py
+docs/docs/.vitepress/cache/

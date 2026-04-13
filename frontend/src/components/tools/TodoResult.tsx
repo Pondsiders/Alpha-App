@@ -24,7 +24,11 @@ export const TodoResult: ToolCallMessagePartComponent = ({
   let todos: Todo[] = [];
   try {
     const args = argsText ? JSON.parse(argsText) : {};
-    todos = args.todos || [];
+    // Guard against malformed tool calls where `todos` is present but not an array
+    // (e.g. a rejected TodoWrite where the model passed todos as a JSON-encoded string).
+    // The old `args.todos || []` only caught falsy values; strings are truthy, so
+    // a string `todos` would propagate here and crash `.filter()` downstream.
+    todos = Array.isArray(args.todos) ? args.todos : [];
   } catch {
     // Partial JSON while streaming — can't render yet
   }
