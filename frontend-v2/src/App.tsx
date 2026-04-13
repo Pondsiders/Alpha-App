@@ -106,18 +106,20 @@ function FloatingContextRing() {
   const mockPercent = 48.3;
   const mockTokenCount = 483_000;
   const mockTokenLimit = 1_000_000;
+  const [open, setOpen] = useState(false);
 
   const display = mockPercent.toFixed(1) + "%";
   const tokenDisplay =
     `${mockTokenCount.toLocaleString()} / ${mockTokenLimit.toLocaleString()}`;
 
   return (
-    <HoverCard openDelay={200} closeDelay={100}>
+    <HoverCard openDelay={200} closeDelay={100} open={open} onOpenChange={setOpen}>
       <HoverCardTrigger asChild>
         <button
           type="button"
           className={`flex items-center justify-center ${FLOATING_TILE} ${contextTileClasses(mockPercent)}`}
           aria-label={`Context ${display}`}
+          onClick={() => setOpen((o) => !o)}
         >
           <ContextRing percent={mockPercent} className="size-4" />
         </button>
