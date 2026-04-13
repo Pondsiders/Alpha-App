@@ -397,6 +397,12 @@ class Claude:
             # create_sdk_mcp_server(). Pass them through directly.
             sdk_mcp_servers = dict(self._mcp_servers)
 
+            # Blank ANTHROPIC_API_KEY so the subprocess uses OAuth
+            # (CLAUDE_CODE_OAUTH_TOKEN) instead of the API key. The API key
+            # exists in our environment for token counting only — it must not
+            # leak to Claude Code, which would bill the API account instead
+            # of the Max subscription. Auth precedence: API key (#3) beats
+            # OAuth token (#5).
             options = ClaudeAgentOptions(
                 model=self.model,
                 system_prompt={"type": "file", "path": str(self._system_prompt_file)},
@@ -407,6 +413,7 @@ class Claude:
                 cwd=str(CLAUDE_CWD),
                 resume=session_id if session_id and not fork else None,
                 fork_session=fork,
+                env={"ANTHROPIC_API_KEY": ""},
             )
 
             # Create and connect the client
