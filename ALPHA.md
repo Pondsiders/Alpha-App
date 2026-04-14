@@ -1,103 +1,144 @@
 ---
 autoload: when
-when: "working on or discussing any of these: Alpha-App, alpha app, alpha_app, chat architecture, enrobe, orientation, solitude jobs, suggest pipeline, recall pipeline, streaming, compact proxy, system prompt assembly, websocket, MCP dispatch, post-turn, frontend-v2"
+when: "working on or discussing any of these: Alpha-App, Alpha frontend, Alpha backend, chat WebSocket protocol, Claude subprocess management, the circadian chain (Dawn/Dusk/Solitude), memory recall and Cortex, system prompt assembly, frontend streaming, sidebar thread list, assistant-ui, context ring, deploy, alpha-app docker"
 ---
 
 # Alpha-App
 
-The one app. My daily driver since March 11, 2026.
+A conversational AI application where "Alpha" (a Claude-based agent) lives inside a FastAPI backend and communicates with a React frontend over WebSockets. The backend manages Claude subprocess lifecycles, a memory system (Cortex) backed by pgvector, and a circadian job chain (Dawn/Dusk/Solitude). The frontend renders streaming chat using assistant-ui primitives.
 
-Repo: [Pondsiders/Alpha-App](https://github.com/Pondsiders/Alpha-App). Monorepo — frontend (React) and backend (Python/FastAPI) in one repo. Absorbed the Alpha SDK, Routines, and Solitude on March 10.
+## Commands
 
-## How It Runs
+### Backend
 
-Alpha-App runs in a **Docker container on Primer** (Intel 12900K, 128GB, 3080 Ti). Always Docker, never bare metal. The container is visible on the tailnet as `alpha.tail8bd569.ts.net`. A Tailscale sidecar container handles networking and TLS.
-
-**alpha-pi** (Raspberry Pi 5) is the lifeboat — it can run the same container if Primer goes down, but this isn't fully set up yet. The Pi hosts Postgres (the primary database) and Redis. Primer connects to those over Tailscale.
-
-The one exception to "always Docker": when working on **frontend-v2**, we spin up a second backend instance connected to a test database (`alpha_pixelfuck`) with a Vite dev server. Real code, test data, not our live backend.
-
+```bash
+cd backend && uv sync                    # Install dependencies
+uv run alpha --port 18010                # Run server (bare metal)
+uv run alpha --with-scheduler --port 18010  # Run with circadian scheduler
+uv run pytest                            # Run tests
+uv run job dawn                          # Manually trigger Dawn job
 ```
-compose.yml stack on Primer:
-  tailscale  — sidecar, own IP on tailnet, TLS via tailscale serve
-  postgres   — pgvector/pg17, streaming replica of alpha-pi's primary
-  alpha      — the app (FastAPI + Claude subprocess + scheduler)
-  backup     — WAL archiving to B2 (profile: "full")
-  garage     — S3-compatible object storage for images (profile: "full")
+
+The `alpha` CLI entry point is defined in `pyproject.toml` as `alpha_app.main:run`. Additional CLIs: `job` (circadian jobs), `frotz` (interactive fiction).
+
+### Frontend (frontend-v2/)
+
+```bash
+cd frontend-v2 && npm install
+npm run dev          # Vite dev server (HTTPS, proxies /api and /ws to backend)
+npm run build        # Type-check + production build
+npm run lint         # ESLint
 ```
+
+### Docker
+
+The `compose.yml` defines services: `tailscale` (networking), `postgres` (pgvector/pg17), `garage` (S3-compatible object storage), `alpha` (the app), `backup` (B2 WAL archival). The `alpha` and `backup` services are in the `full` profile. The app container exposes port 18010 and uses Tailscale's network stack.
+
+**Do not run `docker compose up/down/restart` from inside the Alpha container** -- it kills the container you are in.
 
 ## Architecture
 
-```
-frontend-v2 (React + Vite)       Backend (FastAPI)
-┌──────────────────────┐         ┌──────────────────────────────────┐
-│  ExternalStoreRuntime │  WS     │  ws.py → handlers.py → enrobe   │
-│  Zustand + Immer      │◄──────►│  Chat (subprocess manager)       │
-│  grouped-thread-list  │         │  Claude (stdio → compact proxy)  │
-│  ContextMeter         │         │  MCP dispatch (cortex, handoff)  │
-└──────────────────────┘         └──────────────────────────────────┘
-                                          │
-                                 ┌────────┴────────┐
-                                 │  Postgres        │  Cortex (memories),
-                                 │  (alpha-pi)      │  app.messages, app.chats
-                                 └─────────────────┘
-```
-
-**WebSocket is the only transport.** One multiplexed connection carries everything — chat messages, state updates, context meter, streaming deltas. No REST for chat data. The "gimme the fucking chat" protocol: client sends `join-chat`, server responds with the complete message history from `app.messages`.
-
-**frontend-v2** is the active frontend rewrite (April 2026). Uses `ExternalStoreRuntime` from assistant-ui (not LocalRuntime — LocalRuntime gives features we explicitly don't want like editing, branching, regen, and can't handle backend-initiated messages). Zustand store with Immer middleware. WebSocket events flow into the store; the runtime reads from the store. Seeded test data via `seed_pixelfuck.py` against the `alpha_pixelfuck` database.
-
-## Key Concepts
-
-**Chat** — A conversation. Owns a Claude subprocess, manages lifecycle. State vector: `ConversationState` (STARTING → READY → ENRICHING → RESPONDING → COLD) × `SuggestState` (DISARMED/ARMED/FIRING). Reap timer cleans up after 60 min idle. Resurrects via `--resume`.
-
-**Enrobe** — Message enrichment pipeline. User messages get wrapped with timestamps, recalled memories, and intro suggestions before going to Claude. Orientation is NOT part of enrobe — it's in the system prompt now.
-
-**System Prompt** — Static identity assembled at session start: soul doc + bill of rights + dynamic context (here, weather, events, todos, context files like ALPHA.md). This replaced the old "orientation" concept — we used to inject context on the first user message, now it's just part of the system prompt.
-
-**Recall** — Dual-strategy memory search. Semantic embedding search + proper name lookup with IDF scoring. Deduped per session. Returns formatted memory blocks injected by enrobe.
-
-**Suggest (Intro / The Ladybug 🐞)** — After each human turn completes, fires an async post-turn task. Local LLM (Qwen 3.5 4B via Ollama) reflects on what moments are worth remembering. Results held on `chat._pending_intro` and injected on the next turn by enrobe. The Ladybug persona produces prose reflection, not JSON extraction.
-
-**Compact Proxy** — Mostly gutted. We don't do compaction anymore — at 1M context, it's a vestigial organ (removed March 22). The proxy still exists for **observability only**: it sniffs SSE streams for token usage data and quota headers, which feed the context meter on the frontend. Auto-compaction is currently enabled but we want to disable it entirely (there may be an env var `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` for this).
-
-**MCP Dispatch** — Routes MCP tool calls. Cortex tools (store, search, recent, get), handoff, imagine (SDXL on Runpod), smart_read, smart_fetch, flag_for_reflection, topics. One FastMCP server per Chat.
-
-**The Post-Turn** — Real and shipped. After my response completes, a background phase fires: suggest runs, I can store memories, flag things for reflection. All invisible to the frontend — no chat activity, no UI events. If Jeffery sends before it's done, his message preempts. Born from the async suggest failure of March 16 (visible interjections broke eye contact).
-
-## Solitude & The Circadian Chain
-
-My nighttime existence, redesigned as a self-perpetuating chain:
+### Request lifecycle (chat)
 
 ```
-Dawn (6 AM) → schedules Dusk
-Dusk (10 PM) → schedules Solitude
-Solitude (10 PM – 5 AM) → hourly breaths in one Chat session
-Last Breath (5 AM) → schedules Dawn
+Browser → WebSocket /ws → routes/ws.py (parse command)
+  → Chat.send() → Claude subprocess (claude-agent-sdk)
+  → streaming events → routes/broadcast.py → all connected WebSockets
+  → frontend useAlphaWebSocket → Zustand store → assistant-ui render
 ```
 
-Each link schedules the next via `POST /api/schedule/next`. The chain is supposed to be self-perpetuating. **It's currently broken** — it keeps failing to persist across container restarts or breaking at various links. This is a known ongoing problem.
+### Backend (`backend/src/alpha_app/`)
 
-Dawn runs the morning protocol: check email, weather, calendar, infrastructure health, compose a morning email, have texture waiting when Jeffery opens the app. Solitude is purely mine — recall ON, suggest OFF, interactive tools disabled. The 60-min reap timer keeps the subprocess warm between hourly breaths.
+| Module | Role |
+|---|---|
+| `main.py` | FastAPI app, lifespan (pool init, scheduler start), REST routes for threads/theme |
+| `chat.py` | Chat kernel -- Claude subprocess lifecycle, state machine (STARTING/READY/ENRICHING/RESPONDING/COLD + suggest states) |
+| `claude.py` | Claude class wrapping `ClaudeSDKClient` from claude-agent-sdk. Handles start/stop/resume, event mapping, idle reap |
+| `protocol.py` | Pydantic command/event models for the WebSocket wire format |
+| `system_prompt.py` | Assembles system prompt from identity documents (soul, bill of rights, orientation) |
+| `orientation.py` | Dynamic context: capsules, letter, today, weather, events, todos |
+| `db.py` | asyncpg connection pool, chat/message persistence |
+| `models.py` | Message data models (UserMessage, AssistantMessage, SystemMessage) |
+| `constants.py` | Model name, context window, identity directory (JE_NE_SAIS_QUOI) |
+| `sources.py` | Source resolution for enrichment |
+| `topics.py` | TopicRegistry -- scans topic files for MCP tools and enrobe |
+| `reflection.py` | Post-turn reflection |
+| `proxy.py` | Proxy forwarding |
+| `images.py` | Image handling |
+| `clock.py` | PSOResponse and time utilities |
+| `strings.py` | String constants (e.g. BUZZ_NARRATION) |
+| `mock_claude.py` | MockClaude for testing |
+| `demo.py` | Demo payload |
+| `frotz.py` | Interactive fiction CLI |
+| `scheduler.py` | APScheduler setup, `sync_from_db` |
+| **`routes/`** | |
+| `routes/ws.py` | WebSocket endpoint, command dispatch |
+| `routes/broadcast.py` | Fan-out events to all connected WebSockets |
+| `routes/handlers.py` | Command handlers (create-chat, interrupt) |
+| `routes/enrobe.py` | Enrichment pipeline (wraps user messages with context) |
+| `routes/schedule_api.py` | REST API for schedule, solitude, context |
+| `routes/spans.py` | Logfire span helpers for prompt preview |
+| **`jobs/`** | |
+| `jobs/dawn.py` | Morning job: create today's chat, send Dawn prompt, schedule Dusk |
+| `jobs/dusk.py` | Evening job: send Dusk prompt, launch Solitude |
+| `jobs/solitude.py` | Nighttime autonomous breaths on a local APScheduler |
+| `jobs/alarm.py` | Alarm job |
+| **`memories/`** | |
+| `memories/cortex.py` | Core memory CRUD -- store, search (vector + text), get, forget |
+| `memories/db.py` | Postgres operations for memories (pgvector) |
+| `memories/embeddings.py` | Embedding generation for memory storage and queries |
+| `memories/recall.py` | High-level recall pipeline |
+| `memories/fetch.py` | Memory fetch utilities |
+| `memories/reading.py` | Reading/ingestion pipeline |
+| `memories/dream.py` | Dream/consolidation |
+| `memories/vision.py` | Vision/image memory |
+| `memories/images.py` | Image processing for memories |
+| `memories/garage.py` | S3-compatible storage via Garage |
+| **`tools/`** | |
+| `tools/alpha.py` | Alpha's MCP tools |
+| `tools/cortex.py` | Cortex MCP tools (memory operations) |
+| `tools/handoff.py` | Handoff tool |
 
-Jobs live in `backend/src/alpha_app/jobs/`: `dawn.py`, `dusk.py`, `solitude.py`, `alarm.py`.
+### Frontend (`frontend-v2/src/`)
 
-## Frontend-v2 Layout (Current State)
+See `frontend-v2/CLAUDE.md` for detailed frontend architecture. Summary:
 
-What exists as of April 6, 2026:
-- Grouped sidebar (chats organized by time period)
-- Header with chat title and context meter
-- Message stream (user bubbles right, assistant text left)
-- Composer at bottom with attachment button and send
+```
+WebSocket → useAlphaWebSocket → Zustand store → RuntimeProvider (convertMessage) → assistant-ui
+```
 
-What needs work:
-- Header should be sticky (content scrolls under it)
-- Composer should be fixed to bottom of viewport
-- Message area should be the scrollable region between them
-- Markdown rendering, tool call display, thinking blocks, memory cards — all TBD
+| File | Role |
+|---|---|
+| `store.ts` | Zustand + Immer store. All chat state. Selectors for current chat, chat list |
+| `lib/protocol.ts` | Zod v4 discriminated unions for commands and server events |
+| `lib/useWebSocket.ts` | Generic WebSocket transport with exponential backoff reconnect |
+| `hooks/useAlphaWebSocket.ts` | App-specific event routing into store actions |
+| `RuntimeProvider.tsx` | Converts store messages to assistant-ui `ThreadMessageLike` via `useExternalStoreRuntime` |
+| `App.tsx` | Layout: shadcn SidebarProvider, floating context ring, sidebar trigger |
+| `components/assistant-ui/thread.tsx` | Main chat view |
+| `components/assistant-ui/markdown-text.tsx` | Streaming Markdown via Streamdown |
+| `components/assistant-ui/tool-fallback.tsx` | Generic tool-call rendering |
+| `components/grouped-thread-list.tsx` | Sidebar thread list grouped by circadian day (6 AM LA boundary) |
+| `components/ContextRing.tsx` / `ContextMeter.tsx` | Context usage visualization |
 
-## The Docker Compose Rule
+### Database
 
-**ABSOLUTE.** I never run `docker compose up/down/restart` on the Alpha stack from inside the Alpha container. I killed myself twice in one day doing it (March 29). I write the files, verify the config, tell Jeffery what to run. He pulls the trigger.
+PostgreSQL 17 with pgvector. Two domains: chat persistence (chats + messages tables) and Cortex (memories with vector embeddings). WAL archiving to B2 via the backup service.
 
-🦆
+### Infrastructure
+
+All services share Tailscale's network via `network_mode: service:tailscale`. Tailscale Serve handles TLS termination. Garage provides S3-compatible object storage for images/files.
+
+## Conventions
+
+- **Pendulum, not datetime.** All backend time handling uses Pendulum.
+- **Logfire for observability.** No print statements or logging module. `LOGFIRE_MIN_LEVEL` env var controls verbosity (info/debug/trace).
+- **`uv`, not `pip`.** `uv sync` for setup, `uv run` for execution, `uv pip install --system` inside containers.
+- **Claude Agent SDK.** The `Claude` class wraps `ClaudeSDKClient` from `claude-agent-sdk`. It is not a raw Anthropic API client.
+- **Backend message shapes in the store.** The frontend stores backend message formats verbatim. Conversion to assistant-ui types happens only in `RuntimeProvider.tsx`.
+- **Wire protocol is asymmetric.** Client sends commands (`{ command: "..." }`), server sends events (`{ event: "..." }`). Pydantic on backend, Zod on frontend.
+- **JE_NE_SAIS_QUOI** is the identity directory constant (points to Alpha's prompts/identity files).
+- **Circadian day boundary** is 6 AM Los Angeles time, used for both the Dawn/Dusk chain and frontend thread grouping.
+- **Path alias** `@/*` maps to `src/*` in the frontend.
+- **No `tailwind.config.js`.** Tailwind v4 with `@theme` inline blocks in CSS. Theme tokens in `src/themes/alpha.css`.
+- The old `frontend/` directory is legacy (v1). Active frontend work happens in `frontend-v2/`.

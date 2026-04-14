@@ -23,6 +23,9 @@ import {
   type StreamdownTextComponents,
 } from "@assistant-ui/react-streamdown";
 import { createCodePlugin } from "@streamdown/code";
+import { math } from "@streamdown/math";
+import { mermaid } from "@streamdown/mermaid";
+import "katex/dist/katex.min.css";
 import { CheckIcon, CopyIcon } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -119,9 +122,10 @@ const MARKDOWN_CLASSES = [
 
 export const MarkdownText: FC = () => (
   <StreamdownTextPrimitive
-    plugins={{ code: codePlugin }}
+    plugins={{ code: codePlugin, math, mermaid }}
     components={components}
     controls
+    caret="block"
     containerClassName={MARKDOWN_CLASSES}
     containerProps={{ style: PROSE_VARS }}
   />
@@ -139,7 +143,7 @@ const USER_MARKDOWN_CLASSES = [
 
 export const UserMarkdownText: FC = () => (
   <StreamdownTextPrimitive
-    plugins={{ code: codePlugin }}
+    plugins={{ code: codePlugin, math, mermaid }}
     components={components}
     controls
     containerClassName={USER_MARKDOWN_CLASSES}
