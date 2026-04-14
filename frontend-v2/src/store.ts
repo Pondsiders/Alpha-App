@@ -291,11 +291,17 @@ export const useStore = create<AppState>()(
           (m) => m.role === "assistant" && m.data.id === messageId,
         );
         if (!msg || msg.role !== "assistant") return;
-        const lastPart = msg.data.parts[msg.data.parts.length - 1];
-        if (lastPart && lastPart.type === "text") {
-          lastPart.text += delta;
+        // Find the last TEXT part specifically — thinking parts may be
+        // interleaved when both buffers drain on alternating frames.
+        const parts = msg.data.parts;
+        let lastTextPart: (typeof parts)[number] | null = null;
+        for (let i = parts.length - 1; i >= 0; i--) {
+          if (parts[i].type === "text") { lastTextPart = parts[i]; break; }
+        }
+        if (lastTextPart && lastTextPart.type === "text") {
+          lastTextPart.text += delta;
         } else {
-          msg.data.parts.push({ type: "text", text: delta });
+          parts.push({ type: "text", text: delta });
         }
       }),
 
@@ -307,11 +313,16 @@ export const useStore = create<AppState>()(
           (m) => m.role === "assistant" && m.data.id === messageId,
         );
         if (!msg || msg.role !== "assistant") return;
-        const lastPart = msg.data.parts[msg.data.parts.length - 1];
-        if (lastPart && lastPart.type === "thinking") {
-          lastPart.thinking += delta;
+        // Find the last THINKING part specifically.
+        const parts = msg.data.parts;
+        let lastThinkPart: (typeof parts)[number] | null = null;
+        for (let i = parts.length - 1; i >= 0; i--) {
+          if (parts[i].type === "thinking") { lastThinkPart = parts[i]; break; }
+        }
+        if (lastThinkPart && lastThinkPart.type === "thinking") {
+          lastThinkPart.thinking += delta;
         } else {
-          msg.data.parts.push({ type: "thinking", thinking: delta });
+          parts.push({ type: "thinking", thinking: delta });
         }
       }),
 

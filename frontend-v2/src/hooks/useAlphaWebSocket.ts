@@ -21,6 +21,7 @@ import {
   type Command,
   type ServerEvent,
 } from "@/lib/protocol";
+import { DeltaBuffer } from "@/lib/deltaBuffer";
 
 export function useAlphaWebSocket() {
   const setConnected = useStore((s) => s.setConnected);
@@ -36,6 +37,23 @@ export function useAlphaWebSocket() {
   const setWsSend = useStore((s) => s.setWsSend);
   const replaceLastUserMessage = useStore((s) => s.replaceLastUserMessage);
   const ensureAssistantMessage = useStore((s) => s.ensureAssistantMessage);
+
+  // ---------------------------------------------------------------------------
+  // Delta buffers — smooth streaming text into Zustand at an adaptive rate.
+  // One buffer per delta type. Each drains independently.
+  // The refs hold { chatId, messageId, buffer } for the current turn.
+  // ---------------------------------------------------------------------------
+  const textBufferRef = useRef<{
+    chatId: string;
+    messageId: string;
+    buffer: DeltaBuffer;
+  } | null>(null);
+
+  const thinkingBufferRef = useRef<{
+    chatId: string;
+    messageId: string;
+    buffer: DeltaBuffer;
+  } | null>(null);
 
   const handleRawEvent = useCallback(
     (raw: unknown) => {
@@ -143,13 +161,54 @@ export function useAlphaWebSocket() {
         }
 
         case "thinking-delta": {
-          // TODO: wire to appendThinkingDelta once we have message IDs in deltas
+          const thinkAid = ensureAssistantMessage(event.chatId);
+          // Lazily create thinking buffer for this turn.
+          if (
+            !thinkingBufferRef.current ||
+            thinkingBufferRef.current.chatId !== event.chatId ||
+            thinkingBufferRef.current.messageId !== thinkAid
+          ) {
+            thinkingBufferRef.current?.buffer.flush();
+            const cid = event.chatId;
+            const mid = thinkAid;
+            thinkingBufferRef.current = {
+              chatId: cid,
+              messageId: mid,
+              buffer: new DeltaBuffer({
+                baseRate: 120,     // thinking drains faster — you skim it
+                chaseFactor: 0.8,
+                onDrain: (text) => appendThinkingDelta(cid, mid, text),
+              }),
+            };
+          }
+          thinkingBufferRef.current.buffer.push(event.delta);
           break;
         }
 
         case "text-delta": {
           const aid = ensureAssistantMessage(event.chatId);
-          appendTextDelta(event.chatId, aid, event.delta);
+          // Debug: log what's going into the buffer
+          console.log("[drain]", JSON.stringify(event.delta).slice(0, 40), "buf:", textBufferRef.current?.buffer.depth ?? 0);
+          // Lazily create text buffer for this turn.
+          if (
+            !textBufferRef.current ||
+            textBufferRef.current.chatId !== event.chatId ||
+            textBufferRef.current.messageId !== aid
+          ) {
+            textBufferRef.current?.buffer.flush();
+            const cid = event.chatId;
+            const mid = aid;
+            textBufferRef.current = {
+              chatId: cid,
+              messageId: mid,
+              buffer: new DeltaBuffer({
+                baseRate: 60,
+                chaseFactor: 0.5,
+                onDrain: (text) => appendTextDelta(cid, mid, text),
+              }),
+            };
+          }
+          textBufferRef.current.buffer.push(event.delta);
           break;
         }
 
@@ -169,19 +228,20 @@ export function useAlphaWebSocket() {
         }
 
         case "assistant-message": {
+          // Flush buffers immediately — dump remaining text into the
+          // store before replacing with the authoritative message.
+          textBufferRef.current?.buffer.flush();
+          thinkingBufferRef.current?.buffer.flush();
+          textBufferRef.current = null;
+          thinkingBufferRef.current = null;
+
           // Replace the streaming placeholder with the complete message.
-          // The placeholder (from ensureAssistantMessage) is the last message
-          // if we've been streaming. The complete version has all parts + metadata.
           const chatForAssist = useStore.getState().chats[event.chatId];
           const lastMsg = chatForAssist?.messages[chatForAssist.messages.length - 1];
           const isStreamingPlaceholder =
             lastMsg?.role === "assistant" &&
             (lastMsg.data as AssistantMessage).id.startsWith("ast-");
 
-          // Build the complete message using the backend-shaped AssistantMessage.
-          // Token accounting fields are zero here — they get filled in by a
-          // subsequent turn-complete event. The parts array is the
-          // authoritative full content from the backend.
           const completeAssistant: Message = {
             role: "assistant",
             data: {
@@ -201,7 +261,6 @@ export function useAlphaWebSocket() {
           };
 
           if (isStreamingPlaceholder) {
-            // Replace in place via direct setState
             useStore.setState((state) => {
               const c = state.chats[event.chatId];
               if (c && c.messages.length > 0) {
