@@ -4,10 +4,9 @@ import {
   UserMessageAttachments,
 } from "@/components/assistant-ui/attachment";
 import {
-  MarkdownText,
   UserMarkdownText,
 } from "@/components/assistant-ui/markdown-text";
-import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
+import { SequentialParts } from "@/components/assistant-ui/SequentialParts";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { Button } from "@/components/ui/button";
 import {
@@ -202,17 +201,7 @@ const AssistantMessage: FC = () => {
       data-role="assistant"
     >
       <div className="aui-assistant-message-content flex flex-col gap-2 wrap-break-word px-2 text-foreground leading-relaxed">
-        <MessagePrimitive.Parts
-          components={{
-            Text: MarkdownText,
-            tools: {
-              Fallback: ToolFallback,
-            },
-            ToolGroup: ({ children }) => (
-              <div className="flex flex-col gap-4">{children}</div>
-            ),
-          }}
-        />
+        <SequentialParts />
         <MessageError />
       </div>
 
