@@ -26,6 +26,16 @@
   --font-sans: 'Inter Variable', sans-serif;
 }
 
+/* Emoji pop — remark-a11y-emoji wraps each emoji in span[role="img"].
+   allowedTags: { span: ["role", "aria-label"] } preserves the attribute
+   through Streamdown's rehype-sanitize pass. Scoped to .prose to avoid
+   affecting non-markdown UI elements. */
+.prose span[role="img"] {
+  font-size: 1.4em;
+  line-height: 1;
+  vertical-align: -0.1em;
+}
+
 /* Markdown code styling — size and weight driven by theme variables
    (--md-code-span-* and --md-code-block-* defined in alpha.css). This
    lets each theme file tune code typography independently. The

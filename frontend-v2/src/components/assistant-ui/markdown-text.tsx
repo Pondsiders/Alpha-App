@@ -26,6 +26,7 @@ import { createCodePlugin } from "@streamdown/code";
 import { math } from "@streamdown/math";
 import { mermaid } from "@streamdown/mermaid";
 import "katex/dist/katex.min.css";
+import a11yEmoji from "@fec/remark-a11y-emoji";
 import { CheckIcon, CopyIcon } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -35,6 +36,10 @@ import { CheckIcon, CopyIcon } from "lucide-react";
 const codePlugin = createCodePlugin({
   themes: ["vitesse-dark", "vitesse-light"],
 });
+
+// Stable references for emoji handling
+const emojiRemarkPlugins = [a11yEmoji];
+const emojiAllowedTags = { span: ["role", "aria-label"] };
 
 // ---------------------------------------------------------------------------
 // CodeHeader — language label + copy button above fenced code blocks
@@ -123,6 +128,8 @@ const MARKDOWN_CLASSES = [
 export const MarkdownText: FC = () => (
   <StreamdownTextPrimitive
     plugins={{ code: codePlugin, math, mermaid }}
+    remarkPlugins={emojiRemarkPlugins}
+    allowedTags={emojiAllowedTags}
     components={components}
     controls
     caret="block"

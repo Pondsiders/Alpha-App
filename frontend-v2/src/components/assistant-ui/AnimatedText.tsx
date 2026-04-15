@@ -12,12 +12,13 @@
  * text has stopped growing (message is complete or a non-text part follows).
  */
 
-import { useState, useEffect, useRef, type FC, type CSSProperties } from "react";
+import { useState, useEffect, useRef, useMemo, type FC, type CSSProperties } from "react";
 import { Streamdown } from "streamdown";
 import { createCodePlugin } from "@streamdown/code";
 import { math } from "@streamdown/math";
 import { mermaid } from "@streamdown/mermaid";
 import "katex/dist/katex.min.css";
+import a11yEmoji from "@fec/remark-a11y-emoji";
 import { useDrainRate } from "@/lib/DrainRateContext";
 import { readStreamingText } from "@/lib/streamingText";
 
@@ -30,6 +31,10 @@ const codePlugin = createCodePlugin({
 });
 
 const plugins = { code: codePlugin, math, mermaid };
+
+// Stable references — Streamdown memoizes based on object identity
+const remarkPlugins = [a11yEmoji];
+const emojiAllowedTags = { span: ["role", "aria-label"] };
 
 // ---------------------------------------------------------------------------
 // Prose styling (matches markdown-text.tsx)
@@ -179,8 +184,10 @@ export const AnimatedText: FC<AnimatedTextProps> = ({
     <div className={PROSE_CLASSES} style={PROSE_VARS}>
       <Streamdown
         mode="streaming"
-        isAnimating={displayedLength < text.length}
+        isAnimating={displayedLength < liveText.length}
         plugins={plugins}
+        remarkPlugins={remarkPlugins}
+        allowedTags={emojiAllowedTags}
         caret="block"
       >
         {visibleText}
