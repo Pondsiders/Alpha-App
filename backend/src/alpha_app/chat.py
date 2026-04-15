@@ -32,6 +32,7 @@ from alpha_app import (
 
 from alpha_app.constants import CLAUDE_MODEL as MODEL, CONTEXT_WINDOW
 from alpha_app.models import AssistantMessage, SystemMessage, UserMessage
+from alpha_app.protocol import ErrorEvent as WireErrorEvent
 
 # Mock mode — swap Claude for MockClaude in tests.
 _MOCK_CLAUDE = os.environ.get("_ALPHA_MOCK_CLAUDE", "").strip() == "1"
@@ -734,6 +735,57 @@ class Chat:
         Broadcast: send tool-call events for the frontend."""
         chat_id = self.id
 
+        # API error — Claude Code exhausted retries. No ResultMessage follows.
+        # This IS the terminal event. Broadcast error and clean up the turn.
+        if event.error:
+            # Map SDK error types to wire codes + human messages.
+            _ERROR_MAP: dict[str, tuple[str, str]] = {
+                "authentication_failed": (
+                    "auth-failed",
+                    "Authentication failed. The OAuth token may have expired — Jeffery may need to re-auth.",
+                ),
+                "billing_error": (
+                    "billing-error",
+                    "Billing error. The subscription may have lapsed or the account may be suspended.",
+                ),
+                "rate_limit": (
+                    "rate-limited",
+                    "Rate limited. Too many requests — wait a moment and try again.",
+                ),
+                "invalid_request": (
+                    "invalid-request",
+                    "Invalid request. Something in the message was malformed — this is probably a bug.",
+                ),
+                "server_error": (
+                    "api-unavailable",
+                    "The Anthropic API returned a server error. This is usually transient — try again in a moment.",
+                ),
+            }
+            code, message = _ERROR_MAP.get(
+                event.error,
+                ("api-unavailable", "Claude was unable to respond. The API may be temporarily unavailable — try again in a moment."),
+            )
+            logfire.warn(
+                "chat.api_error: {error} chat={chat_id} code={code}",
+                error=event.error,
+                chat_id=chat_id,
+                code=code,
+            )
+            await self._broadcast(
+                WireErrorEvent(chatId=chat_id, code=code, message=message)
+                .model_dump(exclude_none=True)
+            )
+            # Clean up turn state so the chat isn't stuck
+            self.state = ConversationState.READY
+            self._current_assistant = None
+            self._active_turn = None
+            if self._turn_lock.locked():
+                self._turn_lock.release()
+            if self._turn_span:
+                self._turn_span.__exit__(None, None, None)
+                self._turn_span = None
+            return
+
         # Accumulate raw Messages API blocks for Logfire gen_ai.output.messages
         self._output_parts.extend(event.content)
 
@@ -823,6 +875,22 @@ class Chat:
 
         if event.session_id:
             self.session_uuid = event.session_id
+
+        # Error result with no streamed content — the API failed and
+        # Claude never produced any text. Broadcast an error so the
+        # frontend can show a toast instead of hanging silently.
+        if event.is_error and not (self._current_assistant and self._current_assistant.parts):
+            logfire.warn(
+                "chat.turn_error: API error with no response chat={chat_id}",
+                chat_id=chat_id,
+            )
+            await self._broadcast(
+                WireErrorEvent(
+                    chatId=chat_id,
+                    code="api-unavailable",
+                    message="Claude was unable to respond. The API may be temporarily unavailable — try again in a moment.",
+                ).model_dump(exclude_none=True)
+            )
 
         # Finalize the assistant message
         if self._current_assistant and self._current_assistant.parts:
@@ -1048,9 +1116,10 @@ class Chat:
 
     async def _handle_error(self, event: ErrorEvent) -> None:
         """Bookshelf: nothing. Broadcast: error event."""
-        await self._broadcast({
-            "event": "error", "chatId": self.id, "code": "subprocess-error", "message": event.message,
-        })
+        await self._broadcast(
+            WireErrorEvent(chatId=self.id, code="subprocess-error", message=event.message)
+            .model_dump(exclude_none=True)
+        )
 
     def _ensure_assistant(self) -> None:
         """Lazily create the current assistant message accumulator.

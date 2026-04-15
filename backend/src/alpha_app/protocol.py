@@ -217,6 +217,6 @@ class ContextUpdateEvent(_EventBase):
 
 class ErrorEvent(_EventBase):
     """Something broke."""
-    event: Literal["error"]
+    event: Literal["error"] = "error"
     code: str  # Domain-specific: "not-found", "invalid-state", etc.
     message: str

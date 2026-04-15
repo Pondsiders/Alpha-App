@@ -12,6 +12,7 @@ dependencies = [
     "fastapi>=0.135.0",
     "uvicorn[standard]>=0.32.0",
     "alpha-app",
+    "logfire[fastapi]>=4.27.0",
 ]
 
 [tool.uv]

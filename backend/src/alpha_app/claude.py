@@ -90,6 +90,7 @@ class UserEvent(Event):
 class AssistantEvent(Event):
     """Assistant response — content blocks."""
     content: list = field(default_factory=list)
+    error: str | None = None  # SDK AssistantMessageError (e.g. "unknown", "rate_limit")
 
     @property
     def text(self) -> str:
@@ -507,6 +508,20 @@ class Claude:
                 if self._on_event:
                     await self._on_event(event)
 
+            # Iterator exhausted — subprocess exited or connection lost.
+            # Without this block, the drain exits silently: no log, no
+            # state change, no _ready.set(), and the frontend sees nothing.
+            self._ready.set()
+            self._state = ClaudeState.STOPPED
+            logfire.warn(
+                "claude.lifecycle: receive_messages exhausted session={session}",
+                session=self._session_id or "?",
+            )
+            if self._on_event:
+                await self._on_event(
+                    ErrorEvent(raw={}, message="Claude process ended unexpectedly")
+                )
+
         except asyncio.CancelledError:
             self._ready.set()
             return
@@ -521,6 +536,22 @@ class Claude:
 
     def _map_sdk_message(self, message) -> Event | None:
         """Map a claude_agent_sdk message to our Event type."""
+        # Log unmapped message types so they don't vanish silently.
+        # Also log ResultMessage errors explicitly.
+        if isinstance(message, SDKResultMessage) and message.subtype != "success":
+            logfire.warn(
+                "claude.sdk: error result subtype={subtype} is_error={is_error} "
+                "errors={errors}",
+                subtype=message.subtype,
+                is_error=getattr(message, "is_error", None),
+                errors=getattr(message, "errors", None),
+            )
+        if isinstance(message, SDKAssistantMessage) and getattr(message, "error", None):
+            logfire.warn(
+                "claude.sdk: assistant error={error}",
+                error=str(message.error),
+            )
+
         if isinstance(message, SDKSystemMessage):
             subtype = getattr(message, "subtype", "")
             return SystemEvent(raw={}, subtype=subtype)
@@ -540,7 +571,10 @@ class Claude:
                         content.append(vars(block))
                     else:
                         content.append({"type": getattr(block, "type", "unknown")})
-            return AssistantEvent(raw={}, content=content)
+            return AssistantEvent(
+                raw={}, content=content,
+                error=getattr(message, "error", None),
+            )
 
         elif isinstance(message, SDKUserMessage):
             content = []
@@ -566,6 +600,11 @@ class Claude:
                 is_error=message.subtype != "success",
             )
 
+        # Unknown message type — log it so we notice
+        logfire.debug(
+            "claude.sdk: unmapped message type={type}",
+            type=type(message).__name__,
+        )
         return None
 
     def _update_usage_from_result(self, message) -> None:

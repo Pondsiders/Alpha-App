@@ -10,6 +10,7 @@ from fastapi import WebSocket
 
 from alpha_app.chat import Chat, ConversationState, generate_chat_id
 from alpha_app.db import list_chats, persist_chat
+from alpha_app.protocol import ErrorEvent as WireErrorEvent
 from alpha_app.routes.broadcast import broadcast
 
 
@@ -41,7 +42,10 @@ async def handle_create_chat(
         })
 
     except Exception as e:
-        await ws.send_json({"event": "error", "data": f"Failed to create chat: {e}"})
+        await ws.send_json(
+            WireErrorEvent(code="create-failed", message=f"Failed to create chat: {e}")
+            .model_dump(exclude_none=True)
+        )
 
 
 async def handle_list_chats(
@@ -72,7 +76,10 @@ async def handle_interrupt(
 ) -> None:
     """Handle interrupt: kill the subprocess, broadcast state change."""
     if not chat_id:
-        await ws.send_json({"event": "error", "data": "Missing chatId"})
+        await ws.send_json(
+            WireErrorEvent(code="invalid-state", message="Missing chatId")
+            .model_dump(exclude_none=True)
+        )
         return
 
     chat = chats.get(chat_id)
@@ -85,7 +92,10 @@ async def handle_interrupt(
                 "state": chat.state.wire_value,
             })
         except Exception as e:
-            await broadcast(connections, {"event": "error", "chatId": chat_id, "data": str(e)})
+            await broadcast(connections,
+                WireErrorEvent(chatId=chat_id, code="interrupt-failed", message=str(e))
+                .model_dump(exclude_none=True)
+            )
 
     task = streaming_tasks.get(chat_id)
     if task and not task.done():

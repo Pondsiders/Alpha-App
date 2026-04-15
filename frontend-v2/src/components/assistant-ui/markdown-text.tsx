@@ -37,8 +37,13 @@ const codePlugin = createCodePlugin({
   themes: ["vitesse-dark", "vitesse-light"],
 });
 
-// Stable references for emoji handling
-const emojiRemarkPlugins = [a11yEmoji];
+// Stable references for remark plugins.
+// Streamdown includes remark-gfm in its defaultRemarkPlugins, but passing
+// our own remarkPlugins array REPLACES the defaults. Spread them to keep
+// GFM tables, task lists, strikethrough, and autolinks working.
+import { defaultRemarkPlugins } from "streamdown";
+
+const remarkPlugins = [...Object.values(defaultRemarkPlugins), a11yEmoji];
 const emojiAllowedTags = { span: ["role", "aria-label"] };
 
 // ---------------------------------------------------------------------------
@@ -128,7 +133,7 @@ const MARKDOWN_CLASSES = [
 export const MarkdownText: FC = () => (
   <StreamdownTextPrimitive
     plugins={{ code: codePlugin, math, mermaid }}
-    remarkPlugins={emojiRemarkPlugins}
+    remarkPlugins={remarkPlugins}
     allowedTags={emojiAllowedTags}
     components={components}
     controls
