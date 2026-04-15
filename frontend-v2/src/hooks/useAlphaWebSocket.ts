@@ -21,6 +21,12 @@ import {
   type Command,
   type ServerEvent,
 } from "@/lib/protocol";
+import {
+  getStreamingEntry,
+  pushTextDelta,
+  pushThinkingDelta,
+  clearStreamingEntry,
+} from "@/lib/streamingText";
 export function useAlphaWebSocket() {
   const setConnected = useStore((s) => s.setConnected);
   const setCurrentChatId = useStore((s) => s.setCurrentChatId);
@@ -35,6 +41,21 @@ export function useAlphaWebSocket() {
   const setWsSend = useStore((s) => s.setWsSend);
   const replaceLastUserMessage = useStore((s) => s.replaceLastUserMessage);
   const ensureAssistantMessage = useStore((s) => s.ensureAssistantMessage);
+
+
+  // Queue for non-human user messages that should wait for animation to finish
+  const pendingUserMessages = useRef<Array<{ chatId: string; message: Message }>>([]);
+
+  // Flush pending messages when animation finishes
+  const isAnimating = useStore((s) => s.isAssistantAnimating);
+  useEffect(() => {
+    if (!isAnimating && pendingUserMessages.current.length > 0) {
+      for (const { chatId, message } of pendingUserMessages.current) {
+        appendMessage(chatId, message);
+      }
+      pendingUserMessages.current = [];
+    }
+  }, [isAnimating, appendMessage]);
 
   const handleRawEvent = useCallback(
     (raw: unknown) => {
@@ -134,22 +155,47 @@ export function useAlphaWebSocket() {
           if (existingIdx >= 0) {
             // Found optimistic message — replace with enriched version
             replaceLastUserMessage(event.chatId, enriched);
-          } else {
-            // New message (reflection, narrator, etc.) — append
+          } else if (event.source === "human" || event.source === "buzzer") {
+            // Human messages always appear immediately
             appendMessage(event.chatId, enriched);
+          } else {
+            // Non-human messages (reflection, approach-light) wait for
+            // the previous assistant message's animation to finish.
+            const animating = useStore.getState().isAssistantAnimating;
+            if (animating) {
+              pendingUserMessages.current.push({
+                chatId: event.chatId,
+                message: enriched,
+              });
+            } else {
+              appendMessage(event.chatId, enriched);
+            }
           }
           break;
         }
 
         case "thinking-delta": {
           const thinkAid = ensureAssistantMessage(event.chatId);
-          appendThinkingDelta(event.chatId, thinkAid, event.delta);
+          // Seed the part in Zustand on the FIRST delta — so
+          // SequentialParts knows the part exists. Use the actual
+          // delta text (not empty string — assistant-ui may filter
+          // empty parts). Subsequent deltas go to the streaming ref.
+          const thinkEntry = getStreamingEntry(event.chatId, thinkAid);
+          if (!thinkEntry.thinking) {
+            appendThinkingDelta(event.chatId, thinkAid, event.delta);
+          }
+          pushThinkingDelta(event.chatId, thinkAid, event.delta);
           break;
         }
 
         case "text-delta": {
           const aid = ensureAssistantMessage(event.chatId);
-          appendTextDelta(event.chatId, aid, event.delta);
+          // Seed the part in Zustand on the FIRST delta.
+          const textEntry = getStreamingEntry(event.chatId, aid);
+          if (!textEntry.text) {
+            appendTextDelta(event.chatId, aid, event.delta);
+          }
+          pushTextDelta(event.chatId, aid, event.delta);
           break;
         }
 
@@ -169,6 +215,14 @@ export function useAlphaWebSocket() {
         }
 
         case "assistant-message": {
+          // Clean up streaming entry — the complete message has all the text
+          const placeholderMsg = useStore.getState().chats[event.chatId]?.messages.findLast(
+            (m: Message) => m.role === "assistant" && (m.data as AssistantMessage).id.startsWith("ast-"),
+          );
+          if (placeholderMsg) {
+            clearStreamingEntry(event.chatId, (placeholderMsg.data as AssistantMessage).id);
+          }
+
           // Replace the streaming placeholder with the complete message.
           const chatForAssist = useStore.getState().chats[event.chatId];
           const lastMsg = chatForAssist?.messages[chatForAssist.messages.length - 1];

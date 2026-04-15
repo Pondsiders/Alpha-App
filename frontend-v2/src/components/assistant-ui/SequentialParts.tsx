@@ -11,6 +11,7 @@
 
 import { useAuiState, MessagePrimitive } from "@assistant-ui/react";
 import { useEffect, useRef, type FC } from "react";
+import { useStore } from "@/store";
 import { useSequentialReveal } from "@/lib/useSequentialReveal";
 import { DrainRateProvider } from "@/lib/DrainRateContext";
 import { AnimatedText } from "./AnimatedText";
@@ -24,7 +25,13 @@ import { MarkdownText } from "./markdown-text";
 export const SequentialParts: FC = () => {
   const parts = useAuiState((s) => s.message.content) as unknown as ContentPart[];
   const status = useAuiState((s) => s.message.status);
+  const messageId = useAuiState((s) => s.message.id);
   const isComplete = status?.type !== "running";
+
+  // Get chatId from the Zustand store
+  const chatId = useStore((s) => s.currentChatId) ?? "";
+
+  console.log("[SeqParts]", { partsLength: parts.length, isComplete, messageId, types: parts.map(p => p.type) });
 
   // Track whether this message was EVER streaming in this render lifecycle.
   // Once we enter the animated path, stay on it until the animation finishes.
@@ -50,8 +57,8 @@ export const SequentialParts: FC = () => {
   // For streaming or recently-streaming messages, use the animated path.
   // The animation will naturally complete and the parts will settle.
   return (
-    <DrainRateProvider baseRate={60} chaseFactor={0.3}>
-      <RevealingParts parts={parts} isComplete={isComplete} />
+    <DrainRateProvider baseRate={60} chaseFactor={1.0}>
+      <RevealingParts parts={parts} isComplete={isComplete} chatId={chatId} messageId={messageId} />
     </DrainRateProvider>
   );
 };
@@ -72,7 +79,7 @@ interface ContentPart {
   [key: string]: unknown;
 }
 
-const RevealingParts: FC<{ parts: ContentPart[]; isComplete: boolean }> = ({ parts, isComplete }) => {
+const RevealingParts: FC<{ parts: ContentPart[]; isComplete: boolean; chatId: string; messageId: string }> = ({ parts, isComplete, chatId, messageId }) => {
   const { revealedCount, markDone } = useSequentialReveal(parts.length);
   const visibleParts = parts.slice(0, revealedCount);
 
@@ -88,6 +95,8 @@ const RevealingParts: FC<{ parts: ContentPart[]; isComplete: boolean }> = ({ par
             part={part}
             index={i}
             isStillGrowing={isStillGrowing}
+            chatId={chatId}
+            messageId={messageId}
             onDone={() => markDone(i)}
           />
         );
@@ -105,13 +114,17 @@ const AnimatedPartRenderer: FC<{
   part: ContentPart;
   index: number;
   isStillGrowing: boolean;
+  chatId: string;
+  messageId: string;
   onDone: () => void;
-}> = ({ part, index, isStillGrowing, onDone }) => {
+}> = ({ part, index, isStillGrowing, chatId, messageId, onDone }) => {
   switch (part.type) {
     case "text":
       return (
         <AnimatedText
           text={part.text ?? ""}
+          chatId={chatId}
+          messageId={messageId}
           isStreaming={isStillGrowing}
           partIndex={index}
           onDone={onDone}

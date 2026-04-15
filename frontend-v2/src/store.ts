@@ -150,6 +150,10 @@ interface AppState {
   /** Update token accounting for a chat. */
   setTokenCount: (chatId: string, tokenCount: number) => void;
 
+  /** True when a streaming assistant message is still animating text. */
+  isAssistantAnimating: boolean;
+  setIsAssistantAnimating: (v: boolean) => void;
+
   /** WebSocket send function — set by useAlphaWebSocket on connect. */
   wsSend: ((cmd: Record<string, unknown>) => void) | null;
   setWsSend: (fn: ((cmd: Record<string, unknown>) => void) | null) => void;
@@ -160,6 +164,13 @@ export const useStore = create<AppState>()(
     connected: false,
     chats: {},
     currentChatId: null,
+    isAssistantAnimating: false,
+
+    setIsAssistantAnimating: (v) =>
+      set((state) => {
+        state.isAssistantAnimating = v;
+      }),
+
     wsSend: null,
 
     setConnected: (connected) =>
@@ -291,18 +302,14 @@ export const useStore = create<AppState>()(
           (m) => m.role === "assistant" && m.data.id === messageId,
         );
         if (!msg || msg.role !== "assistant") return;
-        // Find the last TEXT part specifically — thinking parts may be
-        // interleaved when both buffers drain on alternating frames.
         const parts = msg.data.parts;
-        let lastTextPart: (typeof parts)[number] | null = null;
         for (let i = parts.length - 1; i >= 0; i--) {
-          if (parts[i].type === "text") { lastTextPart = parts[i]; break; }
+          if (parts[i].type === "text") {
+            (parts[i] as { text: string }).text += delta;
+            return;
+          }
         }
-        if (lastTextPart && lastTextPart.type === "text") {
-          lastTextPart.text += delta;
-        } else {
-          parts.push({ type: "text", text: delta });
-        }
+        parts.push({ type: "text", text: delta });
       }),
 
     appendThinkingDelta: (chatId, messageId, delta) =>
@@ -313,17 +320,14 @@ export const useStore = create<AppState>()(
           (m) => m.role === "assistant" && m.data.id === messageId,
         );
         if (!msg || msg.role !== "assistant") return;
-        // Find the last THINKING part specifically.
         const parts = msg.data.parts;
-        let lastThinkPart: (typeof parts)[number] | null = null;
         for (let i = parts.length - 1; i >= 0; i--) {
-          if (parts[i].type === "thinking") { lastThinkPart = parts[i]; break; }
+          if (parts[i].type === "thinking") {
+            (parts[i] as { thinking: string }).thinking += delta;
+            return;
+          }
         }
-        if (lastThinkPart && lastThinkPart.type === "thinking") {
-          lastThinkPart.thinking += delta;
-        } else {
-          parts.push({ type: "thinking", thinking: delta });
-        }
+        parts.push({ type: "thinking", thinking: delta });
       }),
 
     setIsRunning: (chatId, isRunning) =>

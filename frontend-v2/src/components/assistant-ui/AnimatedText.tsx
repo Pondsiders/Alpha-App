@@ -19,6 +19,7 @@ import { math } from "@streamdown/math";
 import { mermaid } from "@streamdown/mermaid";
 import "katex/dist/katex.min.css";
 import { useDrainRate } from "@/lib/DrainRateContext";
+import { readStreamingText } from "@/lib/streamingText";
 
 // ---------------------------------------------------------------------------
 // Shiki code plugin (shared instance)
@@ -65,8 +66,11 @@ const PROSE_CLASSES = [
 // ---------------------------------------------------------------------------
 
 interface AnimatedTextProps {
-  /** The full text to animate. Grows as deltas arrive in the store. */
+  /** The full text from Zustand. May lag behind the streaming ref. */
   text: string;
+  /** Chat and message IDs for reading the streaming ref. */
+  chatId: string;
+  messageId: string;
   /** Whether this text part is still receiving deltas. */
   isStreaming: boolean;
   /** Index of this part in the parts array (for DrainRateContext reporting). */
@@ -77,6 +81,8 @@ interface AnimatedTextProps {
 
 export const AnimatedText: FC<AnimatedTextProps> = ({
   text,
+  chatId,
+  messageId,
   isStreaming,
   partIndex,
   onDone,
@@ -91,6 +97,13 @@ export const AnimatedText: FC<AnimatedTextProps> = ({
   // Stable refs for the rAF callback
   const rateRef = useRef(rate);
   rateRef.current = rate;
+  const reportRemainingRef = useRef(reportRemaining);
+  reportRemainingRef.current = reportRemaining;
+  const chatIdRef = useRef(chatId);
+  chatIdRef.current = chatId;
+  const messageIdRef = useRef(messageId);
+  messageIdRef.current = messageId;
+  // Fall back to prop text when not streaming (completed messages)
   const textRef = useRef(text);
   textRef.current = text;
 
@@ -115,7 +128,10 @@ export const AnimatedText: FC<AnimatedTextProps> = ({
       charRemainder.current -= budget;
 
       setDisplayedLength((prev) => {
-        const target = textRef.current.length;
+        // Read from the streaming ref (zero cost) — this has the
+        // latest text without waiting for Zustand/React.
+        const liveText = readStreamingText(chatIdRef.current, messageIdRef.current);
+        const target = liveText.length || textRef.current.length;
         const next = Math.min(prev + budget, target);
 
         // Report remaining to the DrainRateProvider
@@ -155,7 +171,9 @@ export const AnimatedText: FC<AnimatedTextProps> = ({
     }
   }, [displayedLength, text.length, isStreaming, onDone, partIndex, reportRemaining]);
 
-  const visibleText = text.slice(0, displayedLength);
+  // Read from streaming ref for live text, fall back to prop for history
+  const liveText = readStreamingText(chatId, messageId) || text;
+  const visibleText = liveText.slice(0, displayedLength);
 
   return (
     <div className={PROSE_CLASSES} style={PROSE_VARS}>
