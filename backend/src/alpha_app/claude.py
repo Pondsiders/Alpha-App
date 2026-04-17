@@ -228,7 +228,6 @@ class Claude:
         permission_handler: Callable[[dict], Awaitable[bool]] | None = None,
         disallowed_tools: list[str] | None = None,
         on_event: Callable[["Event"], Awaitable[None]] | None = None,
-        use_proxy: bool = True,
     ):
         self.model = model
         self.mcp_config = mcp_config
@@ -238,7 +237,6 @@ class Claude:
         self._permission_handler = permission_handler
         self._disallowed_tools: list[str] = disallowed_tools or []
         self._on_event = on_event
-        self._use_proxy = use_proxy  # kept for interface compat, ignored (SDK handles it)
 
         self._state = ClaudeState.IDLE
         self._client: ClaudeSDKClient | None = None
@@ -246,7 +244,6 @@ class Claude:
         self._session_id: str | None = None
         self._system_prompt_file: Path | None = None
         self._assembled_system_prompt: str = ""
-        self._trace_context: dict | None = None
 
         # Token accounting — populated from SDK ResultMessage.usage
         self._token_count: int = 0
@@ -258,8 +255,6 @@ class Claude:
         self._stop_reason: str | None = None
         self._response_model: str | None = None
         self._response_id: str | None = None
-        self._usage_5h: float | None = None
-        self._usage_7d: float | None = None
 
         # Ready latch
         self._ready = asyncio.Event()
@@ -304,14 +299,6 @@ class Claude:
         return self._context_window
 
     @property
-    def usage_7d(self) -> float | None:
-        return self._usage_7d
-
-    @property
-    def usage_5h(self) -> float | None:
-        return self._usage_5h
-
-    @property
     def input_tokens(self) -> int:
         return self._input_tokens
 
@@ -351,9 +338,6 @@ class Claude:
 
     def reset_output_tokens(self) -> None:
         self._output_tokens = 0
-
-    def set_trace_context(self, ctx: dict | None) -> None:
-        self._trace_context = ctx
 
     # -- Lifecycle ------------------------------------------------------------
 
@@ -534,8 +518,59 @@ class Claude:
             )
             self._state = ClaudeState.STOPPED
 
+    @staticmethod
+    def _trace_enabled() -> bool:
+        return os.environ.get("ALPHA_TRACE_CLAUDE_STDIO", "").strip() == "1"
+
+    @staticmethod
+    def _trace_streaming_enabled() -> bool:
+        return os.environ.get("ALPHA_TRACE_CLAUDE_STDIO_STREAMING", "").strip() == "1"
+
     def _map_sdk_message(self, message) -> Event | None:
         """Map a claude_agent_sdk message to our Event type."""
+        # -- Trace logging (gated by env vars) --
+        if self._trace_enabled():
+            if isinstance(message, SDKStreamEvent):
+                if self._trace_streaming_enabled():
+                    inner = message.event if isinstance(message.event, dict) else {}
+                    delta_type = inner.get("type", "?")
+                    delta_text = ""
+                    if delta_type == "content_block_delta":
+                        delta = inner.get("delta", {})
+                        delta_text = delta.get("text", delta.get("partial_json", ""))[:60]
+                    logfire.trace(
+                        "claude.stream: {delta_type} {delta_text!r}",
+                        delta_type=delta_type,
+                        delta_text=delta_text,
+                        chars=len(delta_text),
+                    )
+            elif isinstance(message, SDKAssistantMessage):
+                preview = ""
+                for block in message.content:
+                    if isinstance(block, TextBlock):
+                        preview = block.text[:60]
+                        break
+                logfire.trace(
+                    "claude.stdout: assistant {preview}",
+                    preview=preview or "(empty)",
+                )
+            elif isinstance(message, SDKResultMessage):
+                logfire.trace(
+                    "claude.stdout: result session={session} cost=${cost:.4f} "
+                    "turns={turns} error={is_error}",
+                    session=message.session_id or "?",
+                    cost=message.total_cost_usd or 0.0,
+                    turns=message.num_turns or 0,
+                    is_error=message.subtype != "success",
+                )
+            elif isinstance(message, SDKUserMessage):
+                logfire.trace("claude.stdout: user-echo")
+            elif isinstance(message, SDKSystemMessage):
+                logfire.trace(
+                    "claude.stdout: system {subtype}",
+                    subtype=getattr(message, "subtype", "?"),
+                )
+
         # Log unmapped message types so they don't vanish silently.
         # Also log ResultMessage errors explicitly.
         if isinstance(message, SDKResultMessage) and message.subtype != "success":
