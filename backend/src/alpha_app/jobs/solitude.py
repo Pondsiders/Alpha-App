@@ -47,6 +47,13 @@ async def _solitude_loop(app) -> None:
     if not hasattr(app.state, "solitude_changed"):
         app.state.solitude_changed = asyncio.Event()
 
+    # The event that signals "abort this night — a breath hit a
+    # synthetic refusal from the Claude Code harness, and every
+    # subsequent breath on the same resumed session will hit the same
+    # thing. Scream and die cleanly."
+    if not hasattr(app.state, "solitude_abort"):
+        app.state.solitude_abort = asyncio.Event()
+
     while True:
         program = await _load_program()
         if not program:
@@ -87,26 +94,35 @@ async def _solitude_loop(app) -> None:
 
         scheduler.start()
 
-        # Wait for either: all jobs done, program changed, or stop
+        # Wait for: all jobs done, program changed, or abort (refusal cascade)
         changed = app.state.solitude_changed
         changed.clear()
+        abort = app.state.solitude_abort
+        abort.clear()
 
         # Wait for whichever comes first
         done_task = asyncio.create_task(done.wait())
         changed_task = asyncio.create_task(changed.wait())
+        abort_task = asyncio.create_task(abort.wait())
 
         finished, pending = await asyncio.wait(
-            [done_task, changed_task],
+            [done_task, changed_task, abort_task],
             return_when=asyncio.FIRST_COMPLETED,
         )
 
-        # Cancel the loser
+        # Cancel the losers
         for task in pending:
             task.cancel()
 
         # Shut down the scheduler (clean slate)
         scheduler.shutdown(wait=False)
         app.state.solitude_scheduler = None
+
+        if abort_task in finished:
+            # A breath set the abort flag. End the night — don't loop back,
+            # don't reschedule. Dawn still fires at 6 AM independently.
+            logfire.warn("solitude: night aborted (refusal cascade)")
+            return
 
         if done_task in finished:
             # All jobs fired — program complete
@@ -136,10 +152,35 @@ async def _breathe(app, chat, entry: dict, index: int) -> None:
         result = await enrobe(content, chat=chat, source="solitude")
         async with await chat.turn() as t:
             await t.send(result.message)
-            await t.response()
+            response = await t.response()
 
         span.set_attribute("gen_ai.usage.input_tokens", chat.total_input_tokens)
         span.set_attribute("gen_ai.usage.output_tokens", chat.output_tokens)
+
+        # Harness-layer synthetic refusal detection (Opus 4.7+).
+        # When Claude Code's harness injects a <synthetic> usage-policy
+        # refusal, the refused turn stays in the resumed session's
+        # transcript and every subsequent breath hits the same refusal.
+        # Scream and die instead of burning the night on guaranteed
+        # refusals. The diary up to this point is already persisted;
+        # Dawn still fires at 6 AM. Bounded blast radius, as designed.
+        if (
+            response is not None
+            and (getattr(response, "model", "") or "") == "<synthetic>"
+            and "unable to respond to this request" in (response.text or "")
+        ):
+            logfire.warn(
+                "solitude: synthetic refusal detected, aborting night",
+                **{
+                    "breath.index": index,
+                    "breath.model": "<synthetic>",
+                    "breath.preview": (response.text or "")[:200],
+                },
+            )
+            span.set_attribute("breath.refused", True)
+            abort = getattr(app.state, "solitude_abort", None)
+            if abort is not None:
+                abort.set()
 
     # Delete one-shot entries after firing
     if not entry.get("recurring", True):
