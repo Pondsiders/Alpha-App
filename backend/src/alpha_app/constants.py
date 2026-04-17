@@ -31,7 +31,7 @@ PORT = int(os.environ.get("PORT", "18010"))
 # -- Models -------------------------------------------------------------------
 
 # The model IS the definition. When we upgrade, we change these and bump the version.
-CLAUDE_MODEL = "claude-opus-4-6[1m]"
+CLAUDE_MODEL = "claude-opus-4-7[1m]"
 CONTEXT_WINDOW = 1_000_000
 
 OLLAMA_EMBED_MODEL = "qwen3-embedding:4b"
