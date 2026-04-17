@@ -489,14 +489,6 @@ class Chat:
     def response_id(self) -> str | None:
         return self._claude.response_id if self._claude else None
 
-    @property
-    def usage_5h(self) -> float | None:
-        return self._claude.usage_5h if self._claude else None
-
-    @property
-    def usage_7d(self) -> float | None:
-        return self._claude.usage_7d if self._claude else None
-
     def pop_api_error(self) -> dict | None:
         """Return and clear the last API error, if any.
         Legacy — proxy was removed when we migrated to ClaudeSDKClient."""
@@ -612,11 +604,6 @@ class Chat:
             return self.messages[-1]
         return None
 
-    def set_trace_context(self, ctx: dict | None) -> None:
-        """Set trace context so proxy spans nest under the consumer's trace."""
-        if self._claude:
-            self._claude.set_trace_context(ctx)
-
     # -- Smart Chat: event dispatch --------------------------------------------
     #
     # Dispatch dict replaces the elif waterfall. Each handler has two concerns:
@@ -660,7 +647,6 @@ class Chat:
                 )
                 span.__enter__()
                 self._turn_span = span
-                self.set_trace_context(logfire.get_context())
 
             await self._broadcast({
                 "event": "chat-state",
@@ -935,7 +921,6 @@ class Chat:
             self._turn_span.__exit__(None, None, None)
             self._turn_span = None
         self._output_parts = []
-        self.set_trace_context(None)
 
         # State transition
         self.state = ConversationState.READY
@@ -1178,11 +1163,8 @@ class Chat:
                     source="reflection",
                 )
                 async with await self.turn() as t:
-                    # Set trace context so stdout drain and proxy attach to this span
-                    self.set_trace_context(logfire.get_context())
                     await t.send(msg)
                     response = await t.response()
-                    self.set_trace_context(None)
 
                 if response:
                     span.set_attribute("reflection.had_text_output", bool(response.text))

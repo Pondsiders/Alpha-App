@@ -103,8 +103,3 @@ def set_turn_span_response(
         for p in m.get("parts", [])
     ))
 
-    if chat.usage_5h is not None:
-        span.set_attribute("anthropic.quota.usage_5h", chat.usage_5h)
-    if chat.usage_7d is not None:
-        span.set_attribute("anthropic.quota.usage_7d", chat.usage_7d)
-

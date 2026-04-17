@@ -92,14 +92,6 @@ class MockClaude:
         return CONTEXT_WINDOW
 
     @property
-    def usage_7d(self) -> float | None:
-        return None
-
-    @property
-    def usage_5h(self) -> float | None:
-        return None
-
-    @property
     def input_tokens(self) -> int:
         return 5000
 
@@ -135,9 +127,6 @@ class MockClaude:
         pass
 
     def reset_output_tokens(self) -> None:
-        pass
-
-    def set_trace_context(self, ctx: dict | None) -> None:
         pass
 
     # -- Lifecycle ------------------------------------------------------------

@@ -276,8 +276,6 @@ async def _run_human_turn(
     chat._turn_span = span
 
     try:
-        chat.set_trace_context(logfire.get_context())
-
         async def _enrobe_broadcast(event: dict) -> None:
             if broadcast_user_message:
                 await broadcast(connections, event)

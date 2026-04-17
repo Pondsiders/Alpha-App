@@ -242,8 +242,8 @@ class AssistantMessage:
 
     Built incrementally in streaming.py as events arrive from Claude.
     Parts accumulate as thinking, text, and tool-call blocks stream in.
-    Token counts are fed in by streaming.py reading the proxy's sniffed
-    values — the model doesn't know about the proxy, just holds the data.
+    Token counts come from the SDK's ResultMessage.usage — the model
+    just holds the data.
 
     Two serializations:
         to_wire() → labeled JSON for the frontend (WebSocket broadcast)
