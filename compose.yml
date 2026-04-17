@@ -85,6 +85,7 @@ services:
     volumes:
       - /Pondside:/Pondside
       - /Pondside/Alpha-Home:/home/alpha
+      - /Pier:/Pier
       - /var/run/docker.sock:/var/run/docker.sock
       - ./backend/src:/app/backend/src:ro
       - ./frontend/dist:/app/frontend/dist:ro
