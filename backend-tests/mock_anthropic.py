@@ -340,7 +340,7 @@ async def messages(request: Request):
         return StreamingResponse(
             _stream_text(
                 "I recovered from a transient 500 error. The retry worked!",
-                chunk_size=10, delay=0.01,
+                chunk_size=5, delay=0.05,
             ),
             media_type="text/event-stream",
         )
@@ -388,7 +388,7 @@ async def messages(request: Request):
         echo_text = command[len("§echo:"):]
         logfire.info("mock.respond: §echo → 200 SSE echo={echo!r}", echo=echo_text[:60])
         return StreamingResponse(
-            _stream_text(echo_text, chunk_size=10, delay=0.01),
+            _stream_text(echo_text, chunk_size=5, delay=0.05),
             media_type="text/event-stream",
         )
 
@@ -397,7 +397,7 @@ async def messages(request: Request):
         n = int(command[len("§tokens:"):])
         logfire.info("mock.respond: §tokens:{n} → 200 SSE", n=n)
         return StreamingResponse(
-            _stream_text(LOREM, chunk_size=20, delay=0.01, input_tokens=n),
+            _stream_text(LOREM, chunk_size=5, delay=0.05, input_tokens=n),
             media_type="text/event-stream",
         )
 
@@ -414,7 +414,7 @@ async def messages(request: Request):
         }
         tokens = tokens_map.get(beat, 1000)
         return StreamingResponse(
-            _stream_text(LOREM, chunk_size=20, delay=0.01, input_tokens=tokens),
+            _stream_text(LOREM, chunk_size=5, delay=0.05, input_tokens=tokens),
             media_type="text/event-stream",
         )
 
@@ -430,7 +430,7 @@ async def messages(request: Request):
             logfire.info("mock.respond: approach light yellow cascade → 155k tokens")
             return StreamingResponse(
                 _stream_text(
-                    "Acknowledged.", chunk_size=20, delay=0.01,
+                    "Acknowledged.", chunk_size=5, delay=0.05,
                     input_tokens=155000,  # 77.5% — crosses red
                 ),
                 media_type="text/event-stream",
@@ -439,7 +439,7 @@ async def messages(request: Request):
             logfire.info("mock.respond: approach light red cascade → 170k tokens")
             return StreamingResponse(
                 _stream_text(
-                    "Acknowledged.", chunk_size=20, delay=0.01,
+                    "Acknowledged.", chunk_size=5, delay=0.05,
                     input_tokens=170000,  # 85% — cascade terminus
                 ),
                 media_type="text/event-stream",
@@ -449,7 +449,7 @@ async def messages(request: Request):
     if command == "§slow":
         logfire.info("mock.respond: §slow → 200 SSE (200ms delay)")
         return StreamingResponse(
-            _stream_text(LOREM, chunk_size=10, delay=0.2),
+            _stream_text(LOREM, chunk_size=3, delay=0.15),
             media_type="text/event-stream",
         )
 
@@ -457,7 +457,7 @@ async def messages(request: Request):
     if command == "§long":
         logfire.info("mock.respond: §long → 200 SSE (~2000 tokens)")
         return StreamingResponse(
-            _stream_text(LONG_TEXT, chunk_size=50, delay=0.01, input_tokens=5000),
+            _stream_text(LONG_TEXT, chunk_size=5, delay=0.05, input_tokens=5000),
             media_type="text/event-stream",
         )
 
@@ -585,7 +585,7 @@ Sexual conflict drives morphological innovation faster than almost any other evo
     # -- Default: lorem ipsum, fast ---
     logfire.info("mock.respond: default → 200 SSE lorem ipsum")
     return StreamingResponse(
-        _stream_text(LOREM, chunk_size=20, delay=0.01),
+        _stream_text(LOREM, chunk_size=5, delay=0.05),
         media_type="text/event-stream",
     )
 

@@ -30,6 +30,23 @@ npm run build        # Type-check + production build
 npm run lint         # ESLint
 ```
 
+### Pixelfuck (development mode)
+
+```bash
+# Terminal 1: MockAnthropic (fake API, deterministic, zero usage)
+cd backend-tests
+uvicorn mock_anthropic:app --port 18098 --reload
+
+# Terminal 2: Pixelfuck backend + Vite frontend
+ANTHROPIC_BASE_URL=http://127.0.0.1:18098 ./pixelfuck.sh
+```
+
+The `§`-prefix protocol controls MockAnthropic responses. Type `§help` in the chat for the full command reference. Key commands: `§error` (permanent 500), `§error_once` (transient 500), `§rate_limit` (429), `§slow` (200ms delays), `§long` (~2000 tokens), `§markdown` (full Markdown parade), `§echo:text` (echo). Normal messages return lorem ipsum at ~100 chars/sec.
+
+MockAnthropic is fully instrumented with Logfire (`service_name="mock-anthropic"`). Every request logs the conversation structure, extracted command, and response type.
+
+To run against real Anthropic instead, just `./pixelfuck.sh` without `ANTHROPIC_BASE_URL`.
+
 ### Docker
 
 The `compose.yml` defines services: `tailscale` (networking), `postgres` (pgvector/pg17), `garage` (S3-compatible object storage), `alpha` (the app), `backup` (B2 WAL archival). The `alpha` and `backup` services are in the `full` profile. The app container exposes port 18010 and uses Tailscale's network stack.
