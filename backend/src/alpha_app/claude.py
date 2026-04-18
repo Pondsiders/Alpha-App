@@ -1103,8 +1103,9 @@ class Claude:
             "--permission-mode", self.permission_mode,
             "--include-partial-messages",
             "--replay-user-messages",
-            "--effort", "medium",
         ]
+        # Effort is driven by CLAUDE_CODE_EFFORT_LEVEL in .env. The --effort
+        # flag would override it, so we don't pass one.
 
         # Claude assembles its own system prompt — fresh on every start.
         from alpha_app.system_prompt import assemble_system_prompt
