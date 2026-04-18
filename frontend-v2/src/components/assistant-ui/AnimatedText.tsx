@@ -20,7 +20,7 @@ import { mermaid } from "@streamdown/mermaid";
 import "katex/dist/katex.min.css";
 import a11yEmoji from "@fec/remark-a11y-emoji";
 import { useDrainRate } from "@/lib/DrainRateContext";
-import { readStreamingText } from "@/lib/streamingText";
+import { readStreamingText, clearStreamingEntry } from "@/lib/streamingText";
 
 // ---------------------------------------------------------------------------
 // Shiki code plugin (shared instance)
@@ -84,6 +84,12 @@ interface AnimatedTextProps {
   onDone: () => void;
 }
 
+// Drain algorithm constants — must match notebooks/drain_sim.py.
+// rate = BASE_RATE + remaining * CHASE_FACTOR, smoothed by EMA.
+const DRAIN_BASE_RATE = 0;
+const DRAIN_CHASE_FACTOR = 1.0;
+const DRAIN_EMA_ALPHA = 0.05; // normalized to 60fps
+
 export const AnimatedText: FC<AnimatedTextProps> = ({
   text,
   chatId,
@@ -93,22 +99,20 @@ export const AnimatedText: FC<AnimatedTextProps> = ({
   onDone,
 }) => {
   const [displayedLength, setDisplayedLength] = useState(0);
-  const { rate, reportRemaining } = useDrainRate();
+  const { reportRemaining } = useDrainRate();
   const calledDone = useRef(false);
   const lastTime = useRef(0);
   const charRemainder = useRef(0);
+  const smoothedRate = useRef(0);
   const frameId = useRef<number | null>(null);
 
   // Stable refs for the rAF callback
-  const rateRef = useRef(rate);
-  rateRef.current = rate;
   const reportRemainingRef = useRef(reportRemaining);
   reportRemainingRef.current = reportRemaining;
   const chatIdRef = useRef(chatId);
   chatIdRef.current = chatId;
   const messageIdRef = useRef(messageId);
   messageIdRef.current = messageId;
-  // Fall back to prop text when not streaming (completed messages)
   const textRef = useRef(text);
   textRef.current = text;
 
@@ -123,24 +127,32 @@ export const AnimatedText: FC<AnimatedTextProps> = ({
         return;
       }
 
-      const elapsed = timestamp - lastTime.current;
+      const dt = (timestamp - lastTime.current) / 1000; // seconds
       lastTime.current = timestamp;
 
-      const currentRate = rateRef.current;
-      charRemainder.current += currentRate * (elapsed / 1000);
-
-      const budget = Math.max(1, Math.floor(charRemainder.current));
-      charRemainder.current -= budget;
+      // Read from the streaming ref — always the source during animation.
+      // The ref stays alive until onDone clears it.
+      const liveText = readStreamingText(chatIdRef.current, messageIdRef.current);
+      const target = liveText.length || textRef.current.length;
 
       setDisplayedLength((prev) => {
-        // Read from the streaming ref (zero cost) — this has the
-        // latest text without waiting for Zustand/React.
-        const liveText = readStreamingText(chatIdRef.current, messageIdRef.current);
-        const target = liveText.length || textRef.current.length;
-        const next = Math.min(prev + budget, target);
+        const remaining = target - prev;
 
-        // Report remaining to the DrainRateProvider
-        reportRemaining(partIndex, target - next);
+        // Compute drain rate: same equation as notebooks/drain_sim.py.
+        // rate = BASE_RATE + remaining * CHASE_FACTOR, with EMA smoothing.
+        const targetRate = DRAIN_BASE_RATE + remaining * DRAIN_CHASE_FACTOR;
+        const correctedAlpha = 1 - Math.pow(1 - DRAIN_EMA_ALPHA, dt * 60);
+        smoothedRate.current += (targetRate - smoothedRate.current) * correctedAlpha;
+
+        // Accumulate and drain
+        charRemainder.current += smoothedRate.current * dt;
+        const budget = Math.floor(charRemainder.current);
+        if (budget > 0) charRemainder.current -= budget;
+
+        const next = budget > 0 ? Math.min(prev + budget, target) : prev;
+
+        // Report remaining to DrainRateProvider (for isAnimating flag)
+        reportRemainingRef.current(partIndex, target - next);
 
         return next;
       });
@@ -158,15 +170,22 @@ export const AnimatedText: FC<AnimatedTextProps> = ({
     };
   }, [partIndex, reportRemaining]);
 
-  // Check if we're done: caught up AND text has stopped growing
+  // Check if we're done: not streaming AND drain caught up.
+  // When sealed, isStreaming goes false (via convertMessage status).
+  // We check against the STREAMING REF length, not the text prop,
+  // because the ref is the animation's source of truth.
   useEffect(() => {
+    if (calledDone.current) return;
+    const refText = readStreamingText(chatId, messageId);
+    const refLen = refText.length || text.length;
     if (
-      !calledDone.current &&
-      displayedLength >= text.length &&
-      text.length > 0 &&
-      !isStreaming
+      !isStreaming &&
+      displayedLength >= refLen &&
+      refLen > 0
     ) {
       calledDone.current = true;
+      // Clear the streaming ref NOW — animation is complete.
+      clearStreamingEntry(chatId, messageId);
       reportRemaining(partIndex, 0);
       if (frameId.current !== null) {
         cancelAnimationFrame(frameId.current);
@@ -174,7 +193,7 @@ export const AnimatedText: FC<AnimatedTextProps> = ({
       }
       onDone();
     }
-  }, [displayedLength, text.length, isStreaming, onDone, partIndex, reportRemaining]);
+  }, [displayedLength, text.length, isStreaming, chatId, messageId, onDone, partIndex, reportRemaining]);
 
   // Read from streaming ref for live text, fall back to prop for history
   const liveText = readStreamingText(chatId, messageId) || text;

@@ -57,7 +57,7 @@ export const SequentialParts: FC = () => {
   // For streaming or recently-streaming messages, use the animated path.
   // The animation will naturally complete and the parts will settle.
   return (
-    <DrainRateProvider baseRate={60} chaseFactor={1.0}>
+    <DrainRateProvider baseRate={0} chaseFactor={1.0}>
       <RevealingParts parts={parts} isComplete={isComplete} chatId={chatId} messageId={messageId} />
     </DrainRateProvider>
   );

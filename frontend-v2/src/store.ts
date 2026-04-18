@@ -52,6 +52,9 @@ export type AssistantPart =
 export interface AssistantMessage {
   id: string;
   parts: AssistantPart[];
+  /** True once assistant-message finalizes this message. Prevents
+   *  ensureAssistantMessage from reusing it for the next turn's deltas. */
+  sealed?: boolean;
   input_tokens: number;
   output_tokens: number;
   cache_creation_tokens: number;
@@ -261,9 +264,10 @@ export const useStore = create<AppState>()(
       const chat = get().chats[chatId];
       if (!chat) return "";
 
-      // Check if the last message is already an in-progress assistant message
+      // Check if the last message is already an in-progress assistant message.
+      // Sealed messages are complete — don't reuse them for a new turn's deltas.
       const last = chat.messages[chat.messages.length - 1];
-      if (last?.role === "assistant") {
+      if (last?.role === "assistant" && !(last.data as AssistantMessage).sealed) {
         return (last.data as AssistantMessage).id;
       }
 
@@ -397,8 +401,10 @@ export function convertMessage(msg: Message): ThreadMessageLike {
 
   if (msg.role === "assistant") {
     const data = msg.data;
-    // Streaming placeholders have ast- prefix IDs. They're still generating.
-    const isStreaming = data.id?.startsWith("ast-");
+    // A message is "running" if it's a streaming placeholder that hasn't
+    // been sealed by assistant-message yet. Sealed messages keep their
+    // ast- ID (to prevent React remount) but are complete.
+    const isStreaming = data.id?.startsWith("ast-") && !data.sealed;
     return {
       id: data.id,
       role: "assistant",

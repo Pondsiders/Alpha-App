@@ -41,3 +41,6 @@ backend/tests/captures/
 .stignore
 backend/scripts/seed_context.py
 docs/docs/.vitepress/cache/
+
+# marimo cache
+notebooks/__marimo__/

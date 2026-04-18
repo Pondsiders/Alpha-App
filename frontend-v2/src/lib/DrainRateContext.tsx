@@ -54,8 +54,8 @@ interface DrainRateProviderProps {
 }
 
 export const DrainRateProvider: FC<DrainRateProviderProps> = ({
-  baseRate = 60,
-  chaseFactor = 0.3,
+  baseRate = 0,
+  chaseFactor = 1.0,
   children,
 }) => {
   const [rate, setRate] = useState(baseRate);
@@ -63,7 +63,7 @@ export const DrainRateProvider: FC<DrainRateProviderProps> = ({
   const remainingMap = useRef(new Map<number, number>());
   const smoothedRate = useRef(baseRate);
   const lastReportTime = useRef(performance.now());
-  const BASE_ALPHA = 0.002; // smoothing factor normalized to 60fps
+  const BASE_ALPHA = 0.05; // smoothing factor normalized to 60fps
 
   const reportRemaining = useCallback(
     (partIndex: number, remaining: number) => {

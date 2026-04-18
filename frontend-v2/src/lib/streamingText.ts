@@ -52,7 +52,12 @@ export function readStreamingThinking(chatId: string, messageId: string): string
   return entries.get(`${chatId}:${messageId}`)?.thinking ?? "";
 }
 
-/** Clear an entry (called after flushing to Zustand). */
+/** Check if a streaming entry exists (not yet cleared). */
+export function hasStreamingEntry(chatId: string, messageId: string): boolean {
+  return entries.has(`${chatId}:${messageId}`);
+}
+
+/** Clear an entry (called on finalization — assistant-message seals it). */
 export function clearStreamingEntry(chatId: string, messageId: string): void {
   entries.delete(`${chatId}:${messageId}`);
 }

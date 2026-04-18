@@ -25,7 +25,6 @@ import {
   getStreamingEntry,
   pushTextDelta,
   pushThinkingDelta,
-  clearStreamingEntry,
 } from "@/lib/streamingText";
 export function useAlphaWebSocket() {
   const setConnected = useStore((s) => s.setConnected);
@@ -191,9 +190,13 @@ export function useAlphaWebSocket() {
         case "text-delta": {
           const aid = ensureAssistantMessage(event.chatId);
           // Seed the part in Zustand on the FIRST delta.
+          // TRACER: write "🔴 ZUSTAND" instead of real text so we can
+          // visually distinguish streaming ref (real text) from Zustand (tracer).
+          // If you see "🔴 ZUSTAND" on screen, the component is reading
+          // from the wrong source. Remove after debugging.
           const textEntry = getStreamingEntry(event.chatId, aid);
           if (!textEntry.text) {
-            appendTextDelta(event.chatId, aid, event.delta);
+            appendTextDelta(event.chatId, aid, "🔴 ZUSTAND — if you see this, the streaming ref fallback is broken");
           }
           pushTextDelta(event.chatId, aid, event.delta);
           break;
@@ -215,48 +218,52 @@ export function useAlphaWebSocket() {
         }
 
         case "assistant-message": {
-          // Clean up streaming entry — the complete message has all the text
-          const placeholderMsg = useStore.getState().chats[event.chatId]?.messages.findLast(
-            (m: Message) => m.role === "assistant" && (m.data as AssistantMessage).id.startsWith("ast-"),
-          );
-          if (placeholderMsg) {
-            clearStreamingEntry(event.chatId, (placeholderMsg.data as AssistantMessage).id);
-          }
+          // assistant-message is a FINALIZATION event, not a creation event.
+          // If we were here for the streaming (text-deltas built the message),
+          // we finalize in place — same ID, no remount, animation continues
+          // naturally. If we missed the streaming (late joiner, page reload),
+          // we create the message fresh.
 
-          // Replace the streaming placeholder with the complete message.
           const chatForAssist = useStore.getState().chats[event.chatId];
           const lastMsg = chatForAssist?.messages[chatForAssist.messages.length - 1];
           const isStreamingPlaceholder =
             lastMsg?.role === "assistant" &&
             (lastMsg.data as AssistantMessage).id.startsWith("ast-");
 
-          const completeAssistant: Message = {
-            role: "assistant",
-            data: {
-              id: event.messageId,
-              parts: event.content as AssistantMessage["parts"],
-              input_tokens: 0,
-              output_tokens: 0,
-              cache_creation_tokens: 0,
-              cache_read_tokens: 0,
-              context_window: 1_000_000,
-              model: null,
-              stop_reason: null,
-              cost_usd: 0,
-              duration_ms: 0,
-              inference_count: 0,
-            },
-          };
-
           if (isStreamingPlaceholder) {
+            // Finalize in place. DON'T clear the streaming ref — AnimatedText
+            // is still reading from it. The ref has the complete text from
+            // accumulated deltas. Seal the message so ensureAssistantMessage
+            // creates a new one for the next turn. The ref gets cleared when
+            // AnimatedText's drain finishes and calls onDone.
             useStore.setState((state) => {
               const c = state.chats[event.chatId];
               if (c && c.messages.length > 0) {
-                c.messages[c.messages.length - 1] = completeAssistant;
+                const existing = c.messages[c.messages.length - 1].data as AssistantMessage;
+                existing.parts = event.content as AssistantMessage["parts"];
+                existing.sealed = true;
               }
             });
           } else {
-            appendMessage(event.chatId, completeAssistant);
+            // Late joiner / page reload — no streaming happened.
+            // Create the message fresh. No animation needed.
+            appendMessage(event.chatId, {
+              role: "assistant",
+              data: {
+                id: event.messageId,
+                parts: event.content as AssistantMessage["parts"],
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 0,
+                context_window: 1_000_000,
+                model: null,
+                stop_reason: null,
+                cost_usd: 0,
+                duration_ms: 0,
+                inference_count: 0,
+              },
+            });
           }
           break;
         }
