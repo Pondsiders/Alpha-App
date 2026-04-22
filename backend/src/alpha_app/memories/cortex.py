@@ -25,7 +25,7 @@ from .db import (
     health_check as db_health_check,
     close_pool,
 )
-from .embeddings import health_check as ollama_health_check
+from .embeddings import health_check as inference_health_check
 
 # Search parameters
 DEFAULT_LIMIT = 5
@@ -314,20 +314,20 @@ async def forget(memory_id: int) -> bool:
 
 
 async def health() -> dict[str, Any]:
-    """Check Cortex health (database and embeddings).
+    """Check Cortex health (database and inference endpoint).
 
     Returns:
-        Dict with status, postgres, ollama, memory_count
+        Dict with status, postgres, inference, memory_count
     """
     db_ok, memory_count = await db_health_check()
-    ollama_ok = await ollama_health_check()
+    inference_ok = await inference_health_check()
 
-    status = "healthy" if (db_ok and ollama_ok) else "degraded"
+    status = "healthy" if (db_ok and inference_ok) else "degraded"
 
     return {
         "status": status,
         "postgres": "connected" if db_ok else "disconnected",
-        "ollama": "connected" if ollama_ok else "disconnected",
+        "inference": "connected" if inference_ok else "disconnected",
         "memory_count": memory_count,
     }
 

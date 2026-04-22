@@ -32,11 +32,12 @@ import json
 import math
 from typing import Any
 
-import httpx
 import logfire
 import pendulum
+from openai import APIConnectionError, APIError, APITimeoutError
 
-from alpha_app.constants import OLLAMA_CHAT_MODEL, OLLAMA_NUM_CTX, OLLAMA_URL
+from alpha_app.constants import CHAT_MODEL
+from alpha_app.inference_client import get_client
 
 from .cortex import search_by_embedding, search_by_name, count_memories_containing
 from .embeddings import embed_queries_batch, embed_document, embed_query, EmbeddingError
@@ -114,22 +115,38 @@ def clear_seen(session_id: str | None = None) -> None:
         _seen_ids.clear()
 
 
-# -- Text extraction (Ollama) -------------------------------------------------
+# -- Text extraction (chat completions) ---------------------------------------
+
+_QUERY_NAME_SCHEMA = {
+    "name": "recall_queries",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "queries": {"type": "array", "items": {"type": "string"}},
+            "names": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["queries", "names"],
+    },
+}
+
 
 async def _extract_queries_and_names(message: str) -> tuple[list[str], list[str]]:
     """Extract search queries AND proper names from a user message."""
-    if not OLLAMA_URL or not OLLAMA_CHAT_MODEL:
+    if not CHAT_MODEL:
         return [], []
 
     prompt = QUERY_EXTRACTION_PROMPT.format(message=message[:2000])
+    messages = [{"role": "user", "content": prompt}]
 
     try:
         with logfire.span(
             "recall.extract_queries",
             **{
-                "gen_ai.system": "ollama",
+                "gen_ai.system": "openai",
                 "gen_ai.operation.name": "chat",
-                "gen_ai.request.model": OLLAMA_CHAT_MODEL,
+                "gen_ai.request.model": CHAT_MODEL,
                 "gen_ai.output.type": "json",
                 "gen_ai.system_instructions": json.dumps([
                     {"type": "text", "content": "(no system prompt — single user message)"},
@@ -141,41 +158,27 @@ async def _extract_queries_and_names(message: str) -> tuple[list[str], list[str]
                 ]),
             },
         ) as span:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                response = await client.post(
-                    f"{OLLAMA_URL}/api/chat",
-                    json={
-                        "model": OLLAMA_CHAT_MODEL,
-                        "messages": [{"role": "user", "content": prompt}],
-                        "stream": False,
-                        "think": False,
-                        "format": {
-                            "type": "object",
-                            "properties": {
-                                "queries": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                },
-                                "names": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                },
-                            },
-                            "required": ["queries", "names"],
-                        },
-                        "keep_alive": -1,
-                        "options": {"num_ctx": OLLAMA_NUM_CTX},
-                    },
-                )
-                response.raise_for_status()
+            # Qwen 3.5 non-thinking reasoning sampling (per model card).
+            response = await get_client().chat.completions.create(
+                model=CHAT_MODEL,
+                messages=messages,
+                temperature=1.0,
+                top_p=0.95,
+                presence_penalty=1.5,
+                response_format={"type": "json_schema", "json_schema": _QUERY_NAME_SCHEMA},
+                extra_body={
+                    "top_k": 20,
+                    "min_p": 0.0,
+                    "repetition_penalty": 1.0,
+                },
+                timeout=15.0,
+            )
 
-            result = response.json()
-            output = result.get("message", {}).get("content", "")
+            output = response.choices[0].message.content or ""
 
-            if result.get("prompt_eval_count"):
-                span.set_attribute("gen_ai.usage.input_tokens", result["prompt_eval_count"])
-            if result.get("eval_count"):
-                span.set_attribute("gen_ai.usage.output_tokens", result["eval_count"])
+            if response.usage:
+                span.set_attribute("gen_ai.usage.input_tokens", response.usage.prompt_tokens)
+                span.set_attribute("gen_ai.usage.output_tokens", response.usage.completion_tokens)
 
             span.set_attribute("gen_ai.output.messages", json.dumps([
                 {"role": "assistant", "parts": [
@@ -183,14 +186,7 @@ async def _extract_queries_and_names(message: str) -> tuple[list[str], list[str]
                 ]},
             ]))
 
-            # Strip markdown code fences if present.
-            cleaned = output.strip()
-            if cleaned.startswith("```"):
-                cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
-            if cleaned.endswith("```"):
-                cleaned = cleaned[:-3].strip()
-
-            parsed = json.loads(cleaned)
+            parsed = json.loads(output)
 
             queries = parsed.get("queries", [])
             if isinstance(queries, list):
@@ -206,51 +202,57 @@ async def _extract_queries_and_names(message: str) -> tuple[list[str], list[str]
 
             return queries, names
 
+    except (APITimeoutError, APIConnectionError, APIError, json.JSONDecodeError):
+        return [], []
     except Exception:
         return [], []
 
 
-# -- Image captioning (Ollama) ------------------------------------------------
+# -- Image captioning ---------------------------------------------------------
 
 async def _caption_image(image_b64: str) -> str:
     """Send image to Qwen 3.5 4B for captioning. Returns caption or ""."""
-    if not OLLAMA_URL or not OLLAMA_CHAT_MODEL:
+    if not CHAT_MODEL:
         return ""
 
     with logfire.span(
         "recall.caption_image",
         **{
-            "gen_ai.system": "ollama",
+            "gen_ai.system": "openai",
             "gen_ai.operation.name": "chat",
-            "gen_ai.request.model": OLLAMA_CHAT_MODEL,
+            "gen_ai.request.model": CHAT_MODEL,
         },
     ) as span:
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.post(
-                    f"{OLLAMA_URL.rstrip('/')}/api/chat",
-                    json={
-                        "model": OLLAMA_CHAT_MODEL,
-                        "messages": [{
-                            "role": "user",
-                            "content": IMAGE_CAPTION_PROMPT,
-                            "images": [image_b64],
-                        }],
-                        "stream": False,
-                        "options": {"num_ctx": OLLAMA_NUM_CTX, "temperature": 0},
-                        "think": False,
-                    },
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                caption = data.get("message", {}).get("content", "")
+            # Qwen 3.5 non-thinking general-task sampling (per model card).
+            response = await get_client().chat.completions.create(
+                model=CHAT_MODEL,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": IMAGE_CAPTION_PROMPT},
+                        {"type": "image_url", "image_url": {
+                            "url": f"data:image/jpeg;base64,{image_b64}",
+                        }},
+                    ],
+                }],
+                temperature=0.7,
+                top_p=0.8,
+                presence_penalty=1.5,
+                extra_body={
+                    "top_k": 20,
+                    "min_p": 0.0,
+                    "repetition_penalty": 1.0,
+                },
+                timeout=15.0,
+            )
+            caption = response.choices[0].message.content or ""
 
-                if data.get("prompt_eval_count"):
-                    span.set_attribute("gen_ai.usage.input_tokens", data["prompt_eval_count"])
-                if data.get("eval_count"):
-                    span.set_attribute("gen_ai.usage.output_tokens", data["eval_count"])
+            if response.usage:
+                span.set_attribute("gen_ai.usage.input_tokens", response.usage.prompt_tokens)
+                span.set_attribute("gen_ai.usage.output_tokens", response.usage.completion_tokens)
 
-                return caption
+            return caption
         except Exception as e:
             logfire.warn("recall.caption_image failed: {error}", error=str(e))
             return ""
