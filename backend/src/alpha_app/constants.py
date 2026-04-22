@@ -22,7 +22,7 @@ CLAUDE_CONFIG_DIR = Path("/home/alpha/.claude")
 # -- Network ------------------------------------------------------------------
 
 REDIS_URL = "redis://alpha-pi.tail8bd569.ts.net:6379"
-OLLAMA_URL = "http://primer.tail8bd569.ts.net:11434"
+OLLAMA_URL = "http://ember.tail8bd569.ts.net:11434"
 GARAGE_ENDPOINT = "http://127.0.0.1:3900"
 GARAGE_BUCKET = "pondside"
 GARAGE_REGION = "pondside"
