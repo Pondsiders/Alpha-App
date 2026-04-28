@@ -22,6 +22,29 @@ def _escape_pg_regex(text: str) -> str:
     return re.sub(r'([.*+?^${}()|[\]\\])', r'\\\1', text)
 
 
+def _coerce_metadata(value: Any) -> dict[str, Any]:
+    """Always return metadata as a dict.
+
+    The pool's JSONB codec normally decodes JSONB columns to dicts directly.
+    But a small population of historical rows is double-encoded
+    (json.dumps applied twice on insert), so the codec decodes them to
+    a string instead of a dict. Callers reach for .get() on the result
+    and explode with `'str' object has no attribute 'get'`.
+
+    Same defensive treatment as vision.py:_search_memories. Apply at the
+    SQL boundary so every caller gets a clean dict.
+    """
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (ValueError, TypeError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
 # Module-level connection pool (lazy initialized)
 _pool: asyncpg.Pool | None = None
 
@@ -69,10 +92,15 @@ async def init_schema() -> None:
     Call this at app startup. Fresh database → creates everything.
     Existing database → no-op. No migration tool needed.
     Like kanji — learn it once, it's there forever.
+
+    Note: pgvector extension management is the DBA's responsibility, not
+    ours. We assume `vector` is already installed in the target database.
+    On memorybanks, Edgar handles `CREATE EXTENSION` and `ALTER EXTENSION`.
+    For the lifeboat-container path (fresh Postgres on a laptop), the
+    operator runs `CREATE EXTENSION vector;` once before starting Alpha.
     """
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
         await conn.execute("CREATE SCHEMA IF NOT EXISTS cortex")
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS cortex.memories (
@@ -254,7 +282,7 @@ async def search_memories(
             {
                 "id": row["id"],
                 "content": row["content"],
-                "metadata": row["metadata"],
+                "metadata": _coerce_metadata(row["metadata"]),
                 "created_at": str(row["created_at"]) if row.get("created_at") else "",
                 "score": float(row["score"]),
             }
@@ -336,7 +364,7 @@ async def search_memories_by_embedding(
             {
                 "id": row["id"],
                 "content": row["content"],
-                "metadata": row["metadata"],
+                "metadata": _coerce_metadata(row["metadata"]),
                 "created_at": str(row["created_at"]) if row.get("created_at") else "",
                 "score": float(row["score"]),
             }
@@ -413,7 +441,7 @@ async def search_memories_by_name(
             {
                 "id": row["id"],
                 "content": row["content"],
-                "metadata": row["metadata"],
+                "metadata": _coerce_metadata(row["metadata"]),
                 "score": 1.0,  # Name matches are binary — found or not
             }
             for row in rows
@@ -446,7 +474,7 @@ async def get_recent_memories(
             {
                 "id": row["id"],
                 "content": row["content"],
-                "metadata": row["metadata"],
+                "metadata": _coerce_metadata(row["metadata"]),
             }
             for row in rows
         ]
@@ -470,7 +498,7 @@ async def get_memory(memory_id: int) -> dict[str, Any] | None:
         return {
             "id": row["id"],
             "content": row["content"],
-            "metadata": row["metadata"],
+            "metadata": _coerce_metadata(row["metadata"]),
         }
 
 
