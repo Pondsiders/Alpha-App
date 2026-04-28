@@ -1,11 +1,7 @@
-import fs from 'fs'
 import path from 'path'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
-
-const CERT_DIR = '/Pondside/Basement/Files/certs'
-const HOST = 'primer.tail8bd569.ts.net'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -16,15 +12,11 @@ export default defineConfig({
   },
   server: {
     host: true,
-    allowedHosts: [HOST],
-    https: {
-      cert: fs.readFileSync(path.join(CERT_DIR, `${HOST}.crt`)),
-      key: fs.readFileSync(path.join(CERT_DIR, `${HOST}.key`)),
-    },
+    allowedHosts: true,
     proxy: {
-      "/api": "http://primer.tail8bd569.ts.net:18020",
+      "/api": "http://localhost:18010",
       "/ws": {
-        target: "ws://primer.tail8bd569.ts.net:18020",
+        target: "ws://localhost:18010",
         ws: true,
       },
     },
