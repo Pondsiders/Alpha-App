@@ -50,7 +50,10 @@ const emojiAllowedTags = { span: ["role", "aria-label"] };
 // CodeHeader — language label + copy button above fenced code blocks
 // ---------------------------------------------------------------------------
 
-const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
+// Exported (rather than removed) so tsc doesn't flag it as unused while
+// it's parked. Wire it into `components` below when base rendering is
+// verified — that's what line ~92 is anticipating.
+export const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
   const [copied, setCopied] = useState(false);
   if (!language) return null;
 

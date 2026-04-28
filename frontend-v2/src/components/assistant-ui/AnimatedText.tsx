@@ -12,7 +12,7 @@
  * text has stopped growing (message is complete or a non-text part follows).
  */
 
-import { useState, useEffect, useRef, useMemo, type FC, type CSSProperties } from "react";
+import { useState, useEffect, useRef, type FC, type CSSProperties } from "react";
 import { Streamdown } from "streamdown";
 import { createCodePlugin } from "@streamdown/code";
 import { math } from "@streamdown/math";
