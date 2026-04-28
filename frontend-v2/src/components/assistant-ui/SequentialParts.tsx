@@ -13,7 +13,6 @@ import { useAuiState, MessagePrimitive } from "@assistant-ui/react";
 import { useEffect, useRef, type FC } from "react";
 import { useStore } from "@/store";
 import { useSequentialReveal } from "@/lib/useSequentialReveal";
-import { DrainRateProvider } from "@/lib/DrainRateContext";
 import { AnimatedText } from "./AnimatedText";
 import { ToolFallback } from "./tool-fallback";
 import { MarkdownText } from "./markdown-text";
@@ -30,8 +29,6 @@ export const SequentialParts: FC = () => {
 
   // Get chatId from the Zustand store
   const chatId = useStore((s) => s.currentChatId) ?? "";
-
-  console.log("[SeqParts]", { partsLength: parts.length, isComplete, messageId, types: parts.map(p => p.type) });
 
   // Track whether this message was EVER streaming in this render lifecycle.
   // Once we enter the animated path, stay on it until the animation finishes.
@@ -56,11 +53,7 @@ export const SequentialParts: FC = () => {
 
   // For streaming or recently-streaming messages, use the animated path.
   // The animation will naturally complete and the parts will settle.
-  return (
-    <DrainRateProvider baseRate={0} chaseFactor={1.0}>
-      <RevealingParts parts={parts} isComplete={isComplete} chatId={chatId} messageId={messageId} />
-    </DrainRateProvider>
-  );
+  return <RevealingParts parts={parts} isComplete={isComplete} chatId={chatId} messageId={messageId} />;
 };
 
 // ---------------------------------------------------------------------------
@@ -93,7 +86,6 @@ const RevealingParts: FC<{ parts: ContentPart[]; isComplete: boolean; chatId: st
           <AnimatedPartRenderer
             key={i}
             part={part}
-            index={i}
             isStillGrowing={isStillGrowing}
             chatId={chatId}
             messageId={messageId}
@@ -112,12 +104,11 @@ const RevealingParts: FC<{ parts: ContentPart[]; isComplete: boolean; chatId: st
 /** Render a part with animation (streaming path). */
 const AnimatedPartRenderer: FC<{
   part: ContentPart;
-  index: number;
   isStillGrowing: boolean;
   chatId: string;
   messageId: string;
   onDone: () => void;
-}> = ({ part, index, isStillGrowing, chatId, messageId, onDone }) => {
+}> = ({ part, isStillGrowing, chatId, messageId, onDone }) => {
   switch (part.type) {
     case "text":
       return (
@@ -126,7 +117,6 @@ const AnimatedPartRenderer: FC<{
           chatId={chatId}
           messageId={messageId}
           isStreaming={isStillGrowing}
-          partIndex={index}
           onDone={onDone}
         />
       );

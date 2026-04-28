@@ -1,15 +1,22 @@
 /**
- * AnimatedText — smooth character-by-character text reveal with Streamdown.
+ * AnimatedText — character-by-character text reveal with Streamdown.
  *
- * Reads the full text from props (already in Zustand via the store).
- * Maintains a local displayedLength via useState. Uses rAF to advance
- * displayedLength at the rate provided by DrainRateContext.
+ * Reads live text from the streaming ref (per-message Map in streamingText.ts,
+ * keyed by chatId:messageId — zero-cost, outside React, outside Zustand).
+ * Maintains a local displayedLength via useState. A rAF loop advances
+ * displayedLength at a depth-proportional rate with a floor.
  *
- * Renders the visible prefix through Streamdown for live markdown rendering.
- * Only this component re-renders on each animation frame — not the store.
+ *     rate = max(MIN_DRAIN_RATE, depth * DRAIN_K)
  *
- * Calls onDone() when displayedLength catches up to text.length and the
- * text has stopped growing (message is complete or a non-text part follows).
+ * Pure proportional, no integral, no derivative. Buffer self-regulates:
+ * fills during bursts → rate scales up → drains. Empties between bursts →
+ * rate decays toward the floor → buffer holds a small cushion. End of turn:
+ * input stops, depth → 0, rate decelerates organically from depth*K down
+ * to the floor as the last chars trickle out. Independent of Anthropic's
+ * instantaneous streaming speed — the buffer depth IS the feedback signal.
+ *
+ * Calls onDone() when displayedLength catches up to the live text and
+ * the message has been sealed (isStreaming === false).
  */
 
 import { useState, useEffect, useRef, type FC, type CSSProperties } from "react";
@@ -19,8 +26,31 @@ import { math } from "@streamdown/math";
 import { mermaid } from "@streamdown/mermaid";
 import "katex/dist/katex.min.css";
 import a11yEmoji from "@fec/remark-a11y-emoji";
-import { useDrainRate } from "@/lib/DrainRateContext";
 import { readStreamingText, clearStreamingEntry } from "@/lib/streamingText";
+
+// ---------------------------------------------------------------------------
+// Drain tuning — two knobs, change-and-Vite-reloads
+// ---------------------------------------------------------------------------
+
+/**
+ * Floor: characters per second when the buffer is empty (or shallow enough
+ * that the proportional term is below this floor). This is the comfortable
+ * reading-pace the user sees when streaming is "idle." Sustained input
+ * below this rate would stall — buffer empties faster than it fills — but
+ * Anthropic's average streaming has been measured at ~116 c/s, well above
+ * a 60 c/s floor. Tune up if end-of-turn deceleration feels too slow,
+ * down if a slowly-streaming response feels rushed.
+ */
+const MIN_DRAIN_RATE = 60;
+
+/**
+ * Proportional factor: chars per second of drain rate per buffered char.
+ * At K=2, equilibrium settles at depth ≈ input_rate / 2 — so a 200 c/s
+ * burst settles at ~100 chars buffered, draining at 200 c/s. Larger K =
+ * tighter buffer, faster catchup, sharper end-of-turn drain. Smaller K =
+ * deeper buffer, longer trailing time after input stops.
+ */
+const DRAIN_K = 3;
 
 // ---------------------------------------------------------------------------
 // Shiki code plugin (shared instance)
@@ -67,48 +97,55 @@ const PROSE_CLASSES = [
 ].join(" ");
 
 // ---------------------------------------------------------------------------
+// Debug widget — fixed top-right "⚡ N c/s | 📦 N chars"
+// ---------------------------------------------------------------------------
+
+function updateDebugWidget(rate: number, depth: number): void {
+  if (typeof document === "undefined") return;
+  let div = document.getElementById("drain-rate-debug") as HTMLDivElement | null;
+  if (!div) {
+    div = document.createElement("div");
+    div.id = "drain-rate-debug";
+    div.style.cssText =
+      "position:fixed; top:8px; right:80px; background:#1a1a1a; color:#f0c040; " +
+      "font-family:monospace; font-size:11px; padding:4px 8px; border-radius:4px; " +
+      "z-index:9999; opacity:0.85; pointer-events:none; border:1px solid #333;";
+    document.body.appendChild(div);
+  }
+  div.textContent = `⚡ ${Math.round(rate)} c/s | 📦 ${depth} chars`;
+}
+
+// ---------------------------------------------------------------------------
 // AnimatedText
 // ---------------------------------------------------------------------------
 
 interface AnimatedTextProps {
-  /** The full text from Zustand. May lag behind the streaming ref. */
+  /** The full text from Zustand. Used as a fallback after the streaming
+   *  ref is cleared (post-seal, drain complete). */
   text: string;
   /** Chat and message IDs for reading the streaming ref. */
   chatId: string;
   messageId: string;
   /** Whether this text part is still receiving deltas. */
   isStreaming: boolean;
-  /** Index of this part in the parts array (for DrainRateContext reporting). */
-  partIndex: number;
   /** Called when the animation has caught up AND text has stopped growing. */
   onDone: () => void;
 }
-
-// Drain algorithm constants — must match notebooks/drain_sim.py.
-// rate = BASE_RATE + remaining * CHASE_FACTOR, smoothed by EMA.
-const DRAIN_BASE_RATE = 0;
-const DRAIN_CHASE_FACTOR = 1.0;
-const DRAIN_EMA_ALPHA = 0.05; // normalized to 60fps
 
 export const AnimatedText: FC<AnimatedTextProps> = ({
   text,
   chatId,
   messageId,
   isStreaming,
-  partIndex,
   onDone,
 }) => {
   const [displayedLength, setDisplayedLength] = useState(0);
-  const { reportRemaining } = useDrainRate();
   const calledDone = useRef(false);
   const lastTime = useRef(0);
   const charRemainder = useRef(0);
-  const smoothedRate = useRef(0);
   const frameId = useRef<number | null>(null);
 
   // Stable refs for the rAF callback
-  const reportRemainingRef = useRef(reportRemaining);
-  reportRemainingRef.current = reportRemaining;
   const chatIdRef = useRef(chatId);
   chatIdRef.current = chatId;
   const messageIdRef = useRef(messageId);
@@ -116,7 +153,9 @@ export const AnimatedText: FC<AnimatedTextProps> = ({
   const textRef = useRef(text);
   textRef.current = text;
 
-  // Start/maintain the animation loop
+  // Proportional drain loop — rate is recomputed from buffer depth on
+  // every frame, the buffer self-regulates, end-of-turn snap is handled
+  // by the seal effect below.
   useEffect(() => {
     if (calledDone.current) return;
 
@@ -131,28 +170,28 @@ export const AnimatedText: FC<AnimatedTextProps> = ({
       lastTime.current = timestamp;
 
       // Read from the streaming ref — always the source during animation.
-      // The ref stays alive until onDone clears it.
       const liveText = readStreamingText(chatIdRef.current, messageIdRef.current);
       const target = liveText.length || textRef.current.length;
 
       setDisplayedLength((prev) => {
         const remaining = target - prev;
 
-        // Compute drain rate: same equation as notebooks/drain_sim.py.
-        // rate = BASE_RATE + remaining * CHASE_FACTOR, with EMA smoothing.
-        const targetRate = DRAIN_BASE_RATE + remaining * DRAIN_CHASE_FACTOR;
-        const correctedAlpha = 1 - Math.pow(1 - DRAIN_EMA_ALPHA, dt * 60);
-        smoothedRate.current += (targetRate - smoothedRate.current) * correctedAlpha;
+        // Pure-proportional drain with a floor:
+        //   rate = max(MIN_DRAIN_RATE, depth * DRAIN_K)
+        // The buffer is the feedback signal — drain rate scales with how
+        // much there is to drain, with a comfortable reading-pace floor.
+        const rate = Math.max(MIN_DRAIN_RATE, remaining * DRAIN_K);
 
-        // Accumulate and drain
-        charRemainder.current += smoothedRate.current * dt;
+        // Accumulate fractional chars across frames so we hit the right
+        // average even if dt jitters at 60Hz/120Hz boundaries.
+        charRemainder.current += rate * dt;
         const budget = Math.floor(charRemainder.current);
         if (budget > 0) charRemainder.current -= budget;
 
         const next = budget > 0 ? Math.min(prev + budget, target) : prev;
 
-        // Report remaining to DrainRateProvider (for isAnimating flag)
-        reportRemainingRef.current(partIndex, target - next);
+        // Update the debug widget with the current rate and cushion depth.
+        updateDebugWidget(rate, target - next);
 
         return next;
       });
@@ -168,12 +207,27 @@ export const AnimatedText: FC<AnimatedTextProps> = ({
         frameId.current = null;
       }
     };
-  }, [partIndex, reportRemaining]);
+  }, []);
 
-  // Check if we're done: not streaming AND drain caught up.
-  // When sealed, isStreaming goes false (via convertMessage status).
-  // We check against the STREAMING REF length, not the text prop,
-  // because the ref is the animation's source of truth.
+  // Snap-to-end on seal: when isStreaming flips false (assistant-message
+  // arrived and finalized this part), drop the buffer all at once. With
+  // K=3 the cushion is rarely more than a line at seal time, so the
+  // single-frame snap is barely perceptible. The benefit is snappier
+  // turn-completion — no trailing deceleration eating perceived latency
+  // before the next thing happens.
+  useEffect(() => {
+    if (calledDone.current) return;
+    if (!isStreaming) {
+      const refText = readStreamingText(chatId, messageId);
+      const refLen = refText.length || text.length;
+      if (refLen > 0) {
+        setDisplayedLength(refLen);
+      }
+    }
+  }, [isStreaming, chatId, messageId, text]);
+
+  // Done condition: not streaming AND displayedLength has caught up. With
+  // the snap-on-seal effect above, this fires the same frame as seal.
   useEffect(() => {
     if (calledDone.current) return;
     const refText = readStreamingText(chatId, messageId);
@@ -184,16 +238,16 @@ export const AnimatedText: FC<AnimatedTextProps> = ({
       refLen > 0
     ) {
       calledDone.current = true;
-      // Clear the streaming ref NOW — animation is complete.
       clearStreamingEntry(chatId, messageId);
-      reportRemaining(partIndex, 0);
+      // Idle: no rate, empty buffer.
+      updateDebugWidget(MIN_DRAIN_RATE, 0);
       if (frameId.current !== null) {
         cancelAnimationFrame(frameId.current);
         frameId.current = null;
       }
       onDone();
     }
-  }, [displayedLength, text.length, isStreaming, chatId, messageId, onDone, partIndex, reportRemaining]);
+  }, [displayedLength, text.length, isStreaming, chatId, messageId, onDone]);
 
   // Read from streaming ref for live text, fall back to prop for history
   const liveText = readStreamingText(chatId, messageId) || text;

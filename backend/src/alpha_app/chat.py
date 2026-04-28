@@ -675,10 +675,17 @@ class Chat:
         if event.delta_type == "text_delta":
             text = event.delta_text
             if text:
-                await self._broadcast({
-                    "event": "text-delta", "chatId": chat_id, "delta": text,
-                })
+                # Ensure the assistant message exists FIRST so we can stamp its
+                # ID onto the broadcast. The frontend uses messageId to route
+                # deltas to the correct placeholder without inferring placement
+                # from "last message in array."
                 self._ensure_assistant()
+                await self._broadcast({
+                    "event": "text-delta",
+                    "chatId": chat_id,
+                    "messageId": self._current_assistant.id,
+                    "delta": text,
+                })
                 if self._current_assistant.parts and self._current_assistant.parts[-1]["type"] == "text":
                     self._current_assistant.parts[-1]["text"] += text
                 else:
@@ -687,10 +694,13 @@ class Chat:
         elif event.delta_type == "thinking_delta":
             text = event.delta_text
             if text:
-                await self._broadcast({
-                    "event": "thinking-delta", "chatId": chat_id, "delta": text,
-                })
                 self._ensure_assistant()
+                await self._broadcast({
+                    "event": "thinking-delta",
+                    "chatId": chat_id,
+                    "messageId": self._current_assistant.id,
+                    "delta": text,
+                })
                 if self._current_assistant.parts and self._current_assistant.parts[-1]["type"] == "thinking":
                     self._current_assistant.parts[-1]["thinking"] += text
                 else:

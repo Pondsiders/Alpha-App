@@ -134,8 +134,13 @@ interface AppState {
   /** Replace the last user message with an enriched version from the server. */
   replaceLastUserMessage: (chatId: string, message: Message) => void;
 
-  /** Ensure an in-progress assistant message exists. Returns its ID. */
-  ensureAssistantMessage: (chatId: string) => string;
+  /**
+   * Find an assistant message by ID, or create one with that exact ID
+   * appended to the end of the message list. The ID comes from the
+   * backend's text-delta / thinking-delta event — no inference, no
+   * "look at the last message and guess." Returns the ID unchanged.
+   */
+  ensureAssistantMessage: (chatId: string, messageId: string) => string;
 
   /** Append a text delta to the last assistant message (streaming). */
   appendTextDelta: (chatId: string, messageId: string, delta: string) => void;
@@ -153,10 +158,6 @@ interface AppState {
   /** Update token accounting for a chat. */
   setTokenCount: (chatId: string, tokenCount: number) => void;
 
-  /** True when a streaming assistant message is still animating text. */
-  isAssistantAnimating: boolean;
-  setIsAssistantAnimating: (v: boolean) => void;
-
   /** WebSocket send function — set by useAlphaWebSocket on connect. */
   wsSend: ((cmd: Record<string, unknown>) => void) | null;
   setWsSend: (fn: ((cmd: Record<string, unknown>) => void) | null) => void;
@@ -167,12 +168,6 @@ export const useStore = create<AppState>()(
     connected: false,
     chats: {},
     currentChatId: null,
-    isAssistantAnimating: false,
-
-    setIsAssistantAnimating: (v) =>
-      set((state) => {
-        state.isAssistantAnimating = v;
-      }),
 
     wsSend: null,
 
@@ -257,30 +252,38 @@ export const useStore = create<AppState>()(
         chat.messages.push(message);
       }),
 
-    ensureAssistantMessage: (chatId: string): string => {
+    ensureAssistantMessage: (chatId: string, messageId: string): string => {
       // Use get() / set() from the immer callback closure above instead of
       // useStore.getState() / useStore.setState() — the latter creates a
       // circular type reference that collapses the whole store to `any`.
       const chat = get().chats[chatId];
-      if (!chat) return "";
+      if (!chat) return messageId;
 
-      // Check if the last message is already an in-progress assistant message.
-      // Sealed messages are complete — don't reuse them for a new turn's deltas.
-      const last = chat.messages[chat.messages.length - 1];
-      if (last?.role === "assistant" && !(last.data as AssistantMessage).sealed) {
-        return (last.data as AssistantMessage).id;
+      // Look for an existing assistant message with this exact ID anywhere
+      // in the chat. The backend assigns one msg-<uuid> per assistant
+      // message and stamps it on every delta, so two text-deltas with the
+      // same messageId belong to the same placeholder regardless of where
+      // it currently sits in the message list.
+      const existing = chat.messages.find(
+        (m) => m.role === "assistant" && (m.data as AssistantMessage).id === messageId,
+      );
+      if (existing) {
+        return messageId;
       }
 
-      // Create a new streaming assistant message
-      const id = `ast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      // Not found — create a placeholder with the exact ID. Mark it
+      // `sealed: false` so convertMessage routes it through the streaming
+      // path. The backend's assistant-message event will eventually flip
+      // sealed → true to finalize.
       set((s) => {
         const c = s.chats[chatId];
         if (c) {
           c.messages.push({
             role: "assistant",
             data: {
-              id,
+              id: messageId,
               parts: [],
+              sealed: false,
               input_tokens: 0,
               output_tokens: 0,
               cache_creation_tokens: 0,
@@ -295,7 +298,7 @@ export const useStore = create<AppState>()(
           });
         }
       });
-      return id;
+      return messageId;
     },
 
     appendTextDelta: (chatId, messageId, delta) =>
@@ -401,10 +404,14 @@ export function convertMessage(msg: Message): ThreadMessageLike {
 
   if (msg.role === "assistant") {
     const data = msg.data;
-    // A message is "running" if it's a streaming placeholder that hasn't
-    // been sealed by assistant-message yet. Sealed messages keep their
-    // ast- ID (to prevent React remount) but are complete.
-    const isStreaming = data.id?.startsWith("ast-") && !data.sealed;
+    // Three-state `sealed`:
+    //   false     → currently streaming (placeholder accepting deltas)
+    //   true      → finalized by assistant-message after streaming
+    //   undefined → loaded from history (treat as sealed; backend's
+    //               to_wire() doesn't carry this frontend-only field)
+    // Only `sealed === false` is "streaming" — otherwise the message is
+    // a static, finished one and goes through the non-animated render path.
+    const isStreaming = data.sealed === false;
     return {
       id: data.id,
       role: "assistant",

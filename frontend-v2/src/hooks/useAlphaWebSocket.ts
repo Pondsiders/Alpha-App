@@ -22,7 +22,6 @@ import {
   type ServerEvent,
 } from "@/lib/protocol";
 import {
-  getStreamingEntry,
   pushTextDelta,
   pushThinkingDelta,
 } from "@/lib/streamingText";
@@ -40,21 +39,6 @@ export function useAlphaWebSocket() {
   const setWsSend = useStore((s) => s.setWsSend);
   const replaceLastUserMessage = useStore((s) => s.replaceLastUserMessage);
   const ensureAssistantMessage = useStore((s) => s.ensureAssistantMessage);
-
-
-  // Queue for non-human user messages that should wait for animation to finish
-  const pendingUserMessages = useRef<Array<{ chatId: string; message: Message }>>([]);
-
-  // Flush pending messages when animation finishes
-  const isAnimating = useStore((s) => s.isAssistantAnimating);
-  useEffect(() => {
-    if (!isAnimating && pendingUserMessages.current.length > 0) {
-      for (const { chatId, message } of pendingUserMessages.current) {
-        appendMessage(chatId, message);
-      }
-      pendingUserMessages.current = [];
-    }
-  }, [isAnimating, appendMessage]);
 
   const handleRawEvent = useCallback(
     (raw: unknown) => {
@@ -154,51 +138,51 @@ export function useAlphaWebSocket() {
           if (existingIdx >= 0) {
             // Found optimistic message — replace with enriched version
             replaceLastUserMessage(event.chatId, enriched);
-          } else if (event.source === "human" || event.source === "buzzer") {
-            // Human messages always appear immediately
-            appendMessage(event.chatId, enriched);
           } else {
-            // Non-human messages (reflection, approach-light) wait for
-            // the previous assistant message's animation to finish.
-            const animating = useStore.getState().isAssistantAnimating;
-            if (animating) {
-              pendingUserMessages.current.push({
-                chatId: event.chatId,
-                message: enriched,
-              });
-            } else {
-              appendMessage(event.chatId, enriched);
-            }
+            // Append in arrival order. Text-deltas now carry an explicit
+            // messageId so out-of-order rendering is impossible — there's
+            // no need to defer non-human messages until animation finishes.
+            appendMessage(event.chatId, enriched);
           }
           break;
         }
 
         case "thinking-delta": {
-          const thinkAid = ensureAssistantMessage(event.chatId);
-          // Seed the part in Zustand on the FIRST delta — so
-          // SequentialParts knows the part exists. Use the actual
-          // delta text (not empty string — assistant-ui may filter
-          // empty parts). Subsequent deltas go to the streaming ref.
-          const thinkEntry = getStreamingEntry(event.chatId, thinkAid);
-          if (!thinkEntry.thinking) {
-            appendThinkingDelta(event.chatId, thinkAid, event.delta);
+          // The backend stamps messageId on every delta — find or create
+          // that exact placeholder. No inferring from "last message."
+          ensureAssistantMessage(event.chatId, event.messageId);
+          // Seed the Zustand part on the FIRST delta so SequentialParts
+          // sees a thinking part exists. Subsequent deltas only update
+          // the streaming ref (one Zustand write per part lifetime).
+          const thinkChat = useStore.getState().chats[event.chatId];
+          const thinkMsg = thinkChat?.messages.find(
+            (m) => m.role === "assistant" && (m.data as AssistantMessage).id === event.messageId,
+          );
+          const hasThinkingPart = thinkMsg?.role === "assistant"
+            && (thinkMsg.data as AssistantMessage).parts.some((p) => p.type === "thinking");
+          if (!hasThinkingPart) {
+            appendThinkingDelta(event.chatId, event.messageId, event.delta);
           }
-          pushThinkingDelta(event.chatId, thinkAid, event.delta);
+          pushThinkingDelta(event.chatId, event.messageId, event.delta);
           break;
         }
 
         case "text-delta": {
-          const aid = ensureAssistantMessage(event.chatId);
-          // Seed the part in Zustand on the FIRST delta.
-          // TRACER: write "🔴 ZUSTAND" instead of real text so we can
-          // visually distinguish streaming ref (real text) from Zustand (tracer).
-          // If you see "🔴 ZUSTAND" on screen, the component is reading
-          // from the wrong source. Remove after debugging.
-          const textEntry = getStreamingEntry(event.chatId, aid);
-          if (!textEntry.text) {
-            appendTextDelta(event.chatId, aid, "🔴 ZUSTAND — if you see this, the streaming ref fallback is broken");
+          ensureAssistantMessage(event.chatId, event.messageId);
+          // Seed the Zustand part on the FIRST delta so SequentialParts
+          // sees a text part exists. AnimatedText reads from the streaming
+          // ref for live text, so Zustand only carries the seed value
+          // (replaced wholesale at assistant-message seal).
+          const chat = useStore.getState().chats[event.chatId];
+          const msg = chat?.messages.find(
+            (m) => m.role === "assistant" && (m.data as AssistantMessage).id === event.messageId,
+          );
+          const hasTextPart = msg?.role === "assistant"
+            && (msg.data as AssistantMessage).parts.some((p) => p.type === "text");
+          if (!hasTextPart) {
+            appendTextDelta(event.chatId, event.messageId, event.delta);
           }
-          pushTextDelta(event.chatId, aid, event.delta);
+          pushTextDelta(event.chatId, event.messageId, event.delta);
           break;
         }
 
@@ -219,27 +203,27 @@ export function useAlphaWebSocket() {
 
         case "assistant-message": {
           // assistant-message is a FINALIZATION event, not a creation event.
-          // If we were here for the streaming (text-deltas built the message),
-          // we finalize in place — same ID, no remount, animation continues
-          // naturally. If we missed the streaming (late joiner, page reload),
-          // we create the message fresh.
+          // Find the placeholder by exact messageId. If we streamed it,
+          // the placeholder already exists — finalize in place (same ID,
+          // no remount, animation continues naturally and drains the
+          // streaming ref to completion). If not (late joiner, page
+          // reload), create the message fresh with no animation.
 
           const chatForAssist = useStore.getState().chats[event.chatId];
-          const lastMsg = chatForAssist?.messages[chatForAssist.messages.length - 1];
-          const isStreamingPlaceholder =
-            lastMsg?.role === "assistant" &&
-            (lastMsg.data as AssistantMessage).id.startsWith("ast-");
+          const existingIdx = chatForAssist?.messages.findIndex(
+            (m) => m.role === "assistant" && (m.data as AssistantMessage).id === event.messageId,
+          ) ?? -1;
 
-          if (isStreamingPlaceholder) {
+          if (existingIdx >= 0) {
             // Finalize in place. DON'T clear the streaming ref — AnimatedText
             // is still reading from it. The ref has the complete text from
-            // accumulated deltas. Seal the message so ensureAssistantMessage
-            // creates a new one for the next turn. The ref gets cleared when
-            // AnimatedText's drain finishes and calls onDone.
+            // accumulated deltas. Seal the message so isStreaming flips false.
+            // The ref gets cleared when AnimatedText's drain catches up and
+            // calls onDone.
             useStore.setState((state) => {
               const c = state.chats[event.chatId];
-              if (c && c.messages.length > 0) {
-                const existing = c.messages[c.messages.length - 1].data as AssistantMessage;
+              if (c) {
+                const existing = c.messages[existingIdx].data as AssistantMessage;
                 existing.parts = event.content as AssistantMessage["parts"];
                 existing.sealed = true;
               }
@@ -252,6 +236,7 @@ export function useAlphaWebSocket() {
               data: {
                 id: event.messageId,
                 parts: event.content as AssistantMessage["parts"],
+                sealed: true,
                 input_tokens: 0,
                 output_tokens: 0,
                 cache_creation_tokens: 0,

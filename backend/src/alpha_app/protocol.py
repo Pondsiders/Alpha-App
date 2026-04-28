@@ -149,6 +149,7 @@ class ThinkingDeltaEvent(_EventBase):
     """Fragment of Claude's extended thinking."""
     event: Literal["thinking-delta"]
     chatId: str
+    messageId: str
     delta: str
 
 
@@ -156,6 +157,7 @@ class TextDeltaEvent(_EventBase):
     """Fragment of Claude's text response."""
     event: Literal["text-delta"]
     chatId: str
+    messageId: str
     delta: str
 
 

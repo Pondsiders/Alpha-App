@@ -163,12 +163,14 @@ export const UserMessageEvent = z.object({
 export const ThinkingDeltaEvent = z.object({
   event: z.literal("thinking-delta"),
   chatId: z.string(),
+  messageId: z.string(),
   delta: z.string(),
 });
 
 export const TextDeltaEvent = z.object({
   event: z.literal("text-delta"),
   chatId: z.string(),
+  messageId: z.string(),
   delta: z.string(),
 });
 

@@ -133,14 +133,16 @@ class TestSmartChatCallback:
         await chat._on_claude_event(_text_delta("Hello"))
         await chat._on_claude_event(_text_delta(" world"))
 
-        # Should broadcast two text-deltas
+        # Should broadcast two text-deltas, each stamped with the assistant
+        # message ID so the frontend can route deltas without inference.
+        assert chat._current_assistant is not None
+        assistant_id = chat._current_assistant.id
         assert broadcasts.by_type("text-delta") == [
-            {"event": "text-delta", "chatId": "test-chat", "delta": "Hello"},
-            {"event": "text-delta", "chatId": "test-chat", "delta": " world"},
+            {"event": "text-delta", "chatId": "test-chat", "messageId": assistant_id, "delta": "Hello"},
+            {"event": "text-delta", "chatId": "test-chat", "messageId": assistant_id, "delta": " world"},
         ]
 
         # Should accumulate into one text part
-        assert chat._current_assistant is not None
         assert len(chat._current_assistant.parts) == 1
         assert chat._current_assistant.parts[0] == {"type": "text", "text": "Hello world"}
 
@@ -148,7 +150,12 @@ class TestSmartChatCallback:
         await chat._on_claude_event(_thinking_delta("Let me think"))
         await chat._on_claude_event(_thinking_delta(" about this"))
 
-        assert len(broadcasts.by_type("thinking-delta")) == 2
+        thinking_deltas = broadcasts.by_type("thinking-delta")
+        assert len(thinking_deltas) == 2
+        # Both deltas carry the same assistant message ID
+        assert chat._current_assistant is not None
+        assistant_id = chat._current_assistant.id
+        assert all(d["messageId"] == assistant_id for d in thinking_deltas)
         assert chat._current_assistant.parts[0] == {
             "type": "thinking",
             "thinking": "Let me think about this",
