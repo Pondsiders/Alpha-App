@@ -25,9 +25,9 @@ CLAUDE_CONFIG_DIR = Path("/home/alpha/.claude")
 
 REDIS_URL = "redis://alpha-pi.tail8bd569.ts.net:6379"
 OLLAMA_URL = "http://primer.tail8bd569.ts.net:11434"
-GARAGE_ENDPOINT = "http://127.0.0.1:3900"
-GARAGE_BUCKET = "pondside"
-GARAGE_REGION = "pondside"
+GARAGE_ENDPOINT = "https://warehouse13.tail8bd569.ts.net"
+GARAGE_BUCKET = "alpha-cortex-images-pre-v1-0-0"
+GARAGE_REGION = "us-east-1"
 PORT = int(os.environ.get("PORT", "18010"))
 
 # -- Models -------------------------------------------------------------------
