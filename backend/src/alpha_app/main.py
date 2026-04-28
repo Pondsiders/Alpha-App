@@ -9,10 +9,10 @@ from pathlib import Path
 from typing import AsyncIterator
 
 import logfire
-from dotenv import load_dotenv
 
-# Load .env from repo root (no-op if not present — Docker sets env directly)
-load_dotenv(Path(__file__).resolve().parents[3] / ".env")
+# .env is loaded in alpha_app/__init__.py before any submodule import.
+# Anything that reads os.environ at module-import time (e.g. constants.py
+# reading JE_NE_SAIS_QUOI_OVERRIDE) needs the env populated first.
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
