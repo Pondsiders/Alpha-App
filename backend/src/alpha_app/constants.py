@@ -27,9 +27,9 @@ CLAUDE_CONFIG_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR", "/Pondside/Alpha-Ho
 # -- Network ------------------------------------------------------------------
 
 REDIS_URL = "redis://alpha-pi.tail8bd569.ts.net:6379"
-GARAGE_ENDPOINT = "http://127.0.0.1:3900"
-GARAGE_BUCKET = "pondside"
-GARAGE_REGION = "pondside"
+GARAGE_ENDPOINT = "https://warehouse13.tail8bd569.ts.net/"
+GARAGE_BUCKET = "alpha-cortex-images"
+GARAGE_REGION = "us-east-1"
 PORT = int(os.environ.get("PORT", "18010"))
 
 # Inference endpoint: configured via OPENAI_BASE_URL + OPENAI_API_KEY in .env.
