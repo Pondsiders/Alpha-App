@@ -27,8 +27,8 @@ CLAUDE_CONFIG_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR", "/Pondside/Alpha-Ho
 # -- Network ------------------------------------------------------------------
 
 REDIS_URL = "redis://alpha-pi.tail8bd569.ts.net:6379"
-GARAGE_ENDPOINT = "https://warehouse13.tail8bd569.ts.net/"
-GARAGE_BUCKET = "alpha-cortex-images"
+GARAGE_ENDPOINT = "https://alpha-s3.tail8bd569.ts.net/"
+GARAGE_BUCKET = "alpha-s3-cortex"
 GARAGE_REGION = "us-east-1"
 PORT = int(os.environ.get("PORT", "18010"))
 
