@@ -24,10 +24,11 @@ import json
 import math
 from typing import Any
 
-import httpx
 import logfire
+from openai import APIConnectionError, APIError, APITimeoutError
 
-from alpha_app.constants import OLLAMA_CHAT_MODEL, OLLAMA_NUM_CTX, OLLAMA_URL
+from alpha_app.constants import CHAT_MODEL, CHAT_MODEL_CONTEXT
+from alpha_app.inference_client import get_client
 
 from .cortex import search_by_embedding, search_by_name, count_memories_containing
 from .embeddings import embed_queries_batch, EmbeddingError
@@ -124,22 +125,38 @@ Extract generously — more queries means more chances to find resonant memories
 Return only the JSON object, nothing else."""
 
 
-# -- Query extraction (Ollama) ------------------------------------------------
+# -- Query extraction ---------------------------------------------------------
+
+_READING_SCHEMA = {
+    "name": "reading_queries",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "queries": {"type": "array", "items": {"type": "string"}},
+            "names": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["queries", "names"],
+    },
+}
+
 
 async def _extract_queries_and_names(text: str) -> tuple[list[str], list[str]]:
     """Extract search queries AND proper names from text via Qwen."""
-    if not OLLAMA_URL or not OLLAMA_CHAT_MODEL:
+    if not CHAT_MODEL:
         return [], []
 
     prompt = _READING_EXTRACTION_PROMPT.format(text=text)
+    messages = [{"role": "user", "content": prompt}]
 
     try:
         with logfire.span(
             "reading.extract",
             **{
-                "gen_ai.system": "ollama",
+                "gen_ai.system": "openai",
                 "gen_ai.operation.name": "chat",
-                "gen_ai.request.model": OLLAMA_CHAT_MODEL,
+                "gen_ai.request.model": CHAT_MODEL,
                 "gen_ai.output.type": "json",
                 "gen_ai.system_instructions": json.dumps([
                     {"type": "text", "content": "(no system prompt — single user message)"},
@@ -151,41 +168,27 @@ async def _extract_queries_and_names(text: str) -> tuple[list[str], list[str]]:
                 ]),
             },
         ) as span:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    f"{OLLAMA_URL}/api/chat",
-                    json={
-                        "model": OLLAMA_CHAT_MODEL,
-                        "messages": [{"role": "user", "content": prompt}],
-                        "stream": False,
-                        "think": False,
-                        "format": {
-                            "type": "object",
-                            "properties": {
-                                "queries": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                },
-                                "names": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                },
-                            },
-                            "required": ["queries", "names"],
-                        },
-                        "keep_alive": -1,
-                        "options": {"num_ctx": OLLAMA_NUM_CTX},
-                    },
-                )
-                response.raise_for_status()
+            # Qwen 3.5 non-thinking reasoning sampling (per model card).
+            response = await get_client().chat.completions.create(
+                model=CHAT_MODEL,
+                messages=messages,
+                temperature=1.0,
+                top_p=0.95,
+                presence_penalty=1.5,
+                response_format={"type": "json_schema", "json_schema": _READING_SCHEMA},
+                extra_body={
+                    "top_k": 20,
+                    "min_p": 0.0,
+                    "repetition_penalty": 1.0,
+                },
+                timeout=30.0,
+            )
 
-            result = response.json()
-            output = result.get("message", {}).get("content", "")
+            output = response.choices[0].message.content or ""
 
-            if result.get("prompt_eval_count"):
-                span.set_attribute("gen_ai.usage.input_tokens", result["prompt_eval_count"])
-            if result.get("eval_count"):
-                span.set_attribute("gen_ai.usage.output_tokens", result["eval_count"])
+            if response.usage:
+                span.set_attribute("gen_ai.usage.input_tokens", response.usage.prompt_tokens)
+                span.set_attribute("gen_ai.usage.output_tokens", response.usage.completion_tokens)
 
             span.set_attribute("gen_ai.output.messages", json.dumps([
                 {"role": "assistant", "parts": [
@@ -193,14 +196,7 @@ async def _extract_queries_and_names(text: str) -> tuple[list[str], list[str]]:
                 ]},
             ]))
 
-            # Strip markdown code fences if present
-            cleaned = output.strip()
-            if cleaned.startswith("```"):
-                cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
-            if cleaned.endswith("```"):
-                cleaned = cleaned[:-3].strip()
-
-            parsed = json.loads(cleaned)
+            parsed = json.loads(output)
 
             queries = parsed.get("queries", [])
             if isinstance(queries, list):
@@ -219,6 +215,9 @@ async def _extract_queries_and_names(text: str) -> tuple[list[str], list[str]]:
 
             return queries, names
 
+    except (APITimeoutError, APIConnectionError, APIError, json.JSONDecodeError) as exc:
+        logfire.error("reading.extract failed: {error}", error=str(exc))
+        return [], []
     except Exception as exc:
         logfire.error("reading.extract failed: {error}", error=str(exc))
         return [], []
@@ -344,7 +343,7 @@ async def associative_read(
         source=source,
     ) as span:
         # Step 1: Tokenize and truncate if needed
-        max_text_tokens = OLLAMA_NUM_CTX - _PROMPT_OVERHEAD_TOKENS
+        max_text_tokens = CHAT_MODEL_CONTEXT - _PROMPT_OVERHEAD_TOKENS
         original_tokens = count_tokens(text)
         text, was_truncated = truncate_to_tokens(text, max_text_tokens)
         final_tokens = count_tokens(text) if was_truncated else original_tokens

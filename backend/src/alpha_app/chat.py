@@ -77,8 +77,12 @@ def find_circadian_chat(
     if now is None:
         now = time.time()
 
-    # Use local time — the circadian day is defined in wall-clock time
-    now_dt = pendulum.from_timestamp(now, tz=pendulum.local_timezone())
+    # PSO-8601: all times are local to the Pi (America/Los_Angeles).
+    # `pendulum.local_timezone()` reads the process's TZ — fine on alpha-VM
+    # and Jeffery's MacBook, but GitHub Actions runners are UTC, which broke
+    # the dawn-boundary math in CI (5 tests in test_circadian_chat.py failing
+    # on main since 2026-04-28). Pin the zone explicitly.
+    now_dt = pendulum.from_timestamp(now, tz="America/Los_Angeles")
     dawn_today = now_dt.replace(hour=dawn_hour, minute=0, second=0, microsecond=0)
     if now_dt < dawn_today:
         # Before 6 AM — circadian day started yesterday at 6 AM

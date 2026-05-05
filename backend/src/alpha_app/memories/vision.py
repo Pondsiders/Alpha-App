@@ -20,11 +20,11 @@ import hashlib
 import io
 from typing import Any
 
-import httpx
 import logfire
 from PIL import Image
 
-from alpha_app.constants import OLLAMA_CHAT_MODEL, OLLAMA_NUM_CTX, OLLAMA_URL
+from alpha_app.constants import CHAT_MODEL
+from alpha_app.inference_client import get_client
 from alpha_app.memories import garage
 from alpha_app.memories.embeddings import embed_document as _embed_document, embed_query as _embed_query
 
@@ -125,59 +125,57 @@ def _resize_to_1mp(image_data: bytes) -> bytes:
 
 async def _caption_image(image_b64: str) -> str:
     """Send image to Qwen 3.5 4B for captioning."""
-    import json as _json
-
     # Logfire Model Run card expects messages in {role, parts: [{type, content}]} format
     input_messages = [{"role": "user", "parts": [
         {"type": "text", "content": CAPTION_PROMPT},
         {"type": "text", "content": "(image attached)"},
     ]}]
-    output_placeholder = [{"role": "assistant", "parts": []}]
 
     with logfire.span(
         "vision.caption",
         **{
             "gen_ai.operation.name": "chat",
-            "gen_ai.system": "ollama",
-            "gen_ai.provider.name": "ollama",
-            "gen_ai.response.model": OLLAMA_CHAT_MODEL,
+            "gen_ai.system": "openai",
+            "gen_ai.provider.name": "openai",
+            "gen_ai.response.model": CHAT_MODEL,
             "gen_ai.system_instructions": [{"type": "text", "content": CAPTION_PROMPT}],
             "gen_ai.input.messages": input_messages,
         },
     ) as span:
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.post(
-                    f"{OLLAMA_URL.rstrip('/')}/api/chat",
-                    json={
-                        "model": OLLAMA_CHAT_MODEL,
-                        "messages": [{
-                            "role": "user",
-                            "content": CAPTION_PROMPT,
-                            "images": [image_b64],
-                        }],
-                        "stream": False,
-                        "options": {"num_ctx": OLLAMA_NUM_CTX, "temperature": 0},
-                        "think": False,
-                    },
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                caption = data.get("message", {}).get("content", "")
+            # Qwen 3.5 non-thinking general-task sampling (per model card).
+            response = await get_client().chat.completions.create(
+                model=CHAT_MODEL,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": CAPTION_PROMPT},
+                        {"type": "image_url", "image_url": {
+                            "url": f"data:image/jpeg;base64,{image_b64}",
+                        }},
+                    ],
+                }],
+                temperature=0.7,
+                top_p=0.8,
+                presence_penalty=1.5,
+                extra_body={
+                    "top_k": 20,
+                    "min_p": 0.0,
+                    "repetition_penalty": 1.0,
+                },
+                timeout=15.0,
+            )
+            caption = response.choices[0].message.content or ""
 
-                # Set gen_ai output attributes for Logfire Model Run card
-                span.set_attribute(
-                    "gen_ai.output.messages",
-                    [{"role": "assistant", "parts": [{"type": "text", "content": caption}]}],
-                )
-                tokens = data.get("eval_count", 0)
-                if tokens:
-                    span.set_attribute("gen_ai.usage.output_tokens", tokens)
-                prompt_tokens = data.get("prompt_eval_count", 0)
-                if prompt_tokens:
-                    span.set_attribute("gen_ai.usage.input_tokens", prompt_tokens)
+            span.set_attribute(
+                "gen_ai.output.messages",
+                [{"role": "assistant", "parts": [{"type": "text", "content": caption}]}],
+            )
+            if response.usage:
+                span.set_attribute("gen_ai.usage.input_tokens", response.usage.prompt_tokens)
+                span.set_attribute("gen_ai.usage.output_tokens", response.usage.completion_tokens)
 
-                return caption
+            return caption
         except Exception as e:
             logfire.warn("vision.caption failed: {error}", error=str(e))
             return ""

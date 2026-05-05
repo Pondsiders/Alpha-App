@@ -252,7 +252,8 @@ async def fetch_context_cards() -> str | None:
     try:
         pool = await get_pool()
         rows = await pool.fetch(
-            "SELECT text, tokens FROM cortex.context ORDER BY created_at DESC"
+            "SELECT text, tokens, created_at FROM cortex.context"
+            " ORDER BY created_at DESC"
         )
 
         cards = []
@@ -260,7 +261,7 @@ async def fetch_context_cards() -> str | None:
         for row in rows:
             if total + row["tokens"] > CONTEXT_BUDGET:
                 break
-            cards.append(row["text"])
+            cards.append((row["text"], row["created_at"]))
             total += row["tokens"]
 
         if not cards:
@@ -271,7 +272,18 @@ async def fetch_context_cards() -> str | None:
         # should read top-to-bottom as a narrative.)
         cards.reverse()
 
-        return "# Context\n\n" + "\n\n".join(cards)
+        # Prefix each card with a PSO-8601 timestamp and relative age.
+        # Makes accretion legible: newer cards override older ones, and
+        # stale facts show their age at a glance.
+        tz = pendulum.local_timezone()
+        formatted = []
+        for text, created_at in cards:
+            ts = pendulum.instance(created_at).in_timezone(tz)
+            stamp = ts.format("ddd MMM D YYYY, h:mm A")
+            age = ts.diff_for_humans()
+            formatted.append(f"[{stamp} ({age})] {text}")
+
+        return "# Context\n\n" + "\n\n".join(formatted)
 
     except Exception:
         return None

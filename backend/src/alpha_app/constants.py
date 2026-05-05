@@ -10,35 +10,42 @@ from pathlib import Path
 
 # -- Filesystem ---------------------------------------------------------------
 
-JE_NE_SAIS_QUOI = Path(
-    os.environ.get("JE_NE_SAIS_QUOI_OVERRIDE", "/Pondside/Alpha-Home/Alpha")
-)
+JE_NE_SAIS_QUOI = Path("/Pondside/Alpha-Home/Alpha")
 THUMBNAIL_DIR = Path("/Pondside/Alpha-Home/images/thumbnails")
 CONTEXT_FILE_NAME = "ALPHA.md"
 
 # Claude subprocess — where it runs and where it stores transcripts.
 # /Pondside is the one path guaranteed identical inside and outside Docker.
 CLAUDE_CWD = Path("/Pondside")
-CLAUDE_CONFIG_DIR = Path("/home/alpha/.claude")
+# CLAUDE_CONFIG_DIR defaults to /Pondside/Alpha-Home/.claude — real on the host,
+# and mapped to /home/alpha/.claude inside the container via bind mount. Works
+# in both deployment modes. Override via env var if another rig needs a different
+# location. (See memory #16963 for the "nonexistent /home/alpha on bare-metal"
+# landmine this replaces.)
+CLAUDE_CONFIG_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR", "/Pondside/Alpha-Home/.claude"))
 
 # -- Network ------------------------------------------------------------------
 
 REDIS_URL = "redis://alpha-pi.tail8bd569.ts.net:6379"
-OLLAMA_URL = "http://primer.tail8bd569.ts.net:11434"
-GARAGE_ENDPOINT = "https://warehouse13.tail8bd569.ts.net"
-GARAGE_BUCKET = "alpha-cortex-images-pre-v1-0-0"
+GARAGE_ENDPOINT = "https://alpha-s3.tail8bd569.ts.net/"
+GARAGE_BUCKET = "alpha-s3-cortex"
 GARAGE_REGION = "us-east-1"
 PORT = int(os.environ.get("PORT", "18010"))
+
+# Inference endpoint: configured via OPENAI_BASE_URL + OPENAI_API_KEY in .env.
+# The AsyncOpenAI client in inference_client.py reads these automatically.
+# Any OpenAI-compatible endpoint works (Ollama /v1, llmster, Harbormaster,
+# llama-server on Modal, OpenAI itself).
 
 # -- Models -------------------------------------------------------------------
 
 # The model IS the definition. When we upgrade, we change these and bump the version.
-CLAUDE_MODEL = "claude-opus-4-6[1m]"
+CLAUDE_MODEL = "claude-opus-4-7[1m]"
 CONTEXT_WINDOW = 1_000_000
 
-OLLAMA_EMBED_MODEL = "qwen3-embedding:4b"
-OLLAMA_CHAT_MODEL = "qwen3.5:4b"
-OLLAMA_NUM_CTX = 16384  # Same for recall, suggest, AND reading — prevents model reloads
+EMBED_MODEL = "text-embedding-qwen3-embedding-4b"
+CHAT_MODEL = "unsloth/qwen3.5-4b"
+CHAT_MODEL_CONTEXT = int(os.environ.get("CHAT_MODEL_CONTEXT", "16384"))
 
 # -- Disallowed tools ---------------------------------------------------------
 # Claude Code tools that don't apply in Alpha-App. Removed from the model's

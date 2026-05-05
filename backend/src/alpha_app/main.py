@@ -222,8 +222,22 @@ _DOCKER_DIST = Path("/app/frontend/dist")
 _LOCAL_DIST = Path(__file__).resolve().parent.parent.parent.parent / "frontend" / "dist"
 FRONTEND_DIR = _DOCKER_DIST if _DOCKER_DIST.is_dir() else _LOCAL_DIST
 
-if FRONTEND_DIR.is_dir():
-    # Serve Vite's hashed asset bundles
+_frontend_registered = False
+
+
+def _register_frontend_routes() -> None:
+    """Register static asset mount + SPA catch-all. Idempotent.
+
+    Called twice: once at module import (covers Docker case where dist is
+    already baked in) and once at the end of run() (covers bare-metal case
+    where _rebuild_frontend_if_stale() may have just created dist).
+    """
+    global _frontend_registered
+    if _frontend_registered:
+        return
+    if not FRONTEND_DIR.is_dir():
+        return
+
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIR / "assets"), name="static-assets")
 
     @app.get("/{full_path:path}")
@@ -233,6 +247,11 @@ if FRONTEND_DIR.is_dir():
         if file_path.is_file():
             return FileResponse(file_path)
         return FileResponse(FRONTEND_DIR / "index.html")
+
+    _frontend_registered = True
+
+
+_register_frontend_routes()
 
 
 def run() -> None:
@@ -251,6 +270,14 @@ def run() -> None:
     # Signal the lifespan to start the scheduler
     if args.with_scheduler:
         app.state._enable_scheduler = True
+
+    # Rebuild frontend if source is newer than the bundle (bare-metal only).
+    if not _DOCKER_DIST.is_dir():
+        _rebuild_frontend_if_stale(_LOCAL_DIST.parent)
+
+    # Register frontend routes now — may have been deferred at import time
+    # if dist/ didn't exist yet on a fresh bare-metal checkout.
+    _register_frontend_routes()
 
     # Plain HTTP. Always. Tailscale Serve handles TLS termination for the
     # production container; Vite dev server handles HTTPS for local dev.
