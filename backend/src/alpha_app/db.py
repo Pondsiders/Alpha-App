@@ -74,35 +74,15 @@ async def init_pool() -> None:
             " ON app.chats (updated_at DESC)"
         )
 
-        # Raw event log — used by the legacy replay protocol.
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS app.events (
-                id BIGSERIAL PRIMARY KEY,
-                chat_id TEXT NOT NULL,
-                ts TIMESTAMPTZ NOT NULL DEFAULT now(),
-                event JSONB NOT NULL,
-                seq INTEGER
-            )
-        """)
-
-        # Idempotent migration: add seq column to app.events if not already
-        # present (for databases created before the column was added). seq
-        # captures true broadcast order and is safe to ORDER BY (unlike
-        # BIGSERIAL id, which can be assigned out of order across pool
-        # connections). Note: any pre-migration rows with seq = NULL will
-        # sort LAST in PostgreSQL's default ASC ordering (NULLs last), after
-        # all correctly-sequenced new rows.
-        await conn.execute(
-            "ALTER TABLE app.events ADD COLUMN IF NOT EXISTS seq INTEGER"
-        )
-        await conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_events_chat_seq"
-            " ON app.events (chat_id, seq)"
-        )
+        # NOTE: The app.events table is intentionally NOT created here.
+        # It was the storage for the legacy replay protocol, superseded by
+        # join-chat on app.messages in March 2026. Existing app.events data
+        # is preserved in databases that have it (archaeology), but new
+        # databases skip it entirely and no code path reads or writes it.
 
         # Message-level storage: the "gimme the fucking chat" table.
         # Each row is one complete UserMessage or AssistantMessage as JSONB.
-        # Replaces event replay with a single SELECT for chat loading.
+        # Loaded by join-chat in a single SELECT.
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS app.messages (
                 chat_id TEXT NOT NULL,
@@ -366,52 +346,11 @@ async def claim_flags(flag_ids: list[int]) -> None:
         )
 
 
-# -- Event store --------------------------------------------------------------
-
-
-async def store_event(chat_id: str, event: dict, seq: int) -> None:
-    """Append an event to the event stream for a chat.
-
-    seq is a monotonically increasing counter assigned at broadcast time
-    (before any await), capturing true event order regardless of which pool
-    connection commits first.
-    """
-    try:
-        pool = get_pool()
-        await pool.execute(
-            "INSERT INTO app.events (chat_id, event, seq) VALUES ($1, $2, $3)",
-            chat_id,
-            event,
-            seq,
-        )
-    except Exception as e:
-        logfire.error(
-            "store_event FAILED: {error} chat={chat_id}",
-            error=str(e),
-            chat_id=chat_id,
-            exc_info=True,
-        )
-
-
-async def replay_events(chat_id: str) -> list[dict]:
-    """Load all events for a chat, ordered by seq. For UI replay."""
-    pool = get_pool()
-    rows = await pool.fetch(
-        "SELECT event FROM app.events WHERE chat_id = $1 ORDER BY seq",
-        chat_id,
-    )
-    return [row["event"] for row in rows]
-
-
 # -- Message storage (the "gimme the fucking chat" table) --------------------
 
 
 async def store_message(chat_id: str, ordinal: int, role: str, data: dict) -> None:
-    """Store a complete UserMessage or AssistantMessage.
-
-    Dual-write: called alongside store_event during the transition period.
-    Once replay is replaced with join-chat, store_event goes away.
-    """
+    """Store a complete UserMessage or AssistantMessage."""
     try:
         pool = get_pool()
         await pool.execute(
