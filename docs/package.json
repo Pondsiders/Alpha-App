@@ -1,24 +1,10 @@
 {
-  "name": "vitepress-project",
-  "private": true,
-  "type": "module",
   "scripts": {
-    "dev": "vitepress dev docs",
-    "build": "vitepress build docs",
-    "serve": "vitepress serve docs"
+    "docs:dev": "vitepress dev --host 0.0.0.0",
+    "docs:build": "vitepress build",
+    "docs:preview": "vitepress preview"
   },
   "devDependencies": {
-    "vitepress": "^1.6.4",
-    "vue": "^3.5.32"
-  },
-  "pnpm": {
-    "peerDependencyRules": {
-      "ignoreMissing": [
-        "@algolia/client-search"
-      ]
-    }
-  },
-  "dependencies": {
-    "vitepress-plugin-llms": "^1.12.0"
+    "vitepress": "^2.0.0-alpha.17"
   }
 }

@@ -36,7 +36,7 @@ function formatTokens(count: number): string {
   return count.toLocaleString();
 }
 
-export function ContextMeter({ percent, model, tokenCount, tokenLimit }: ContextMeterProps) {
+export function ContextMeter({ percent, model: _model, tokenCount, tokenLimit }: ContextMeterProps) {
   const color = getMeterColor(percent);
   const display = percent.toFixed(1) + "%";
 
@@ -73,32 +73,22 @@ export function ContextMeter({ percent, model, tokenCount, tokenLimit }: Context
         </div>
       </HoverCardTrigger>
       <HoverCardContent side="top" align="end" className="w-auto min-w-[160px]">
-        <div className="space-y-1.5">
+        <div className="space-y-2">
           {/* Context percentage */}
-          <div className="flex items-baseline justify-between gap-3">
-            <span className="text-[11px] text-muted shrink-0">Context</span>
-            <span className="text-[11px] font-mono" style={{ color }}>
+          <div className="space-y-0.5">
+            <span className="text-[10px] text-secondary tracking-wide">Context</span>
+            <div className="text-xs font-mono" style={{ color }}>
               {display}
-            </span>
+            </div>
           </div>
 
           {/* Token usage */}
           {tokenDisplay && (
-            <div className="flex items-baseline justify-between gap-3">
-              <span className="text-[11px] text-muted shrink-0">Tokens</span>
-              <span className="text-[11px] font-mono">
+            <div className="space-y-0.5">
+              <span className="text-[10px] text-secondary tracking-wide">Tokens</span>
+              <div className="text-xs font-mono text-foreground">
                 {tokenDisplay}
-              </span>
-            </div>
-          )}
-
-          {/* Model */}
-          {model && (
-            <div className="flex items-baseline justify-between gap-3">
-              <span className="text-[11px] text-muted shrink-0">Model</span>
-              <span className="text-[11px] font-mono" style={{ overflowWrap: "anywhere" }}>
-                {model}
-              </span>
+              </div>
             </div>
           )}
         </div>

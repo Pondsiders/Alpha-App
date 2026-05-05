@@ -7,4 +7,4 @@ exec npx -y concurrently \
   --prefix-colors "magenta,cyan" \
   --kill-others-on-fail \
   "uv run --project backend alpha" \
-  "npm --prefix frontend-v2 run dev"
+  "npm --prefix frontend run dev"

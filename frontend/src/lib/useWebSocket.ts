@@ -1,60 +1,32 @@
 /**
  * useWebSocket — persistent bidirectional connection to the Alpha backend.
  *
- * Phase 2: Protocol v2 — all messages carry chatId.
+ * Generic transport hook. Knows how to open a WebSocket to the backend,
+ * handle reconnects with exponential backoff, receive raw JSON messages,
+ * and send raw JSON messages. Does NOT know about the protocol shape —
+ * the caller (useAlphaWebSocket) owns all validation and discrimination
+ * via Zod schemas from lib/protocol.ts.
+ *
+ * This hook was previously hardcoded to an older protocol shape (with
+ * `type:` discriminators on both sides). That coupling is gone — the
+ * transport layer now speaks raw objects and leaves typing to the
+ * consumer, which means protocol changes don't ripple into this file.
+ *
+ * For the app-specific event routing, see src/hooks/useAlphaWebSocket.ts.
  *
  * Usage:
  *   const { send, connected } = useWebSocket({
- *     onEvent: (event) => { ... }
+ *     onEvent: (raw) => { ... },       // raw is unknown; validate it
  *   });
- *   send({ type: "send", chatId: "abc123", content: "Hello" });
+ *   send({ command: "join-chat", chatId: "abc123" });
  */
 
 import { useEffect, useRef, useState, useCallback } from "react";
 
-// Messages FROM the server
-export interface ServerEvent {
-  type:
-    | "text-delta"
-    | "thinking-delta"
-    | "tool-call"
-    | "tool-use-start"
-    | "tool-use-delta"
-    | "tool-result"
-    | "chat-created"
-    | "chat-state"
-    | "chat-list"
-    | "context-update"
-    | "approach-light"
-    | "enrichment-timestamp"
-    | "user-message"
-    | "assistant-message"
-    | "error"
-    | "exception"
-    | "done"
-    | "interrupted"
-    | "replay-done"
-    | "chat-data"
-    | "system-message"
-    | "agent-started"
-    | "agent-progress"
-    | "agent-done";
-  chatId?: string;
-  data?: unknown;
-}
-
-// Messages TO the server
-export interface ClientMessage {
-  type: "send" | "interrupt" | "create-chat" | "list-chats" | "buzz" | "replay" | "join-chat";
-  chatId?: string;
-  content?: string | Array<Record<string, unknown>>;
-  messageId?: string;
-  topics?: string[];
-}
-
 interface UseWebSocketOptions {
-  /** Called for each event from the server */
-  onEvent: (event: ServerEvent) => void;
+  /** Called for each raw JSON message from the server. The caller is
+   *  responsible for validating the shape (e.g. via Zod). */
+  onEvent: (raw: unknown) => void;
   /** Called when connection state changes */
   onConnectionChange?: (connected: boolean) => void;
 }
@@ -64,12 +36,22 @@ interface UseWebSocketOptions {
 // In production, the backend serves the frontend so same origin works.
 function getWebSocketUrl(): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${window.location.host}/ws`;
+  let url = `${protocol}//${window.location.host}/ws`;
+  // Suggest which chat to restore from localStorage.
+  try {
+    const lastChat = localStorage.getItem("alpha-lastChatId");
+    if (lastChat) url += `?lastChat=${encodeURIComponent(lastChat)}`;
+  } catch { /* localStorage unavailable */ }
+  return url;
 }
 
-const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 16000]; // Exponential backoff, max 16s
+// Exponential backoff, max 16s
+const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 16000];
 
-export function useWebSocket({ onEvent, onConnectionChange }: UseWebSocketOptions) {
+export function useWebSocket({
+  onEvent,
+  onConnectionChange,
+}: UseWebSocketOptions) {
   const [connected, setConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectAttemptRef = useRef(0);
@@ -85,7 +67,8 @@ export function useWebSocket({ onEvent, onConnectionChange }: UseWebSocketOption
     if (
       wsRef.current?.readyState === WebSocket.OPEN ||
       wsRef.current?.readyState === WebSocket.CONNECTING
-    ) return;
+    )
+      return;
 
     const url = getWebSocketUrl();
     console.log("[Alpha WS] Connecting to", url);
@@ -100,7 +83,7 @@ export function useWebSocket({ onEvent, onConnectionChange }: UseWebSocketOption
 
     ws.onmessage = (event) => {
       try {
-        const parsed = JSON.parse(event.data) as ServerEvent;
+        const parsed: unknown = JSON.parse(event.data);
         onEventRef.current(parsed);
       } catch (err) {
         console.warn("[Alpha WS] Failed to parse message:", event.data, err);
@@ -113,12 +96,15 @@ export function useWebSocket({ onEvent, onConnectionChange }: UseWebSocketOption
       setConnected(false);
       onConnectionChangeRef.current?.(false);
 
-      // Auto-reconnect with exponential backoff
-      // Don't reconnect on normal closure (1000) or going away (1001)
+      // Auto-reconnect with exponential backoff.
+      // Don't reconnect on normal closure (1000) or going away (1001).
       if (event.code !== 1000 && event.code !== 1001) {
         const attempt = reconnectAttemptRef.current;
-        const delay = RECONNECT_DELAYS[Math.min(attempt, RECONNECT_DELAYS.length - 1)];
-        console.log(`[Alpha WS] Reconnecting in ${delay}ms (attempt ${attempt + 1})`);
+        const delay =
+          RECONNECT_DELAYS[Math.min(attempt, RECONNECT_DELAYS.length - 1)];
+        console.log(
+          `[Alpha WS] Reconnecting in ${delay}ms (attempt ${attempt + 1})`,
+        );
         reconnectTimerRef.current = setTimeout(() => {
           reconnectAttemptRef.current++;
           connect();
@@ -143,21 +129,38 @@ export function useWebSocket({ onEvent, onConnectionChange }: UseWebSocketOption
         clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
       }
-      if (wsRef.current) {
-        // Null handlers BEFORE closing to prevent stale callbacks from
-        // firing after StrictMode remount and clobbering the fresh WS ref.
-        wsRef.current.onopen = null;
-        wsRef.current.onclose = null;
-        wsRef.current.onerror = null;
-        wsRef.current.onmessage = null;
-        wsRef.current.close(1000, "Component unmounting");
-        wsRef.current = null;
+      const ws = wsRef.current;
+      if (!ws) return;
+
+      // Null stale handlers first so nothing fires during teardown.
+      // (Original fix for StrictMode remount clobbering wsRef.current
+      // via async onclose — still needed.)
+      ws.onmessage = null;
+      ws.onerror = null;
+      ws.onclose = null;
+
+      if (ws.readyState === WebSocket.CONNECTING) {
+        // WebKit bug 247943 — closing a CONNECTING WebSocket breaks
+        // every subsequent WebSocket to the same origin in Safari.
+        // Defer the close until onopen fires, then close cleanly.
+        // The socket finishes its handshake, fires the replacement
+        // onopen, closes itself, and gets garbage-collected. No leak.
+        // Rails hit this first and landed the same pattern in
+        // rails/rails#44304.
+        ws.onopen = () => ws.close(1000, "Component unmounting");
+      } else {
+        ws.onopen = null;
+        ws.close(1000, "Component unmounting");
       }
+
+      wsRef.current = null;
     };
   }, [connect]);
 
-  // Send a message to the server
-  const send = useCallback((message: ClientMessage) => {
+  // Send a message to the server. Accepts any JSON-serializable object —
+  // the protocol schema is owned by the consumer (useAlphaWebSocket), not
+  // this generic transport layer.
+  const send = useCallback((message: unknown) => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       console.warn("[Alpha WS] Cannot send — not connected");

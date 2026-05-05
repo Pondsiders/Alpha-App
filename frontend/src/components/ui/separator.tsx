@@ -1,10 +1,7 @@
-/**
- * Separator — based on shadcn/ui's Separator, built on @radix-ui/react-separator.
- */
+import * as React from "react"
+import { Separator as SeparatorPrimitive } from "radix-ui"
 
-import * as React from "react";
-import * as SeparatorPrimitive from "@radix-ui/react-separator";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/utils"
 
 function Separator({
   className,
@@ -18,13 +15,12 @@ function Separator({
       decorative={decorative}
       orientation={orientation}
       className={cn(
-        "shrink-0 bg-border",
-        orientation === "horizontal" ? "h-[1px] w-full" : "h-full w-[1px]",
+        "shrink-0 bg-border data-horizontal:h-px data-horizontal:w-full data-vertical:w-px data-vertical:self-stretch",
         className
       )}
       {...props}
     />
-  );
+  )
 }
 
-export { Separator };
+export { Separator }

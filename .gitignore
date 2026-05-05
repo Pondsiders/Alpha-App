@@ -2,14 +2,10 @@
 __pycache__/
 *.py[cod]
 backend/.venv/
-backend/uv.lock
 
 # Node
 frontend/node_modules/
 frontend/dist/
-
-# Data (runtime, not source)
-data/
 
 # IDE
 .vscode/
@@ -21,26 +17,5 @@ data/
 # Secrets
 .env
 
-# Test artifacts
-backend/tests/e2e/screenshots/
-
-# Probe artifacts
-backend/scripts/logs/
-backend/scripts/.gatsby_cache.txt
-
-# API request captures (debug output from proxy.py when
-# ALPHA_SDK_CAPTURE_REQUESTS=1 — never source code)
-api_request_captures/
-
 # OS
 .DS_Store
-
-# Large source assets (tracked via LFS or not at all)
-Icon-iOS-Default-1024x1024@1x.png
-backend/tests/captures/
-.stignore
-backend/scripts/seed_context.py
-docs/docs/.vitepress/cache/
-
-# marimo cache
-notebooks/__marimo__/

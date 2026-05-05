@@ -1,324 +1,153 @@
-"use client";
+/**
+ * ToolFallback — Generic tool call UI.
+ *
+ * The catch-all consumer of ToolShell. Renders args as code and
+ * results as monospace preformatted text. Custom tool UIs
+ * (BashTool, StoreTool, etc.) graduate out of this component
+ * by providing their own ToolShell consumers.
+ */
 
-import { memo, useCallback, useRef, useState } from "react";
-import {
-  AlertCircleIcon,
-  CheckIcon,
-  ChevronDownIcon,
-  LoaderIcon,
-  XCircleIcon,
-} from "lucide-react";
-import {
-  useScrollLock,
-  type ToolCallMessagePartStatus,
-  type ToolCallMessagePartComponent,
-} from "@assistant-ui/react";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import { cn } from "@/lib/utils";
+import { Wrench } from "lucide-react";
+import { ToolShell } from "./tool-shell";
 
-const ANIMATION_DURATION = 200;
-
-export type ToolFallbackRootProps = Omit<
-  React.ComponentProps<typeof Collapsible>,
-  "open" | "onOpenChange"
-> & {
-  open?: boolean;
-  onOpenChange?: (open: boolean) => void;
-  defaultOpen?: boolean;
-};
-
-function ToolFallbackRoot({
-  className,
-  open: controlledOpen,
-  onOpenChange: controlledOnOpenChange,
-  defaultOpen = false,
-  children,
-  ...props
-}: ToolFallbackRootProps) {
-  const collapsibleRef = useRef<HTMLDivElement>(null);
-  const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
-  const lockScroll = useScrollLock(collapsibleRef, ANIMATION_DURATION);
-
-  const isControlled = controlledOpen !== undefined;
-  const isOpen = isControlled ? controlledOpen : uncontrolledOpen;
-
-  const handleOpenChange = useCallback(
-    (open: boolean) => {
-      if (!open) {
-        lockScroll();
-      }
-      if (!isControlled) {
-        setUncontrolledOpen(open);
-      }
-      controlledOnOpenChange?.(open);
-    },
-    [lockScroll, isControlled, controlledOnOpenChange],
-  );
-
-  return (
-    <Collapsible
-      ref={collapsibleRef}
-      data-slot="tool-fallback-root"
-      open={isOpen}
-      onOpenChange={handleOpenChange}
-      className={cn(
-        "aui-tool-fallback-root group/tool-fallback-root w-full rounded-lg border py-3",
-        className,
-      )}
-      style={
-        {
-          "--animation-duration": `${ANIMATION_DURATION}ms`,
-        } as React.CSSProperties
-      }
-      {...props}
-    >
-      {children}
-    </Collapsible>
-  );
-}
-
-type ToolStatus = ToolCallMessagePartStatus["type"];
-
-const statusIconMap: Record<ToolStatus, React.ElementType> = {
-  running: LoaderIcon,
-  complete: CheckIcon,
-  incomplete: XCircleIcon,
-  "requires-action": AlertCircleIcon,
-};
-
-function ToolFallbackTrigger({
-  toolName,
-  status,
-  className,
-  ...props
-}: React.ComponentProps<typeof CollapsibleTrigger> & {
+interface ToolFallbackProps {
   toolName: string;
-  status?: ToolCallMessagePartStatus;
-}) {
-  const statusType = status?.type ?? "complete";
-  const isRunning = statusType === "running";
-  const isCancelled =
-    status?.type === "incomplete" && status.reason === "cancelled";
-
-  const Icon = statusIconMap[statusType];
-  const label = isCancelled ? "Cancelled tool" : "Used tool";
-
-  return (
-    <CollapsibleTrigger
-      data-slot="tool-fallback-trigger"
-      className={cn(
-        "aui-tool-fallback-trigger group/trigger flex w-full items-center gap-2 px-4 text-sm transition-colors",
-        className,
-      )}
-      {...props}
-    >
-      <Icon
-        data-slot="tool-fallback-trigger-icon"
-        className={cn(
-          "aui-tool-fallback-trigger-icon size-4 shrink-0",
-          isCancelled && "text-muted-foreground",
-          isRunning && "animate-spin",
-        )}
-      />
-      <span
-        data-slot="tool-fallback-trigger-label"
-        className={cn(
-          "aui-tool-fallback-trigger-label-wrapper relative inline-block grow text-left leading-none",
-          isCancelled && "text-muted-foreground line-through",
-        )}
-      >
-        <span>
-          {label}: <b>{toolName}</b>
-        </span>
-        {isRunning && (
-          <span
-            aria-hidden
-            data-slot="tool-fallback-trigger-shimmer"
-            className="aui-tool-fallback-trigger-shimmer shimmer pointer-events-none absolute inset-0 motion-reduce:animate-none"
-          >
-            {label}: <b>{toolName}</b>
-          </span>
-        )}
-      </span>
-      <ChevronDownIcon
-        data-slot="tool-fallback-trigger-chevron"
-        className={cn(
-          "aui-tool-fallback-trigger-chevron size-4 shrink-0",
-          "transition-transform duration-(--animation-duration) ease-out",
-          "group-data-[state=closed]/trigger:-rotate-90",
-          "group-data-[state=open]/trigger:rotate-0",
-        )}
-      />
-    </CollapsibleTrigger>
-  );
-}
-
-function ToolFallbackContent({
-  className,
-  children,
-  ...props
-}: React.ComponentProps<typeof CollapsibleContent>) {
-  return (
-    <CollapsibleContent
-      data-slot="tool-fallback-content"
-      className={cn(
-        "aui-tool-fallback-content relative overflow-hidden text-sm outline-none",
-        "group/collapsible-content ease-out",
-        "data-[state=closed]:animate-collapsible-up",
-        "data-[state=open]:animate-collapsible-down",
-        "data-[state=closed]:fill-mode-forwards",
-        "data-[state=closed]:pointer-events-none",
-        "data-[state=open]:duration-(--animation-duration)",
-        "data-[state=closed]:duration-(--animation-duration)",
-        className,
-      )}
-      {...props}
-    >
-      <div className="mt-3 flex flex-col gap-2 border-t pt-2">{children}</div>
-    </CollapsibleContent>
-  );
-}
-
-function ToolFallbackArgs({
-  argsText,
-  className,
-  ...props
-}: React.ComponentProps<"div"> & {
+  toolCallId: string;
+  args: unknown;
   argsText?: string;
-}) {
-  if (!argsText) return null;
-
-  return (
-    <div
-      data-slot="tool-fallback-args"
-      className={cn("aui-tool-fallback-args px-4", className)}
-      {...props}
-    >
-      <pre className="aui-tool-fallback-args-value whitespace-pre-wrap">
-        {argsText}
-      </pre>
-    </div>
-  );
-}
-
-function ToolFallbackResult({
-  result,
-  className,
-  ...props
-}: React.ComponentProps<"div"> & {
   result?: unknown;
-}) {
-  if (result === undefined) return null;
-
-  return (
-    <div
-      data-slot="tool-fallback-result"
-      className={cn(
-        "aui-tool-fallback-result border-t border-dashed px-4 pt-2",
-        className,
-      )}
-      {...props}
-    >
-      <p className="aui-tool-fallback-result-header font-semibold">Result:</p>
-      <pre className="aui-tool-fallback-result-content whitespace-pre-wrap">
-        {typeof result === "string" ? result : JSON.stringify(result, null, 2)}
-      </pre>
-    </div>
-  );
+  status?: { type: string; reason?: string };
 }
 
-function ToolFallbackError({
-  status,
-  className,
-  ...props
-}: React.ComponentProps<"div"> & {
-  status?: ToolCallMessagePartStatus;
-}) {
-  if (status?.type !== "incomplete") return null;
-
-  const error = status.error;
-  const errorText = error
-    ? typeof error === "string"
-      ? error
-      : JSON.stringify(error)
-    : null;
-
-  if (!errorText) return null;
-
-  const isCancelled = status.reason === "cancelled";
-  const headerText = isCancelled ? "Cancelled reason:" : "Error:";
-
-  return (
-    <div
-      data-slot="tool-fallback-error"
-      className={cn("aui-tool-fallback-error px-4", className)}
-      {...props}
-    >
-      <p className="aui-tool-fallback-error-header font-semibold text-muted-foreground">
-        {headerText}
-      </p>
-      <p className="aui-tool-fallback-error-reason text-muted-foreground">
-        {errorText}
-      </p>
-    </div>
-  );
-}
-
-const ToolFallbackImpl: ToolCallMessagePartComponent = ({
+export const ToolFallback = ({
   toolName,
   argsText,
+  args,
   result,
   status,
-}) => {
-  const isCancelled =
-    status?.type === "incomplete" && status.reason === "cancelled";
+}: ToolFallbackProps) => {
+  const safeName = toolName || "Unknown Tool";
+  const displayName = safeName.charAt(0).toUpperCase() + safeName.slice(1);
+
+  // Parse args
+  let parsedArgs: Record<string, unknown> = {};
+  let jsonComplete = false;
+  try {
+    if (argsText) {
+      parsedArgs = JSON.parse(argsText);
+      jsonComplete = true;
+    } else if (args && typeof args === "object") {
+      parsedArgs = args as Record<string, unknown>;
+      jsonComplete = true;
+    }
+  } catch {
+    // argsText is partial JSON — still streaming
+  }
+
+  const hasResult = result !== undefined && result !== null;
+  const isError = status?.type === "incomplete" && status.reason === "error";
+
+  // Derive status for ToolShell
+  const shellStatus = (() => {
+    if (!jsonComplete && !hasResult) return "streaming" as const;
+    if (!hasResult && jsonComplete) return "running" as const;
+    if (isError) return "error" as const;
+    return "success" as const;
+  })();
+
+  // Arg summary (one-line)
+  const argSummary = (() => {
+    if (!jsonComplete) return argsText || "";
+    const entries = Object.entries(parsedArgs);
+    if (entries.length === 0) return "";
+
+    if (parsedArgs.file_path) {
+      const path = String(parsedArgs.file_path);
+      const parts = path.split("/");
+      return parts[parts.length - 1];
+    }
+    if (parsedArgs.query) {
+      const q = String(parsedArgs.query);
+      return q.length > 80 ? q.slice(0, 80) + "…" : q;
+    }
+    if (parsedArgs.pattern) return String(parsedArgs.pattern);
+    if (parsedArgs.memory) {
+      const m = String(parsedArgs.memory);
+      return m.length > 80 ? m.slice(0, 80) + "…" : m;
+    }
+    if (parsedArgs.command) {
+      const c = String(parsedArgs.command);
+      return c.length > 80 ? c.slice(0, 80) + "…" : c;
+    }
+
+    const firstString = entries.find(([, v]) => typeof v === "string");
+    if (firstString) {
+      const val = String(firstString[1]);
+      return val.length > 80 ? val.slice(0, 80) + "…" : val;
+    }
+
+    return `${entries.length} args`;
+  })();
+
+  // Full args
+  const fullArgsText = jsonComplete
+    ? JSON.stringify(parsedArgs, null, 2)
+    : argsText || "";
+
+  // Result text
+  const resultText = hasResult
+    ? typeof result === "string"
+      ? result
+      : JSON.stringify(result, null, 2)
+    : "";
+  const resultFirstLine = resultText.split("\n")[0] || "";
+
+  // Has anything to show in input/output?
+  const hasArgs = jsonComplete ? Object.keys(parsedArgs).length > 0 : !!argsText;
+  const multiLineArgs = fullArgsText.split("\n").length > 1;
+  const multiLineResult = resultText.split("\n").length > 1;
 
   return (
-    <ToolFallbackRoot
-      className={cn(isCancelled && "border-muted-foreground/30 bg-muted/30")}
-    >
-      <ToolFallbackTrigger toolName={toolName} status={status} />
-      <ToolFallbackContent>
-        <ToolFallbackError status={status} />
-        <ToolFallbackArgs
-          argsText={argsText}
-          className={cn(isCancelled && "opacity-60")}
-        />
-        {!isCancelled && <ToolFallbackResult result={result} />}
-      </ToolFallbackContent>
-    </ToolFallbackRoot>
+    <ToolShell
+      icon={Wrench}
+      name={displayName}
+      status={shellStatus}
+
+      input={hasArgs ? (
+        <code className="text-xs font-mono text-foreground leading-relaxed truncate block">
+          {argSummary}
+        </code>
+      ) : undefined}
+
+      expandedInput={hasArgs && multiLineArgs ? (
+        <pre className="m-0 text-xs font-mono text-foreground leading-relaxed whitespace-pre max-h-[300px] overflow-auto">
+          {fullArgsText}
+        </pre>
+      ) : undefined}
+
+      output={
+        shellStatus === "running" ? (
+          <span className="text-muted-foreground/50 text-xs font-mono italic">
+            Executing…
+          </span>
+        ) : hasResult ? (
+          <code
+            className="text-xs font-mono leading-relaxed truncate block"
+            style={{ color: isError ? "var(--color-destructive)" : "var(--color-foreground)" }}
+          >
+            {resultFirstLine}
+          </code>
+        ) : undefined
+      }
+
+      expandedOutput={hasResult && multiLineResult ? (
+        <pre
+          className="m-0 text-xs font-mono leading-relaxed whitespace-pre max-h-[600px] overflow-auto"
+          style={{ color: isError ? "var(--color-destructive)" : "var(--color-foreground)" }}
+        >
+          {resultText}
+        </pre>
+      ) : undefined}
+    />
   );
-};
-
-const ToolFallback = memo(
-  ToolFallbackImpl,
-) as unknown as ToolCallMessagePartComponent & {
-  Root: typeof ToolFallbackRoot;
-  Trigger: typeof ToolFallbackTrigger;
-  Content: typeof ToolFallbackContent;
-  Args: typeof ToolFallbackArgs;
-  Result: typeof ToolFallbackResult;
-  Error: typeof ToolFallbackError;
-};
-
-ToolFallback.displayName = "ToolFallback";
-ToolFallback.Root = ToolFallbackRoot;
-ToolFallback.Trigger = ToolFallbackTrigger;
-ToolFallback.Content = ToolFallbackContent;
-ToolFallback.Args = ToolFallbackArgs;
-ToolFallback.Result = ToolFallbackResult;
-ToolFallback.Error = ToolFallbackError;
-
-export {
-  ToolFallback,
-  ToolFallbackRoot,
-  ToolFallbackTrigger,
-  ToolFallbackContent,
-  ToolFallbackArgs,
-  ToolFallbackResult,
-  ToolFallbackError,
 };

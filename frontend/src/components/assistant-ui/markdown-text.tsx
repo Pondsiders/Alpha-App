@@ -1,243 +1,167 @@
-"use client";
+/**
+ * MarkdownText + UserMarkdownText — streaming markdown renderers.
+ *
+ * Built on @assistant-ui/react-streamdown's StreamdownTextPrimitive,
+ * which gives us block-based incremental rendering with a visual caret.
+ * No FOUC during streaming — code blocks are syntax-highlighted as they
+ * stream in, not after they're complete.
+ *
+ * Shiki highlighting is built into the @streamdown/code plugin. Our
+ * custom SyntaxHighlighter and react-shiki are no longer needed.
+ *
+ * Typography styling lives on the wrapper div via Tailwind Typography's
+ * `prose` classes + CSS variable overrides for warm amber-on-charcoal.
+ *
+ * One rendering path across the app. Assistant and user messages share
+ * the same components; only prose size differs.
+ */
 
-import "@assistant-ui/react-markdown/styles/dot.css";
-
+import { useState, type CSSProperties, type FC } from "react";
 import {
+  StreamdownTextPrimitive,
   type CodeHeaderProps,
-  MarkdownTextPrimitive,
-  unstable_memoizeMarkdownComponents as memoizeMarkdownComponents,
-  useIsMarkdownCodeBlock,
-} from "@assistant-ui/react-markdown";
-import remarkGfm from "remark-gfm";
-import { type FC, memo, useState } from "react";
+  type StreamdownTextComponents,
+} from "@assistant-ui/react-streamdown";
+import { createCodePlugin } from "@streamdown/code";
+import { math } from "@streamdown/math";
+import { mermaid } from "@streamdown/mermaid";
+import "katex/dist/katex.min.css";
+import a11yEmoji from "@fec/remark-a11y-emoji";
 import { CheckIcon, CopyIcon } from "lucide-react";
 
-import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
-import { cn } from "@/lib/utils";
+// ---------------------------------------------------------------------------
+// Shiki code plugin — Kanagawa themes, configured once
+// ---------------------------------------------------------------------------
 
-const MarkdownTextImpl = () => {
-  return (
-    <MarkdownTextPrimitive
-      remarkPlugins={[remarkGfm]}
-      className="aui-md"
-      components={defaultComponents}
-    />
-  );
-};
+const codePlugin = createCodePlugin({
+  themes: ["vitesse-dark", "vitesse-light"],
+});
 
-export const MarkdownText = memo(MarkdownTextImpl);
+// Stable references for remark plugins.
+// Streamdown includes remark-gfm in its defaultRemarkPlugins, but passing
+// our own remarkPlugins array REPLACES the defaults. Spread them to keep
+// GFM tables, task lists, strikethrough, and autolinks working.
+import { defaultRemarkPlugins } from "streamdown";
 
-const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
-  const { isCopied, copyToClipboard } = useCopyToClipboard();
-  const onCopy = () => {
-    if (!code || isCopied) return;
-    copyToClipboard(code);
+const remarkPlugins = [...Object.values(defaultRemarkPlugins), a11yEmoji];
+const emojiAllowedTags = { span: ["role", "aria-label"] };
+
+// ---------------------------------------------------------------------------
+// CodeHeader — language label + copy button above fenced code blocks
+// ---------------------------------------------------------------------------
+
+// Exported (rather than removed) so tsc doesn't flag it as unused while
+// it's parked. Wire it into `components` below when base rendering is
+// verified — that's what line ~92 is anticipating.
+export const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
+  const [copied, setCopied] = useState(false);
+  if (!language) return null;
+
+  const handleCopy = () => {
+    if (!code) return;
+    void navigator.clipboard.writeText(code).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
   };
 
   return (
-    <div className="aui-code-header-root mt-2.5 flex items-center justify-between rounded-t-lg border border-border/50 border-b-0 bg-muted/50 px-3 py-1.5 text-xs">
-      <span className="aui-code-header-language font-medium text-muted-foreground lowercase">
+    <div className="flex items-center justify-between rounded-t-lg border border-b-0 border-border bg-card px-3 py-1 text-xs">
+      <span className="font-mono lowercase text-muted-foreground">
         {language}
       </span>
-      <TooltipIconButton tooltip="Copy" onClick={onCopy}>
-        {!isCopied && <CopyIcon />}
-        {isCopied && <CheckIcon />}
-      </TooltipIconButton>
+      <button
+        type="button"
+        onClick={handleCopy}
+        title={copied ? "Copied" : "Copy code"}
+        aria-label={copied ? "Copied" : "Copy code"}
+        className="flex size-6 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+      >
+        {copied ? (
+          <CheckIcon className="size-3.5" />
+        ) : (
+          <CopyIcon className="size-3.5" />
+        )}
+      </button>
     </div>
   );
 };
 
-const useCopyToClipboard = ({
-  copiedDuration = 3000,
-}: {
-  copiedDuration?: number;
-} = {}) => {
-  const [isCopied, setIsCopied] = useState<boolean>(false);
+// ---------------------------------------------------------------------------
+// Component overrides — shared between assistant and user messages
+// ---------------------------------------------------------------------------
 
-  const copyToClipboard = (value: string) => {
-    if (!value) return;
+// Start with no custom components — use Streamdown's defaults.
+// CodeHeader can be added back once we verify base rendering works.
+const components = {} as StreamdownTextComponents;
 
-    navigator.clipboard.writeText(value).then(() => {
-      setIsCopied(true);
-      setTimeout(() => setIsCopied(false), copiedDuration);
-    });
-  };
+// ---------------------------------------------------------------------------
+// Shared prose styling
+// ---------------------------------------------------------------------------
 
-  return { isCopied, copyToClipboard };
-};
+const PROSE_VARS = {
+  "--tw-prose-body": "var(--color-foreground)",
+  "--tw-prose-bullets": "var(--color-primary)",
+  "--tw-prose-counters": "var(--color-primary)",
+  "--tw-prose-th-borders":
+    "color-mix(in oklch, var(--color-primary) 40%, transparent)",
+  "--tw-prose-td-borders":
+    "color-mix(in oklch, var(--color-primary) 25%, transparent)",
+} as CSSProperties;
 
-const defaultComponents = memoizeMarkdownComponents({
-  h1: ({ className, ...props }) => (
-    <h1
-      className={cn(
-        "aui-md-h1 mb-2 scroll-m-20 font-semibold text-base first:mt-0 last:mb-0",
-        className,
-      )}
-      {...props}
-    />
-  ),
-  h2: ({ className, ...props }) => (
-    <h2
-      className={cn(
-        "aui-md-h2 mt-3 mb-1.5 scroll-m-20 font-semibold text-sm first:mt-0 last:mb-0",
-        className,
-      )}
-      {...props}
-    />
-  ),
-  h3: ({ className, ...props }) => (
-    <h3
-      className={cn(
-        "aui-md-h3 mt-2.5 mb-1 scroll-m-20 font-semibold text-sm first:mt-0 last:mb-0",
-        className,
-      )}
-      {...props}
-    />
-  ),
-  h4: ({ className, ...props }) => (
-    <h4
-      className={cn(
-        "aui-md-h4 mt-2 mb-1 scroll-m-20 font-medium text-sm first:mt-0 last:mb-0",
-        className,
-      )}
-      {...props}
-    />
-  ),
-  h5: ({ className, ...props }) => (
-    <h5
-      className={cn(
-        "aui-md-h5 mt-2 mb-1 font-medium text-sm first:mt-0 last:mb-0",
-        className,
-      )}
-      {...props}
-    />
-  ),
-  h6: ({ className, ...props }) => (
-    <h6
-      className={cn(
-        "aui-md-h6 mt-2 mb-1 font-medium text-sm first:mt-0 last:mb-0",
-        className,
-      )}
-      {...props}
-    />
-  ),
-  p: ({ className, ...props }) => (
-    <p
-      className={cn(
-        "aui-md-p my-2.5 leading-normal first:mt-0 last:mb-0",
-        className,
-      )}
-      {...props}
-    />
-  ),
-  a: ({ className, ...props }) => (
-    <a
-      className={cn(
-        "aui-md-a text-primary underline underline-offset-2 hover:text-primary/80",
-        className,
-      )}
-      {...props}
-    />
-  ),
-  blockquote: ({ className, ...props }) => (
-    <blockquote
-      className={cn(
-        "aui-md-blockquote my-2.5 border-muted-foreground/30 border-l-2 pl-3 text-muted-foreground italic",
-        className,
-      )}
-      {...props}
-    />
-  ),
-  ul: ({ className, ...props }) => (
-    <ul
-      className={cn(
-        "aui-md-ul my-2 ml-4 list-disc marker:text-muted-foreground [&>li]:mt-1",
-        className,
-      )}
-      {...props}
-    />
-  ),
-  ol: ({ className, ...props }) => (
-    <ol
-      className={cn(
-        "aui-md-ol my-2 ml-4 list-decimal marker:text-muted-foreground [&>li]:mt-1",
-        className,
-      )}
-      {...props}
-    />
-  ),
-  hr: ({ className, ...props }) => (
-    <hr
-      className={cn("aui-md-hr my-2 border-muted-foreground/20", className)}
-      {...props}
-    />
-  ),
-  table: ({ className, ...props }) => (
-    <table
-      className={cn(
-        "aui-md-table my-2 w-full border-separate border-spacing-0 overflow-y-auto",
-        className,
-      )}
-      {...props}
-    />
-  ),
-  th: ({ className, ...props }) => (
-    <th
-      className={cn(
-        "aui-md-th bg-muted px-2 py-1 text-left font-medium first:rounded-tl-lg last:rounded-tr-lg [[align=center]]:text-center [[align=right]]:text-right",
-        className,
-      )}
-      {...props}
-    />
-  ),
-  td: ({ className, ...props }) => (
-    <td
-      className={cn(
-        "aui-md-td border-muted-foreground/20 border-b border-l px-2 py-1 text-left last:border-r [[align=center]]:text-center [[align=right]]:text-right",
-        className,
-      )}
-      {...props}
-    />
-  ),
-  tr: ({ className, ...props }) => (
-    <tr
-      className={cn(
-        "aui-md-tr m-0 border-b p-0 first:border-t [&:last-child>td:first-child]:rounded-bl-lg [&:last-child>td:last-child]:rounded-br-lg",
-        className,
-      )}
-      {...props}
-    />
-  ),
-  li: ({ className, ...props }) => (
-    <li className={cn("aui-md-li leading-normal", className)} {...props} />
-  ),
-  sup: ({ className, ...props }) => (
-    <sup
-      className={cn("aui-md-sup [&>a]:text-xs [&>a]:no-underline", className)}
-      {...props}
-    />
-  ),
-  pre: ({ className, ...props }) => (
-    <pre
-      className={cn(
-        "aui-md-pre overflow-x-auto rounded-t-none rounded-b-lg border border-border/50 border-t-0 bg-muted/30 p-3 text-xs leading-relaxed",
-        className,
-      )}
-      {...props}
-    />
-  ),
-  code: function Code({ className, ...props }) {
-    const isCodeBlock = useIsMarkdownCodeBlock();
-    return (
-      <code
-        className={cn(
-          !isCodeBlock &&
-            "aui-md-inline-code rounded-md border border-border/50 bg-muted/50 px-1.5 py-0.5 font-mono text-[0.85em]",
-          className,
-        )}
-        {...props}
-      />
-    );
-  },
-  CodeHeader,
-});
+const PROSE_CLASSES = [
+  "prose prose-invert text-foreground font-light",
+  "prose-headings:text-foreground",
+  "prose-h1:font-[500] prose-h2:font-[600]",
+  "prose-strong:text-foreground",
+  "prose-a:text-primary",
+  "prose-blockquote:text-muted-foreground prose-blockquote:border-primary/40",
+  "prose-code:text-foreground",
+  "prose-pre:my-0 prose-pre:p-0",
+  "prose-li:marker:text-primary",
+  "prose-hr:border-primary/30",
+  "prose-th:border-primary/30 prose-td:border-primary/20",
+].join(" ");
+
+// ---------------------------------------------------------------------------
+// MarkdownText — assistant messages, streaming
+// ---------------------------------------------------------------------------
+
+const MARKDOWN_CLASSES = [
+  PROSE_CLASSES,
+  "prose-base",
+  "prose-p:my-2 prose-headings:mt-4 prose-headings:mb-2",
+].join(" ");
+
+export const MarkdownText: FC = () => (
+  <StreamdownTextPrimitive
+    plugins={{ code: codePlugin, math, mermaid }}
+    remarkPlugins={remarkPlugins}
+    allowedTags={emojiAllowedTags}
+    components={components}
+    controls
+    caret="block"
+    containerClassName={MARKDOWN_CLASSES}
+    containerProps={{ style: PROSE_VARS }}
+  />
+);
+
+// ---------------------------------------------------------------------------
+// UserMarkdownText — user message bubbles, no streaming
+// ---------------------------------------------------------------------------
+
+const USER_MARKDOWN_CLASSES = [
+  PROSE_CLASSES,
+  "prose-sm",
+  "prose-p:my-1.5 prose-headings:mt-3 prose-headings:mb-1.5",
+].join(" ");
+
+export const UserMarkdownText: FC = () => (
+  <StreamdownTextPrimitive
+    plugins={{ code: codePlugin, math, mermaid }}
+    components={components}
+    controls
+    containerClassName={USER_MARKDOWN_CLASSES}
+    containerProps={{ style: PROSE_VARS }}
+  />
+);

@@ -1,830 +1,449 @@
 /**
- * Workshop Store — Zustand state management for Alpha.
+ * store.ts — Zustand store for frontend-v2.
  *
- * Phase 2: Multi-chat aware. Chats map, active chat, message caching.
- * isRunning is derived from the active chat's state, not stored directly.
+ * The single source of truth for everything the UI renders. The WebSocket
+ * handler writes to this store. The ExternalStoreRuntime reads from it.
+ * No framework state management. No repository merges. No race conditions.
+ *
+ * Message format mirrors the backend's UserMessage.to_db() and
+ * AssistantMessage.to_db() exactly — we store what the backend sends.
+ * Conversion to assistant-ui's ThreadMessageLike happens at the render
+ * boundary via `convertMessage`, not here.
  */
 
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
+import type { ThreadMessageLike } from "@assistant-ui/react";
 
-// -----------------------------------------------------------------------------
-// Types
-// -----------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Backend message formats (must match backend/src/alpha_app/models.py)
+// ---------------------------------------------------------------------------
 
-export type JSONValue =
-  | string
-  | number
-  | boolean
-  | null
-  | JSONValue[]
-  | { [key: string]: JSONValue };
-export type JSONObject = { [key: string]: JSONValue };
+/** A single content block in a user message. */
+export type UserContentBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; image: string } // already display-format: data URI or URL
+  | { type: string; [key: string]: unknown }; // pass-through for unknown types
 
-export type TextPart = { type: "text"; text: string };
-export type ThinkingPart = { type: "thinking"; thinking: string };
-export type ImagePart = { type: "image"; image: string };
-export type ToolCallPart = {
-  type: "tool-call";
-  toolCallId: string;
-  toolName: string;
-  args: JSONObject;
-  argsText: string;
-  result?: JSONValue;
-  isError?: boolean;
-  /** True while input_json_delta events are still arriving. */
-  streaming?: boolean;
-};
-export type SystemNotificationPart = {
-  type: "system-notification";
-  text: string;
-  source: string;   // "task_notification", "post_turn", etc.
-  taskId?: string;
-  status?: string;
-};
-export type ContentPart = TextPart | ThinkingPart | ImagePart | ToolCallPart | SystemNotificationPart;
-
-/** Who initiated this message. Undefined = human (the default). */
-export type MessageSource = "human" | "intro" | "infrastructure";
-
-/** A recalled memory surfaced by the enrichment pipeline. */
-export interface RecalledMemory {
-  id: number;
-  content: string;
-  score: number;
-  created_at: string;
-  /** Data URI for image memories (quarter-MP JPEG from Garage). */
-  image?: string;
-}
-
-/** A temporal capsule (yesterday, last night, today, letter). */
-export interface CapsuleData {
-  key: string;
-  title: string;
-  content: string;
-}
-
-export interface Message {
+/** User message as persisted by backend (UserMessage.to_db() → to_wire() shape). */
+export interface UserMessage {
   id: string;
-  role: "user" | "assistant" | "system";
-  content: ContentPart[];
-  createdAt: Date;
-  source?: MessageSource;
-  // Enrichment fields — populated by progressive user-message events
-  timestamp?: string;
-  memories?: RecalledMemory[];
-  capsules?: CapsuleData[];
+  source: string; // "human", "buzzer", "intro", "approach-light"
+  content: UserContentBlock[];
+  timestamp: string | null;
+  memories?: unknown[] | null;
+  topics?: string[] | null;
 }
 
-export type ChatState = "starting" | "idle" | "busy" | "dead";
+/** A single assistant-message part: text, thinking, or tool call. */
+export type AssistantPart =
+  | { type: "text"; text: string }
+  | { type: "thinking"; thinking: string }
+  | {
+      type: "tool-call";
+      toolCallId: string;
+      toolName: string;
+      args: unknown;
+      argsText?: string;
+      result?: unknown;
+    };
 
-export interface ApproachLight {
-  level: "yellow" | "red";
+/** Assistant message as persisted by backend (AssistantMessage.to_db() shape). */
+export interface AssistantMessage {
+  id: string;
+  parts: AssistantPart[];
+  /** True once assistant-message finalizes this message. Prevents
+   *  ensureAssistantMessage from reusing it for the next turn's deltas. */
+  sealed?: boolean;
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_tokens: number;
+  cache_read_tokens: number;
+  context_window: number;
+  model: string | null;
+  stop_reason: string | null;
+  cost_usd: number;
+  duration_ms: number;
+  inference_count: number;
+}
+
+/** System message (task notifications, etc.) — placeholder for later. */
+export interface SystemMessage {
+  id: string;
   text: string;
+  source: string;
+  timestamp?: string | null;
 }
 
-export interface ChatMeta {
+/** A tagged message — role tells us which variant `data` is. */
+export type Message =
+  | { role: "user"; data: UserMessage }
+  | { role: "assistant"; data: AssistantMessage }
+  | { role: "system"; data: SystemMessage };
+
+// ---------------------------------------------------------------------------
+// Chat — metadata + messages for one conversation
+// ---------------------------------------------------------------------------
+
+export interface Chat {
   id: string;
   title: string;
-  state: ChatState;
-  updatedAt: number;
-  createdAt: number;  // Unix epoch seconds — set once at creation, never updated
-  sessionUuid?: string;
-  tokenCount?: number;
-  contextWindow?: number;
-  topics?: Record<string, string>;  // { "alpha-app": "on", "intake": "off" }
-}
-
-// -----------------------------------------------------------------------------
-// Store Interface
-// -----------------------------------------------------------------------------
-
-interface WorkshopState {
-  // Multi-chat
-  chats: Record<string, ChatMeta>;
-  activeChatId: string | null;
-
-  // Messages (active chat)
+  createdAt: number; // unix seconds
+  updatedAt: number; // unix seconds
   messages: Message[];
-  messageCache: Record<string, Message[]>;
+  isRunning: boolean;
+  tokenCount: number;
+  contextWindow: number;
+  sessionUuid?: string;
+}
 
-  // Connection
+// ---------------------------------------------------------------------------
+// Store
+// ---------------------------------------------------------------------------
+
+interface AppState {
+  // -- Connection state --
   connected: boolean;
 
-  // Context meter
-  contextPercent: number;
-  model: string | null;
-  tokenCount: number;
-  tokenLimit: number;
+  // -- Chats --
+  /** Map of chatId → Chat. Keyed lookup is cheap and stable-by-key. */
+  chats: Record<string, Chat>;
+  /** The chat currently displayed in the Thread component. */
+  currentChatId: string | null;
 
-  // Approach lights (per-chat)
-  approachLights: Record<string, ApproachLight[]>;
-
-  // Stash for reconciliation — the raw text the user just submitted.
-  // Set by addUserMessage, consumed by reconcileUserMessage.
-  _pendingSendText: string | null;
-
-  // Pending echo queue — tracks messages we sent so we can match their
-  // claude echoes. Each entry records whether it was an interjection.
-  // When the echo arrives, we find-and-splice the matching entry:
-  //   isInterjection=true  → create new assistant placeholder (turn boundary)
-  //   isInterjection=false → drop (original prompt echo, already rendered)
-  _pendingEchos: Array<{ text: string; isInterjection: boolean }>;
-
-  // Replay — when true, message list doesn't render (store mutates silently)
-  isReplaying: boolean;
-
-  // Agent progress — transient state for active subagent rendering.
-  // Keyed by toolUseId (ties back to the Agent tool-call part).
-  // Ephemeral — not persisted. Cleared on agent-done.
-  agentProgress: Record<string, {
-    taskId: string;
-    prompt?: string;
-    description?: string;
-    lastToolName?: string;
-    toolUses?: number;
-    durationMs?: number;
-    status?: string;
-    summary?: string;
-    done?: boolean;
-  }>;
-}
-
-interface WorkshopActions {
-  // Chat management
-  setChats: (chatList: ChatMeta[]) => void;
-  addChat: (chat: ChatMeta) => void;
-  updateChatState: (chatId: string, state: ChatState, title?: string, updatedAt?: number, sessionUuid?: string, tokenCount?: number, contextWindow?: number, topics?: Record<string, string>) => void;
-  setActiveChatId: (chatId: string | null) => void;
-
-  // Messages
-  addUserMessage: (content: string, attachments?: Array<{ type: "image"; image: string }>, source?: MessageSource) => string;
-  addAssistantPlaceholder: () => string;
-  appendToAssistant: (messageId: string, text: string, chatId?: string) => void;
-  appendThinking: (messageId: string, thinking: string, chatId?: string) => void;
-  addToolCall: (messageId: string, toolCall: Omit<ToolCallPart, "type">, chatId?: string) => void;
-  addStreamingToolCall: (messageId: string, toolCallId: string, toolName: string, chatId?: string) => void;
-  appendToolUseDelta: (messageId: string, toolCallId: string, partialJson: string, chatId?: string) => void;
-  updateToolResult: (
-    messageId: string,
-    toolCallId: string,
-    result: JSONValue,
-    isError?: boolean,
-    chatId?: string,
-  ) => void;
-  setMessages: (messages: readonly Message[] | Message[]) => void;
-
-  // System messages (task notifications, post-turn, etc.)
-  addSystemMessage: (chatId: string, text: string, source: string, extra?: Record<string, string>) => void;
-
-  // Remote messages (echoed from other connections via the switch)
-  addRemoteUserMessage: (chatId: string, content: ContentPart[], serverId?: string) => string;
-  addRemoteAssistantPlaceholder: (chatId: string) => string;
-
-  // Reconciliation — merge enrobed echo into optimistic user message
-  reconcileUserMessage: (chatId: string, echoContent: ContentPart[]) => boolean;
-
-  // ID-based reconciliation — update a user message by its ID and enrichment
-  updateUserMessageById: (chatId: string, messageId: string, wireData: {
-    content?: ContentPart[];
-    timestamp?: string;
-    memories?: RecalledMemory[];
-    orientation?: { capsules?: CapsuleData[] };
-  }) => boolean;
-
-  // Cache
-  cacheActiveMessages: () => void;
-  loadFromCache: (chatId: string) => boolean;
-  loadMessages: (chatId: string, messages: Message[]) => void;
-
-  // Connection
+  // -- Actions (setters) --
   setConnected: (connected: boolean) => void;
+  setCurrentChatId: (id: string | null) => void;
 
-  // Replay
-  setReplaying: (replaying: boolean) => void;
+  /**
+   * Replace the entire chat list. Used on initial `chat-list` event from
+   * the WebSocket. Preserves `messages` for any chats already in the store
+   * (so switching back and forth doesn't blow away loaded history).
+   */
+  setChatList: (chats: Omit<Chat, "messages" | "isRunning">[]) => void;
 
-  // Context meter
-  setContextPercent: (percent: number) => void;
-  setModel: (model: string | null) => void;
-  setTokens: (count: number, limit: number) => void;
-  updateChatTokens: (chatId: string, tokenCount: number, contextWindow: number) => void;
+  /** Upsert a single chat (used when Dawn creates a new one at 6 AM, etc). */
+  upsertChat: (chat: Partial<Chat> & { id: string }) => void;
 
-  // Pending echo queue
-  pushPendingEcho: (text: string, isInterjection: boolean) => void;
-  matchPendingEcho: (echoText: string) => { isInterjection: boolean } | null;
+  /** Replace all messages for a chat. Used on `chat-data` event. */
+  setMessages: (chatId: string, messages: Message[]) => void;
 
-  // Approach lights
-  addApproachLight: (chatId: string, level: "yellow" | "red", text: string) => void;
+  /** Append a new message to a chat (user send, or server-initiated). */
+  appendMessage: (chatId: string, message: Message) => void;
 
-  // Agent progress (transient)
-  updateAgentStarted: (toolUseId: string, data: { taskId: string; prompt?: string; description?: string }) => void;
-  updateAgentProgress: (toolUseId: string, data: { description?: string; lastToolName?: string; toolUses?: number; durationMs?: number }) => void;
-  updateAgentDone: (toolUseId: string, data: { status?: string; summary?: string; toolUses?: number; durationMs?: number }) => void;
+  /** Replace the last user message with an enriched version from the server. */
+  replaceLastUserMessage: (chatId: string, message: Message) => void;
 
-  // Reset
-  reset: () => void;
+  /**
+   * Find an assistant message by ID, or create one with that exact ID
+   * appended to the end of the message list. The ID comes from the
+   * backend's text-delta / thinking-delta event — no inference, no
+   * "look at the last message and guess." Returns the ID unchanged.
+   */
+  ensureAssistantMessage: (chatId: string, messageId: string) => string;
+
+  /** Append a text delta to the last assistant message (streaming). */
+  appendTextDelta: (chatId: string, messageId: string, delta: string) => void;
+
+  /** Append a thinking delta to the last assistant message (streaming). */
+  appendThinkingDelta: (
+    chatId: string,
+    messageId: string,
+    delta: string,
+  ) => void;
+
+  /** Set the running flag for a chat. */
+  setIsRunning: (chatId: string, isRunning: boolean) => void;
+
+  /** Update token accounting for a chat. */
+  setTokenCount: (chatId: string, tokenCount: number) => void;
+
+  /** WebSocket send function — set by useAlphaWebSocket on connect. */
+  wsSend: ((cmd: Record<string, unknown>) => void) | null;
+  setWsSend: (fn: ((cmd: Record<string, unknown>) => void) | null) => void;
 }
 
-export type WorkshopStore = WorkshopState & WorkshopActions;
-
-// -----------------------------------------------------------------------------
-// ID Generation
-// -----------------------------------------------------------------------------
-
-let messageIdCounter = 0;
-export const generateId = () => `msg-${Date.now()}-${++messageIdCounter}`;
-
-// -----------------------------------------------------------------------------
-// Store
-// -----------------------------------------------------------------------------
-
-const initialState: WorkshopState = {
-  chats: {},
-  activeChatId: null,
-  messages: [],
-  messageCache: {},
-  connected: false,
-  contextPercent: 0,
-  model: null,
-  tokenCount: 0,
-  tokenLimit: 0,
-  approachLights: {},
-  _pendingSendText: null,
-  _pendingEchos: [],
-  isReplaying: false,
-  agentProgress: {},
-};
-
-export const useWorkshopStore = create<WorkshopStore>()(
+export const useStore = create<AppState>()(
   immer((set, get) => ({
-    ...initialState,
+    connected: false,
+    chats: {},
+    currentChatId: null,
 
-    // -- Chat management ------------------------------------------------------
+    wsSend: null,
 
-    setChats: (chatList) => {
+    setConnected: (connected) =>
       set((state) => {
-        const map: Record<string, ChatMeta> = {};
-        for (const chat of chatList) {
-          // Merge with existing chat data to preserve fields (like topics)
-          // that chat-list doesn't carry but chat-state does.
-          const existing = state.chats[chat.id];
-          map[chat.id] = existing ? { ...existing, ...chat } : chat;
-        }
-        state.chats = map;
+        state.connected = connected;
+      }),
 
-        // Restore token state for the active chat.
-        // Handles the race where setActiveChatId fires before chat-list arrives.
-        // (setActiveChatId always fires first — React effects run before the
-        //  WebSocket network round-trip completes, so activeChatId is set by
-        //  the time the chat-list response arrives here.)
-        if (state.activeChatId) {
-          const active = map[state.activeChatId];
-          if (active) {
-            const tc = active.tokenCount ?? 0;
-            const cw = active.contextWindow ?? 200_000;
-            state.tokenCount = tc;
-            state.tokenLimit = cw;
-            state.contextPercent = cw > 0
-              ? Math.round((tc / cw) * 1000) / 10
-              : 0;
-          }
-        }
-      });
-    },
-
-    addChat: (chat) => {
+    setCurrentChatId: (id) =>
       set((state) => {
-        state.chats[chat.id] = chat;
-      });
-    },
+        state.currentChatId = id;
+      }),
 
-    updateChatState: (chatId, chatState, title, updatedAt, sessionUuid?, tokenCount?, contextWindow?, topics?) => {
+    setChatList: (incoming) =>
+      set((state) => {
+        const next: Record<string, Chat> = {};
+        for (const c of incoming) {
+          const existing = state.chats[c.id];
+          next[c.id] = {
+            ...c,
+            messages: existing?.messages ?? [],
+            isRunning: existing?.isRunning ?? false,
+          };
+        }
+        state.chats = next;
+      }),
+
+    upsertChat: (patch) =>
+      set((state) => {
+        const existing = state.chats[patch.id];
+        if (existing) {
+          Object.assign(existing, patch);
+        } else {
+          state.chats[patch.id] = {
+            id: patch.id,
+            title: patch.title ?? "",
+            createdAt: patch.createdAt ?? Date.now() / 1000,
+            updatedAt: patch.updatedAt ?? Date.now() / 1000,
+            messages: patch.messages ?? [],
+            isRunning: patch.isRunning ?? false,
+            tokenCount: patch.tokenCount ?? 0,
+            contextWindow: patch.contextWindow ?? 1_000_000,
+            sessionUuid: patch.sessionUuid,
+          };
+        }
+      }),
+
+    setMessages: (chatId, messages) =>
+      set((state) => {
+        const chat = state.chats[chatId];
+        if (chat) chat.messages = messages;
+      }),
+
+    appendMessage: (chatId, message) =>
+      set((state) => {
+        const chat = state.chats[chatId];
+        if (chat) chat.messages.push(message);
+      }),
+
+    replaceLastUserMessage: (chatId, message) =>
       set((state) => {
         const chat = state.chats[chatId];
         if (!chat) return;
-        chat.state = chatState;
-        if (title !== undefined) chat.title = title;
-        if (updatedAt !== undefined) chat.updatedAt = updatedAt;
-        if (sessionUuid !== undefined) chat.sessionUuid = sessionUuid;
-        if (tokenCount !== undefined) chat.tokenCount = tokenCount;
-        if (contextWindow !== undefined) chat.contextWindow = contextWindow;
-        if (topics !== undefined) chat.topics = topics;
-
-        // Update global meter if this is the active chat
-        if (chatId === state.activeChatId && tokenCount !== undefined && contextWindow !== undefined) {
-          state.tokenCount = tokenCount;
-          state.tokenLimit = contextWindow;
-          state.contextPercent = contextWindow > 0
-            ? Math.round((tokenCount / contextWindow) * 1000) / 10
-            : 0;
-        }
-      });
-    },
-
-    setActiveChatId: (chatId) => {
-      set((state) => {
-        // Cache current messages before switching
-        const prevId = state.activeChatId;
-        if (prevId && state.messages.length > 0) {
-          state.messageCache[prevId] = [...state.messages];
-        }
-
-        state.activeChatId = chatId;
-
-        // Restore from cache or clear (instant swap per KERNEL.md)
-        if (chatId && state.messageCache[chatId]) {
-          state.messages = [...state.messageCache[chatId]];
-        } else {
-          state.messages = [];
-        }
-
-        // Restore token state from the new chat's metadata
-        if (chatId) {
-          const chat = state.chats[chatId];
-          if (chat) {
-            const tc = chat.tokenCount ?? 0;
-            const cw = chat.contextWindow ?? 200_000;
-            state.tokenCount = tc;
-            state.tokenLimit = cw;
-            state.contextPercent = cw > 0
-              ? Math.round((tc / cw) * 1000) / 10
-              : 0;
+        const messageId = (message.data as any)?.id;
+        if (messageId) {
+          // Match by ID — the correct way
+          const idx = chat.messages.findIndex(
+            (m) => m.role === "user" && (m.data as any).id === messageId
+          );
+          if (idx >= 0) {
+            chat.messages[idx] = message;
+            return;
           }
         }
-      });
-    },
-
-    // -- Messages -------------------------------------------------------------
-
-    addUserMessage: (content, attachments, source) => {
-      const id = generateId();
-      const parts: ContentPart[] = [];
-
-      // Images first (render as separate bubbles above text)
-      if (attachments) {
-        for (const att of attachments) {
-          if (att.type === "image") {
-            parts.push({ type: "image", image: att.image });
+        // Fallback: replace last user message by position
+        for (let i = chat.messages.length - 1; i >= 0; i--) {
+          if (chat.messages[i].role === "user") {
+            chat.messages[i] = message;
+            return;
           }
         }
-      }
+        chat.messages.push(message);
+      }),
 
-      // Text (only if non-empty)
-      if (content.trim()) {
-        parts.push({ type: "text", text: content });
-      }
+    ensureAssistantMessage: (chatId: string, messageId: string): string => {
+      // Use get() / set() from the immer callback closure above instead of
+      // useStore.getState() / useStore.setState() — the latter creates a
+      // circular type reference that collapses the whole store to `any`.
+      const chat = get().chats[chatId];
+      if (!chat) return messageId;
 
-      set((state) => {
-        state.messages.push({
-          id,
-          role: "user",
-          content: parts,
-          createdAt: new Date(),
-          source,
-        });
-        // Stash the raw text for reconciliation with the echo
-        state._pendingSendText = content.trim() || null;
-      });
-      return id;
-    },
-
-    addAssistantPlaceholder: () => {
-      const id = generateId();
-      set((state) => {
-        state.messages.push({
-          id,
-          role: "assistant",
-          content: [],
-          createdAt: new Date(),
-        });
-      });
-      return id;
-    },
-
-    appendToAssistant: (messageId, text, chatId?) => {
-      set((state) => {
-        // Look in active messages first, then fall back to background chat cache
-        let message = state.messages.find((m) => m.id === messageId);
-        if (!message && chatId && chatId !== state.activeChatId) {
-          const cached = state.messageCache[chatId];
-          if (cached) message = cached.find((m) => m.id === messageId);
-        }
-        if (!message || message.role !== "assistant") return;
-
-        const lastPart = message.content[message.content.length - 1];
-        if (lastPart?.type === "text") {
-          lastPart.text += text;
-        } else {
-          message.content.push({ type: "text", text });
-        }
-      });
-    },
-
-    appendThinking: (messageId, thinking, chatId?) => {
-      set((state) => {
-        let message = state.messages.find((m) => m.id === messageId);
-        if (!message && chatId && chatId !== state.activeChatId) {
-          const cached = state.messageCache[chatId];
-          if (cached) message = cached.find((m) => m.id === messageId);
-        }
-        if (!message || message.role !== "assistant") return;
-
-        // Append to the LAST content part if it's a thinking block.
-        // If something else was inserted since (tool-call, text), start a new
-        // thinking block so interleaved thinking renders in stream order.
-        const last = message.content[message.content.length - 1];
-        if (last?.type === "thinking") {
-          (last as ThinkingPart).thinking += thinking;
-        } else {
-          message.content.push({ type: "thinking", thinking });
-        }
-      });
-    },
-
-    addToolCall: (messageId, toolCall, chatId?) => {
-      set((state) => {
-        let message = state.messages.find((m) => m.id === messageId);
-        if (!message && chatId && chatId !== state.activeChatId) {
-          const cached = state.messageCache[chatId];
-          if (cached) message = cached.find((m) => m.id === messageId);
-        }
-        if (!message || message.role !== "assistant") return;
-        // If a streaming placeholder exists for this toolCallId, finalize it.
-        const existing = message.content.find(
-          (p): p is ToolCallPart =>
-            p.type === "tool-call" && p.toolCallId === toolCall.toolCallId
-        );
-        if (existing) {
-          existing.args = toolCall.args;
-          existing.argsText = toolCall.argsText;
-          existing.streaming = false;
-        } else {
-          message.content.push({ type: "tool-call", ...toolCall });
-        }
-      });
-    },
-
-    addStreamingToolCall: (messageId, toolCallId, toolName, chatId?) => {
-      set((state) => {
-        let message = state.messages.find((m) => m.id === messageId);
-        if (!message && chatId && chatId !== state.activeChatId) {
-          const cached = state.messageCache[chatId];
-          if (cached) message = cached.find((m) => m.id === messageId);
-        }
-        if (!message || message.role !== "assistant") return;
-        message.content.push({
-          type: "tool-call",
-          toolCallId,
-          toolName,
-          args: {},
-          argsText: "",
-          streaming: true,
-        });
-      });
-    },
-
-    appendToolUseDelta: (messageId, toolCallId, partialJson, chatId?) => {
-      set((state) => {
-        let message = state.messages.find((m) => m.id === messageId);
-        if (!message && chatId && chatId !== state.activeChatId) {
-          const cached = state.messageCache[chatId];
-          if (cached) message = cached.find((m) => m.id === messageId);
-        }
-        if (!message) return;
-        const toolCall = message.content.find(
-          (p): p is ToolCallPart =>
-            p.type === "tool-call" && p.toolCallId === toolCallId
-        );
-        if (toolCall) {
-          toolCall.argsText += partialJson;
-        }
-      });
-    },
-
-    updateToolResult: (messageId, toolCallId, result, isError = false, chatId?) => {
-      set((state) => {
-        let message = state.messages.find((m) => m.id === messageId);
-        if (!message && chatId && chatId !== state.activeChatId) {
-          const cached = state.messageCache[chatId];
-          if (cached) message = cached.find((m) => m.id === messageId);
-        }
-        if (!message) return;
-
-        const toolCall = message.content.find(
-          (p): p is ToolCallPart =>
-            p.type === "tool-call" && p.toolCallId === toolCallId
-        );
-        if (toolCall) {
-          toolCall.result = result;
-          toolCall.isError = isError;
-        }
-      });
-    },
-
-    setMessages: (messages) => {
-      set((state) => {
-        state.messages = [...messages];
-      });
-    },
-
-    // -- Remote messages (echoed from other connections via the switch) --------
-
-    addRemoteUserMessage: (chatId, content, serverId?) => {
-      const id = serverId || generateId();
-      set((state) => {
-        const msg: Message = {
-          id,
-          role: "user" as const,
-          content,
-          createdAt: new Date(),
-        };
-        if (chatId === state.activeChatId) {
-          state.messages.push(msg);
-        } else {
-          if (!state.messageCache[chatId]) state.messageCache[chatId] = [];
-          state.messageCache[chatId].push(msg);
-        }
-      });
-      return id;
-    },
-
-    addRemoteAssistantPlaceholder: (chatId) => {
-      const id = generateId();
-      set((state) => {
-        const msg: Message = {
-          id,
-          role: "assistant" as const,
-          content: [],
-          createdAt: new Date(),
-        };
-        if (chatId === state.activeChatId) {
-          state.messages.push(msg);
-        } else {
-          if (!state.messageCache[chatId]) state.messageCache[chatId] = [];
-          state.messageCache[chatId].push(msg);
-        }
-      });
-      return id;
-    },
-
-    addSystemMessage: (chatId, text, source, extra) => {
-      set((state) => {
-        const msg: Message = {
-          id: generateId(),
-          role: "system" as const,
-          content: [{
-            type: "system-notification",
-            text,
-            source,
-            ...(extra || {}),
-          } as SystemNotificationPart],
-          createdAt: new Date(),
-        };
-        if (chatId === state.activeChatId) {
-          state.messages.push(msg);
-        } else {
-          if (!state.messageCache[chatId]) state.messageCache[chatId] = [];
-          state.messageCache[chatId].push(msg);
-        }
-      });
-    },
-
-    // -- Reconciliation -------------------------------------------------------
-
-    reconcileUserMessage: (chatId, echoContent) => {
-      // Stash-based reconciliation. When the user sends a message, addUserMessage
-      // stashes the raw text. When a user-message echo arrives, we check if ANY
-      // text block in the echo matches the stash. If so, update the message.
-      // Simple. No "last block" logic. Reed that bends.
-
-      const stash = get()._pendingSendText;
-      if (!stash) return false;
-
-      // Does ANY text block in the echo contain the stashed string?
-      const hasMatch = Array.isArray(echoContent) && echoContent.some(
-        (p: unknown) => {
-          if (typeof p !== "object" || p === null) return false;
-          const block = p as Record<string, unknown>;
-          return block.type === "text" && typeof block.text === "string"
-            && block.text.trim() === stash.trim();
-        }
+      // Look for an existing assistant message with this exact ID anywhere
+      // in the chat. The backend assigns one msg-<uuid> per assistant
+      // message and stamps it on every delta, so two text-deltas with the
+      // same messageId belong to the same placeholder regardless of where
+      // it currently sits in the message list.
+      const existing = chat.messages.find(
+        (m) => m.role === "assistant" && (m.data as AssistantMessage).id === messageId,
       );
-      if (!hasMatch) return false;
-
-      // Find the most recent user message (scan from end)
-      const messages = chatId === get().activeChatId
-        ? get().messages
-        : get().messageCache[chatId] || [];
-
-      let targetIdx = -1;
-      for (let i = messages.length - 1; i >= 0; i--) {
-        if (messages[i].role === "user") {
-          targetIdx = i;
-          break;
-        }
+      if (existing) {
+        return messageId;
       }
-      if (targetIdx === -1) return false;
 
-      // Replace content with the full enrobed echo.
-      set((state) => {
-        const arr = chatId === state.activeChatId
-          ? state.messages
-          : (state.messageCache[chatId] || []);
-        const msg = arr[targetIdx];
-        if (msg && msg.role === "user") {
-          msg.content = echoContent as ContentPart[];
+      // Not found — create a placeholder with the exact ID. Mark it
+      // `sealed: false` so convertMessage routes it through the streaming
+      // path. The backend's assistant-message event will eventually flip
+      // sealed → true to finalize.
+      set((s) => {
+        const c = s.chats[chatId];
+        if (c) {
+          c.messages.push({
+            role: "assistant",
+            data: {
+              id: messageId,
+              parts: [],
+              sealed: false,
+              input_tokens: 0,
+              output_tokens: 0,
+              cache_creation_tokens: 0,
+              cache_read_tokens: 0,
+              context_window: 1_000_000,
+              model: null,
+              stop_reason: null,
+              cost_usd: 0,
+              duration_ms: 0,
+              inference_count: 0,
+            } as AssistantMessage,
+          });
         }
       });
-
-      return true;
+      return messageId;
     },
 
-    // ID-based reconciliation — find a user message by ID and update its
-    // content + enrichment fields (timestamp, memories, capsules).
-    // Also clears _pendingSendText so the claude echo can't clobber the update.
-    updateUserMessageById: (chatId, messageId, wireData) => {
-      const messages = chatId === get().activeChatId
-        ? get().messages
-        : get().messageCache[chatId] || [];
-
-      const target = messages.find((m) => m.id === messageId && m.role === "user");
-      if (!target) return false;
-
+    appendTextDelta: (chatId, messageId, delta) =>
       set((state) => {
-        const arr = chatId === state.activeChatId
-          ? state.messages
-          : (state.messageCache[chatId] || []);
-        const msg = arr.find((m) => m.id === messageId && m.role === "user");
-        if (msg) {
-          if (wireData.content) msg.content = wireData.content as ContentPart[];
-          if (wireData.timestamp !== undefined) msg.timestamp = wireData.timestamp;
-          if (wireData.memories) msg.memories = wireData.memories;
-          if (wireData.orientation?.capsules) msg.capsules = wireData.orientation.capsules;
-        }
-        state._pendingSendText = null;
-      });
-
-      return true;
-    },
-
-    // -- Cache ----------------------------------------------------------------
-
-    cacheActiveMessages: () => {
-      const { activeChatId, messages } = get();
-      if (activeChatId && messages.length > 0) {
-        set((state) => {
-          state.messageCache[activeChatId] = [...messages];
-        });
-      }
-    },
-
-    loadFromCache: (chatId) => {
-      const cached = get().messageCache[chatId];
-      if (cached && cached.length > 0) {
-        set((state) => {
-          state.messages = [...cached];
-        });
-        return true;
-      }
-      return false;
-    },
-
-    loadMessages: (chatId, messages) => {
-      set((state) => {
-        state.messages = messages;
-        state.messageCache[chatId] = [...messages];
-      });
-    },
-
-    // -- Connection -----------------------------------------------------------
-
-    setConnected: (connected) => {
-      set((state) => {
-        state.connected = connected;
-      });
-    },
-
-    // -- Replay ---------------------------------------------------------------
-
-    setReplaying: (replaying) => {
-      set((state) => {
-        state.isReplaying = replaying;
-      });
-    },
-
-    // -- Context meter --------------------------------------------------------
-
-    setContextPercent: (percent) => {
-      set((state) => {
-        state.contextPercent = percent;
-      });
-    },
-
-    setModel: (model) => {
-      set((state) => {
-        state.model = model;
-      });
-    },
-
-    setTokens: (count, limit) => {
-      set((state) => {
-        state.tokenCount = count;
-        state.tokenLimit = limit;
-      });
-    },
-
-    updateChatTokens: (chatId, tokenCount, contextWindow) => {
-      set((state) => {
-        // Update per-chat metadata
         const chat = state.chats[chatId];
-        if (chat) {
-          chat.tokenCount = tokenCount;
-          chat.contextWindow = contextWindow;
+        if (!chat) return;
+        const msg = chat.messages.find(
+          (m) => m.role === "assistant" && m.data.id === messageId,
+        );
+        if (!msg || msg.role !== "assistant") return;
+        const parts = msg.data.parts;
+        for (let i = parts.length - 1; i >= 0; i--) {
+          if (parts[i].type === "text") {
+            (parts[i] as { text: string }).text += delta;
+            return;
+          }
         }
+        parts.push({ type: "text", text: delta });
+      }),
 
-        // Update global meter if this is the active chat
-        if (chatId === state.activeChatId) {
-          state.tokenCount = tokenCount;
-          state.tokenLimit = contextWindow;
-          state.contextPercent = contextWindow > 0
-            ? Math.round((tokenCount / contextWindow) * 1000) / 10
-            : 0;
+    appendThinkingDelta: (chatId, messageId, delta) =>
+      set((state) => {
+        const chat = state.chats[chatId];
+        if (!chat) return;
+        const msg = chat.messages.find(
+          (m) => m.role === "assistant" && m.data.id === messageId,
+        );
+        if (!msg || msg.role !== "assistant") return;
+        const parts = msg.data.parts;
+        for (let i = parts.length - 1; i >= 0; i--) {
+          if (parts[i].type === "thinking") {
+            (parts[i] as { thinking: string }).thinking += delta;
+            return;
+          }
         }
-      });
-    },
+        parts.push({ type: "thinking", thinking: delta });
+      }),
 
-    // -- Approach lights ------------------------------------------------------
-
-    addApproachLight: (chatId, level, text) => {
+    setIsRunning: (chatId, isRunning) =>
       set((state) => {
-        if (!state.approachLights[chatId]) {
-          state.approachLights[chatId] = [];
-        }
-        state.approachLights[chatId].push({ level, text });
-      });
-    },
+        const chat = state.chats[chatId];
+        if (chat) chat.isRunning = isRunning;
+      }),
 
-    // -- Pending echo queue ---------------------------------------------------
-
-    pushPendingEcho: (text, isInterjection) => {
+    setTokenCount: (chatId, tokenCount) =>
       set((state) => {
-        state._pendingEchos.push({ text, isInterjection });
-      });
-    },
+        const chat = state.chats[chatId];
+        if (chat) chat.tokenCount = tokenCount;
+      }),
 
-    matchPendingEcho: (echoText) => {
-      const echos = get()._pendingEchos;
-      const idx = echos.findIndex((e) => e.text === echoText);
-      if (idx === -1) return null;
-      const match = echos[idx];
-      // Remove the matched entry
+    setWsSend: (fn) =>
       set((state) => {
-        state._pendingEchos.splice(idx, 1);
-      });
-      return { isInterjection: match.isInterjection };
-    },
-
-    // -- Agent progress (transient) -------------------------------------------
-
-    updateAgentStarted: (toolUseId, data) => {
-      set((state) => {
-        state.agentProgress[toolUseId] = {
-          taskId: data.taskId,
-          prompt: data.prompt,
-          description: data.description,
-        };
-      });
-    },
-
-    updateAgentProgress: (toolUseId, data) => {
-      set((state) => {
-        const existing = state.agentProgress[toolUseId];
-        if (existing) {
-          if (data.description) existing.description = data.description;
-          if (data.lastToolName) existing.lastToolName = data.lastToolName;
-          if (data.toolUses !== undefined) existing.toolUses = data.toolUses;
-          if (data.durationMs !== undefined) existing.durationMs = data.durationMs;
-        }
-      });
-    },
-
-    updateAgentDone: (toolUseId, data) => {
-      set((state) => {
-        const existing = state.agentProgress[toolUseId];
-        if (existing) {
-          existing.done = true;
-          if (data.status) existing.status = data.status;
-          if (data.summary) existing.summary = data.summary;
-          if (data.toolUses !== undefined) existing.toolUses = data.toolUses;
-          if (data.durationMs !== undefined) existing.durationMs = data.durationMs;
-        }
-      });
-    },
-
-    // -- Reset ----------------------------------------------------------------
-
-    reset: () => {
-      set(initialState);
-    },
-  }))
+        state.wsSend = fn as any; // Immer can't proxy functions, cast is safe
+      }),
+  })),
 );
+
+// ---------------------------------------------------------------------------
+// Selectors — stable references for common reads
+// ---------------------------------------------------------------------------
+
+/** Get the current chat object, or null if nothing is selected. */
+export const selectCurrentChat = (s: AppState): Chat | null =>
+  s.currentChatId ? (s.chats[s.currentChatId] ?? null) : null;
+
+/** Get the ordered list of chats (newest first by updatedAt). */
+export const selectChatList = (s: AppState): Chat[] =>
+  Object.values(s.chats).sort((a, b) => b.updatedAt - a.updatedAt);
+
+// ---------------------------------------------------------------------------
+// convertMessage — our format → assistant-ui's ThreadMessageLike
+// ---------------------------------------------------------------------------
+
+/**
+ * Convert one of our backend-format messages to the assistant-ui
+ * ThreadMessageLike format for rendering.
+ *
+ * This is the boundary between "our world" (backend shapes, Postgres,
+ * WebSocket events) and "assistant-ui's world" (Thread primitive, parts,
+ * role/content taxonomy). Keep the mapping explicit and visible.
+ */
+export function convertMessage(msg: Message): ThreadMessageLike {
+  if (msg.role === "user") {
+    const data = msg.data;
+    return {
+      id: data.id,
+      role: "user",
+      content: data.content.map((block) => {
+        if (block.type === "text") {
+          return { type: "text" as const, text: (block as { text: string }).text };
+        }
+        if (block.type === "image") {
+          return {
+            type: "image" as const,
+            image: (block as { image: string }).image,
+          };
+        }
+        // Pass through unknown types — assistant-ui may handle or ignore.
+        return block as never;
+      }),
+    };
+  }
+
+  if (msg.role === "assistant") {
+    const data = msg.data;
+    // Three-state `sealed`:
+    //   false     → currently streaming (placeholder accepting deltas)
+    //   true      → finalized by assistant-message after streaming
+    //   undefined → loaded from history (treat as sealed; backend's
+    //               to_wire() doesn't carry this frontend-only field)
+    // Only `sealed === false` is "streaming" — otherwise the message is
+    // a static, finished one and goes through the non-animated render path.
+    const isStreaming = data.sealed === false;
+    return {
+      id: data.id,
+      role: "assistant",
+      status: isStreaming
+        ? { type: "running" as const }
+        : { type: "complete" as const, reason: "stop" as const },
+      content: data.parts.map((part) => {
+        if (part.type === "text") {
+          return { type: "text" as const, text: part.text };
+        }
+        if (part.type === "thinking") {
+          // assistant-ui calls this "reasoning"
+          return { type: "reasoning" as const, text: part.thinking };
+        }
+        if (part.type === "tool-call") {
+          return {
+            type: "tool-call" as const,
+            toolCallId: part.toolCallId,
+            toolName: part.toolName,
+            args: part.args,
+            result: part.result,
+          } as never;
+        }
+        return part as never;
+      }),
+    };
+  }
+
+  // System messages render as system text — minimal for now.
+  return {
+    id: msg.data.id,
+    role: "system",
+    content: [{ type: "text", text: msg.data.text }],
+  };
+}
