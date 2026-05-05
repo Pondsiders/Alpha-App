@@ -230,7 +230,7 @@ def _register_frontend_routes() -> None:
 
     Called twice: once at module import (covers Docker case where dist is
     already baked in) and once at the end of run() (covers bare-metal case
-    where _rebuild_frontend_if_stale() may have just created dist).
+    where the dev workflow runs `vite build` ahead of `uv run alpha`).
     """
     global _frontend_registered
     if _frontend_registered:
@@ -270,10 +270,6 @@ def run() -> None:
     # Signal the lifespan to start the scheduler
     if args.with_scheduler:
         app.state._enable_scheduler = True
-
-    # Rebuild frontend if source is newer than the bundle (bare-metal only).
-    if not _DOCKER_DIST.is_dir():
-        _rebuild_frontend_if_stale(_LOCAL_DIST.parent)
 
     # Register frontend routes now — may have been deferred at import time
     # if dist/ didn't exist yet on a fresh bare-metal checkout.
