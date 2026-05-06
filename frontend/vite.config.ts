@@ -14,9 +14,9 @@ export default defineConfig({
     host: true,
     allowedHosts: true,
     proxy: {
-      "/api": "http://localhost:18010",
+      "/api": "http://localhost:8000",
       "/ws": {
-        target: "ws://localhost:18010",
+        target: "ws://localhost:8000",
         ws: true,
       },
     },

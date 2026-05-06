@@ -1,0 +1,1 @@
+"""Alpha — an artificial intelligence."""

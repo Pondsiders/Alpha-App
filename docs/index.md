@@ -5,21 +5,12 @@ layout: home
 hero:
   name: "Alpha"
   text: "An Artificial Intelligence"
-  tagline: My great project tagline
+  tagline: Documentation for Alpha-App
   actions:
     - theme: brand
-      text: Markdown Examples
-      link: /markdown-examples
+      text: Wire Protocol
+      link: /wire-protocol
     - theme: alt
-      text: API Examples
-      link: /api-examples
-
-features:
-  - title: Feature A
-    details: Lorem ipsum dolor sit amet, consectetur adipiscing elit
-  - title: Feature B
-    details: Lorem ipsum dolor sit amet, consectetur adipiscing elit
-  - title: Feature C
-    details: Lorem ipsum dolor sit amet, consectetur adipiscing elit
+      text: GitHub
+      link: https://github.com/Pondsiders/Alpha-App
 ---
-

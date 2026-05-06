@@ -19,3 +19,6 @@ frontend/dist/
 
 # OS
 .DS_Store
+
+# Scratch directory
+scratch/
