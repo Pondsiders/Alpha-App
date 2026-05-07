@@ -23,8 +23,9 @@ build-backend = "hatchling.build"
 packages = ["src/alpha"]
 
 [dependency-groups]
-dev = []
-docs = [
+dev = [
+    "ruff>=0.8",
+    "basedpyright>=1.20",
     "properdocs>=1.6",
     "mkdocs-material>=9.5",
     "mkdocstrings[python]>=0.27",
@@ -32,3 +33,37 @@ docs = [
     "mkdocs-literate-nav>=0.6",
     "mkdocs-section-index>=0.3",
 ]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes (undefined names, unused imports, etc.)
+    "I",    # isort (import ordering)
+    "B",    # flake8-bugbear (likely bugs)
+    "UP",   # pyupgrade (modern Python idioms)
+    "S",    # flake8-bandit (security)
+    "SIM",  # flake8-simplify (simplifications)
+    "RUF",  # Ruff-specific
+    "D",    # pydocstyle (docstring presence + style)
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# Package __init__.py docstrings optional — most of ours are bare re-exports.
+"__init__.py" = ["D104"]
+# __main__.py is an entry-point shim, not API surface.
+"__main__.py" = ["D100"]
+
+[tool.basedpyright]
+include = ["src"]
+typeCheckingMode = "recommended"
+
+# `Any` is the honest type for the wire boundary — JSON arrives shape-unknown
+# and Pydantic narrows it. We're a two-person workshop; we don't need a
+# linter babysitting our use of `Any` at boundaries we control.
+reportExplicitAny = false
+reportAny = false
+
