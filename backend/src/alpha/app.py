@@ -25,12 +25,12 @@ def create_app() -> FastAPI:
     # stays clean. Same pattern will hold when we add ANTHROPIC_API_KEY
     # for token counting — declared as a Settings field, passed explicitly
     # to the client, never visible to the Claude Code subprocess.
-    logfire.configure(
+    _ = logfire.configure(
         token=settings.logfire_token,
         send_to_logfire="if-token-present",
         service_name="alpha",
     )
-    logfire.instrument_pydantic()
+    _ = logfire.instrument_pydantic()
 
     app = FastAPI(
         title="Alpha",
@@ -42,7 +42,7 @@ def create_app() -> FastAPI:
     # is to wrap each WebSocket connection in one long-lived span that stays
     # open until disconnect — useless noise. Per-message spans get emitted
     # explicitly inside the handler instead.
-    logfire.instrument_fastapi(app, capture_headers=True, excluded_urls="/ws")
+    _ = logfire.instrument_fastapi(app, capture_headers=True, excluded_urls="/ws")
 
     app.include_router(api_router, prefix="/api")
     app.include_router(ws_router)

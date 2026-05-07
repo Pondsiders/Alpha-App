@@ -34,3 +34,19 @@ class Chat:
     created_at: pendulum.DateTime
     last_active: pendulum.DateTime
     archived: bool
+
+    def __init__(
+        self,
+        *,
+        chat_id: ChatId,
+        session_id: str | None,
+        created_at: pendulum.DateTime,
+        last_active: pendulum.DateTime,
+        archived: bool,
+    ) -> None:
+        """Build a Chat from explicit fields. Placeholder until chats.py lands."""
+        self.chat_id = chat_id
+        self.session_id = session_id
+        self.created_at = created_at
+        self.last_active = last_active
+        self.archived = archived

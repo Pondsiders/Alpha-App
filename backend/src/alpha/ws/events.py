@@ -8,7 +8,7 @@ Right now only `Error` is defined. Real events (`app-state`, `chat-loaded`,
 `text-delta`, etc.) land as their handlers do.
 """
 
-from typing import Literal
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict
 class BaseEvent(BaseModel):
     """Common fields and config for every outbound event."""
 
-    model_config = ConfigDict(
+    model_config: ClassVar[ConfigDict] = ConfigDict(
         frozen=True,
         extra="forbid",
         populate_by_name=True,

@@ -13,7 +13,7 @@ Add a new command:
 3. Register a handler in `alpha.ws.handlers`.
 """
 
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
@@ -21,7 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 class BaseCommand(BaseModel):
     """Common fields and config for every inbound command."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="forbid")
 
     id: str | None = None
     """Correlation ID. Echoed on the response event when a command expects one."""
@@ -59,7 +59,7 @@ class Interrupt(BaseCommand):
 
 
 Command = Annotated[
-    Union[JoinChat, CreateChat, Send, Interrupt],
+    JoinChat | CreateChat | Send | Interrupt,
     Field(discriminator="command"),
 ]
 """Discriminated union of every inbound command shape."""
