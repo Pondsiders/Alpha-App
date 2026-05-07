@@ -7,6 +7,11 @@ inbound message and returns the right concrete subclass.
 Models are frozen and forbid extras. The wire protocol is strict; payloads
 that don't match are protocol violations, not warnings.
 
+Wire convention: the wire is camelCase; Python is snake_case. `BaseCommand`
+sets `alias_generator=to_camel`, so a Python attribute `chat_id` parses
+from a wire field `chatId` automatically. Use explicit `Field(alias=...)`
+only for irregular cases the generator can't infer.
+
 Add a new command:
 1. Define a class extending `BaseCommand` with a Literal `command` field.
 2. Append it to the `Command` union below.
@@ -16,12 +21,18 @@ Add a new command:
 from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic.alias_generators import to_camel
 
 
 class BaseCommand(BaseModel):
     """Common fields and config for every inbound command."""
 
-    model_config: ClassVar[ConfigDict] = ConfigDict(frozen=True, extra="forbid")
+    model_config: ClassVar[ConfigDict] = ConfigDict(
+        frozen=True,
+        extra="forbid",
+        alias_generator=to_camel,
+        populate_by_name=True,
+    )
 
     id: str | None = None
     """Correlation ID. Echoed on the response event when a command expects one."""
@@ -31,7 +42,7 @@ class JoinChat(BaseCommand):
     """Load a chat's full history and metadata."""
 
     command: Literal["join-chat"]
-    chat_id: str = Field(alias="chatId")
+    chat_id: str
 
 
 class CreateChat(BaseCommand):
@@ -44,7 +55,7 @@ class Send(BaseCommand):
     """Send a user message to a chat."""
 
     command: Literal["send"]
-    chat_id: str = Field(alias="chatId")
+    chat_id: str
     content: list[dict[str, Any]]
     """Anthropic-shaped content blocks. Validation of the inner shape is
     deferred to whatever consumes the content; the wire layer only needs to
@@ -55,7 +66,7 @@ class Interrupt(BaseCommand):
     """Interrupt the assistant mid-turn."""
 
     command: Literal["interrupt"]
-    chat_id: str = Field(alias="chatId")
+    chat_id: str
 
 
 Command = Annotated[
