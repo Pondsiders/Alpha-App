@@ -26,6 +26,7 @@ packages = ["src/alpha"]
 dev = [
     "ruff>=0.8",
     "basedpyright>=1.20",
+    "pre-commit>=4.0",
     "properdocs>=1.6",
     "mkdocs-material>=9.5",
     "mkdocstrings[python]>=0.27",
@@ -66,4 +67,3 @@ typeCheckingMode = "recommended"
 # linter babysitting our use of `Any` at boundaries we control.
 reportExplicitAny = false
 reportAny = false
-
