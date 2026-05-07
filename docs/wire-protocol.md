@@ -159,9 +159,8 @@ Sent by the server immediately on WebSocket connect. Also broadcast to all clien
   "chats": [
     {
       "chatId": "hellopixel01",
-      "title": "Hello, world",
       "createdAt": 1775345137,
-      "updatedAt": 1775345137,
+      "lastActive": 1775345137,
       "state": "dead",
       "tokenCount": 0,
       "contextWindow": 1000000
@@ -174,7 +173,7 @@ Sent by the server immediately on WebSocket connect. Also broadcast to all clien
 
 | Field | Description |
 |-------|-------------|
-| `chats` | Full chat list for the sidebar. |
+| `chats` | Full chat list for the sidebar. Chats are identified by `createdAt`, not by topic; the sidebar renders them as a date-sorted list (Apple Mail's date-column shape, not Gmail's subject-column shape). |
 | `version` | App version string. Client can compare to detect stale frontends. |
 
 ### Chat lifecycle
@@ -192,9 +191,8 @@ Full message history + metadata for one chat. Sent in two situations:
   "event": "chat-loaded",
   "id": "req_1",
   "chatId": "hellopixel01",
-  "title": "Hello, world",
   "createdAt": 1775345137,
-  "updatedAt": 1775345137,
+  "lastActive": 1775345137,
   "state": "dead",
   "tokenCount": 0,
   "contextWindow": 1000000,
@@ -215,7 +213,6 @@ A new chat exists. Can be a response to [`create-chat`](#create-chat) (with `id`
   "event": "chat-created",
   "id": "req_3",
   "chatId": "abc123",
-  "title": "",
   "createdAt": 1775345200
 }
 ```
