@@ -1338,5 +1338,3 @@ class Chat:
     def _cancel_reap_timer(self) -> None:
         if self._claude:
             self._claude._cancel_reap_timer()
-
-

@@ -1,7 +1,7 @@
 [     20ms] [      System] subtype=init
 [     20ms] [      System] subtype=status
-[    822ms] [RateLimitEvent] 
-[   1765ms] [   MSG_START] 
+[    822ms] [RateLimitEvent]
+[   1765ms] [   MSG_START]
 [   1765ms] [   BLK_START] idx=0 text
 [   1765ms] [  text_delta] +   1ch  '#'
 [   2113ms] [  text_delta] +  43ch  ' The Glowing Box\\n\\nBandit had lived in th'
@@ -62,5 +62,5 @@
 [  22715ms] [   Assistant] [text(2939)]
 [  22715ms] [    BLK_STOP] idx=0
 [  22744ms] [   MSG_DELTA] stop=end_turn usage={"input_tokens": 6, "cache_creation_input_tokens": 0, "cache_read_input_tokens":
-[  22744ms] [    MSG_STOP] 
+[  22744ms] [    MSG_STOP]
 [  22747ms] [      Result] cost=$0.0403 duration=22743ms turns=1

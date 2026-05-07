@@ -102,4 +102,3 @@ def set_turn_span_response(
         for m in output_messages
         for p in m.get("parts", [])
     ))
-

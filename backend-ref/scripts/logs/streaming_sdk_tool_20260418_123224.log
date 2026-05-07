@@ -1,6 +1,6 @@
 [     20ms] [      System] subtype=init
 [     20ms] [      System] subtype=status
-[   1142ms] [   MSG_START] 
+[   1142ms] [   MSG_START]
 [   1541ms] [   BLK_START] idx=0 thinking
 [   2413ms] [       delta] type=signature_delta {"type": "signature_delta", "signature": "Es8CClkIDBgCKkBUkQkBVP6iJabp3JxYb+PXTraBuuSElM6XcqR/IezHeT
 [   2419ms] [   Assistant] [thinking(0)]
@@ -14,7 +14,7 @@
 [   2419ms] [  json_delta] +  11ch  'eaming_test'
 [   2483ms] [  json_delta] +   3ch  '.md'
 [   2483ms] [  json_delta] +   1ch  '"'
-[   3460ms] [RateLimitEvent] 
+[   3460ms] [RateLimitEvent]
 [ 122394ms] [  json_delta] +   7ch  ', "cont'
 [ 122394ms] [  json_delta] +   5ch  'ent":'
 [ 122394ms] [  json_delta] +   7ch  ' "# The'
@@ -3268,9 +3268,9 @@
 [ 122941ms] [    BLK_STOP] idx=1
 [ 122950ms] [   MSG_DELTA] stop=tool_use usage={"input_tokens": 6, "cache_creation_input_tokens": 0, "cache_read_input_tokens":
 [ 122950ms] [   User-echo] (tool result)
-[ 122951ms] [    MSG_STOP] 
+[ 122951ms] [    MSG_STOP]
 [ 122954ms] [      System] subtype=status
-[ 124922ms] [   MSG_START] 
+[ 124922ms] [   MSG_START]
 [ 124922ms] [   BLK_START] idx=0 tool_use name=Bash
 [ 124922ms] [  json_delta] +   0ch  ''
 [ 125276ms] [  json_delta] +   3ch  '{"c'
@@ -3296,9 +3296,9 @@
 [ 125568ms] [    BLK_STOP] idx=0
 [ 125594ms] [   MSG_DELTA] stop=tool_use usage={"input_tokens": 1, "cache_creation_input_tokens": 7287, "cache_read_input_token
 [ 125595ms] [   User-echo] (tool result)
-[ 125595ms] [    MSG_STOP] 
+[ 125595ms] [    MSG_STOP]
 [ 125596ms] [      System] subtype=status
-[ 127298ms] [   MSG_START] 
+[ 127298ms] [   MSG_START]
 [ 127298ms] [   BLK_START] idx=0 tool_use name=Read
 [ 127298ms] [  json_delta] +   0ch  ''
 [ 127371ms] [  json_delta] +   3ch  '{"f'
@@ -3310,9 +3310,9 @@
 [ 127376ms] [    BLK_STOP] idx=0
 [ 127419ms] [   MSG_DELTA] stop=tool_use usage={"input_tokens": 1, "cache_creation_input_tokens": 143, "cache_read_input_tokens
 [ 127420ms] [   User-echo] (tool result)
-[ 127421ms] [    MSG_STOP] 
+[ 127421ms] [    MSG_STOP]
 [ 127430ms] [      System] subtype=status
-[ 130171ms] [   MSG_START] 
+[ 130171ms] [   MSG_START]
 [ 130171ms] [   BLK_START] idx=0 thinking
 [ 130171ms] [       delta] type=signature_delta {"type": "signature_delta", "signature": "EvgBClkIDBgCKkClu4uzUb6YvxLrf0PNE55Q0THdpz23pDkXAYsYKmLkCk
 [ 130171ms] [   Assistant] [thinking(0)]
@@ -6581,9 +6581,9 @@
 [ 265397ms] [    BLK_STOP] idx=1
 [ 265421ms] [   MSG_DELTA] stop=tool_use usage={"input_tokens": 1, "cache_creation_input_tokens": 7230, "cache_read_input_token
 [ 265422ms] [   User-echo] (tool result)
-[ 265422ms] [    MSG_STOP] 
+[ 265422ms] [    MSG_STOP]
 [ 265425ms] [      System] subtype=status
-[ 267788ms] [   MSG_START] 
+[ 267788ms] [   MSG_START]
 [ 267791ms] [   BLK_START] idx=0 text
 [ 267799ms] [  text_delta] +   1ch  'I'
 [ 268106ms] [  text_delta] +  64ch  "'ve written the file to `/tmp/streaming_"
@@ -6596,5 +6596,5 @@
 [ 270258ms] [   Assistant] [text(421)]
 [ 270259ms] [    BLK_STOP] idx=0
 [ 270488ms] [   MSG_DELTA] stop=end_turn usage={"input_tokens": 1, "cache_creation_input_tokens": 7238, "cache_read_input_token
-[ 270489ms] [    MSG_STOP] 
+[ 270489ms] [    MSG_STOP]
 [ 270493ms] [      Result] cost=$0.5934 duration=270490ms turns=5
