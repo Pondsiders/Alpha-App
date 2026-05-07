@@ -429,7 +429,7 @@ Both sides validate every incoming message against a schema.
 Missing required fields are a hard failure, not a silent default. No `?? 0`, no `?? Date.now()`. If a field is required, its absence is a bug to be caught, not a gap to be papered over.
 :::
 
-**Backend (Python):** Pydantic models per command name. Invalid commands get an `error` event response.
+**Backend (Python):** Pydantic models per command name. **Wire-shape failures are bugs, not protocol cases.** If an inbound message can't be parsed as JSON, or can't be validated against any known command shape, the backend raises an uncaught exception. FastAPI closes the WebSocket; the frontend reconnects (the connection is the recovery primitive). The exception lands in Logfire under the request span — that's the canonical pane of glass for debugging. The wire `error` event is reserved for *domain* failures — operations that were valid commands but can't be done (`not-found`, `invalid-state`, `subprocess-died`, `context-exceeded`).
 
 **Frontend (TypeScript):** Zod schemas per event name. Invalid events throw, not silently degrade.
 

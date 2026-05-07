@@ -1,16 +1,19 @@
-"""WebSocket endpoint — accepts connections, forwards messages to the Dispatcher.
+"""WebSocket endpoint — accepts connections, validates inbound, dispatches.
 
-Per-message logfire spans replace the connection-level span we excluded
-in `app.create_app()`. Bad JSON gets one structured error event and the
-connection stays open; everything else flows through the Dispatcher.
+The doorman is the bouncer: this module is where raw JSON crosses into
+validated `BaseCommand` instances. Wire-shape failures (bad JSON, missing
+fields, unknown commands) are bugs — they raise uncaught exceptions and
+FastAPI closes the socket. The frontend reconnects; the trace lands in
+Logfire under the request span. See `wire-protocol.md`.
+
+`error` events on the wire are reserved for *domain* failures — valid
+commands that can't be done (chat not found, subprocess died, etc.).
 """
-
-from json import JSONDecodeError
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from alpha.ws.commands import CommandAdapter
 from alpha.ws.dispatcher import Dispatcher
-from alpha.ws.events import Error
 
 router = APIRouter()
 
@@ -24,17 +27,8 @@ async def ws(websocket: WebSocket) -> None:
 
     try:
         while True:
-            try:
-                msg = await websocket.receive_json()
-            except JSONDecodeError:
-                await websocket.send_json(
-                    Error(
-                        code="invalid-json",
-                        message="Message body was not valid JSON.",
-                    ).model_dump(by_alias=True, exclude_none=True)
-                )
-                continue
-
-            await dispatcher.dispatch(websocket, msg)
+            msg = await websocket.receive_json()
+            command = CommandAdapter.validate_python(msg)
+            await dispatcher.dispatch(websocket, command)
     except WebSocketDisconnect:
         return
