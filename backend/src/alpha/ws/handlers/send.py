@@ -1,5 +1,8 @@
 """Handle the `send` command."""
 
+# Stub handler. Pyright fuck off until implementation lands.
+# pyright: reportUnusedParameter=false
+
 from fastapi import WebSocket
 
 from alpha.ws.commands import Send
