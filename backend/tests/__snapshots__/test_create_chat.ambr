@@ -1,0 +1,11 @@
+# serializer version: 1
+# name: test_create_chat_round_trip
+  dict({
+    'archived': False,
+    'chatId': '<chat-id>',
+    'createdAt': '<timestamp>',
+    'event': 'chat-created',
+    'id': 'req_1',
+    'lastActive': '<timestamp>',
+  })
+# ---

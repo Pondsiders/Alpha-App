@@ -63,6 +63,11 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = 8000
 
+    # Optional. Connection string for a role with CREATEDB privilege,
+    # used by the integration test harness to spin up nonce databases
+    # named `test_<nanoid>`. Unset in production.
+    test_runner_url: str | None = None
+
     @classmethod
     @override
     def settings_customise_sources(

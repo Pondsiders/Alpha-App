@@ -37,6 +37,10 @@ dev = [
     "alembic>=1.18.4",
     "psycopg[binary]>=3.3.4",
     "asyncpg-stubs>=0.31.2",
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
+    "httpx>=0.28.1",
+    "syrupy>=5.1.0",
 ]
 
 [tool.ruff.lint]
@@ -63,9 +67,15 @@ convention = "google"
 "__main__.py" = ["D100"]
 # Alembic migration files use a generated docstring header.
 "alembic/versions/*.py" = ["D415"]
+# Tests use `assert` (S101) and don't need module/class/method docstrings.
+"tests/**/*.py" = ["S101", "D100", "D101", "D102", "D103"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
 
 [tool.basedpyright]
-include = ["src"]
+include = ["src", "tests"]
 typeCheckingMode = "recommended"
 
 # `Any` is the honest type for the wire boundary — JSON arrives shape-unknown
