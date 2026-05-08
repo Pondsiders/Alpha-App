@@ -4,12 +4,26 @@
 a fresh app per test by calling the factory.
 """
 
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+
 import logfire
 from fastapi import FastAPI
 
+from alpha import db
 from alpha.api import router as api_router
 from alpha.settings import settings
 from alpha.ws import router as ws_router
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncGenerator[None]:
+    """Open the database pool at startup, close it at shutdown."""
+    await db.init()
+    try:
+        yield
+    finally:
+        await db.close()
 
 
 def create_app() -> FastAPI:
@@ -31,6 +45,7 @@ def create_app() -> FastAPI:
         title="Alpha",
         description="An artificial intelligence.",
         version="0.0.0",
+        lifespan=_lifespan,
     )
 
     # `/ws` is excluded because OTel-FastAPI's default wraps each WebSocket

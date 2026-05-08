@@ -13,6 +13,7 @@ Right now only `Error` is defined. Real events (`app-state`, `chat-loaded`,
 `text-delta`, etc.) land as their handlers do.
 """
 
+from datetime import datetime
 from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -46,3 +47,13 @@ class Error(BaseEvent):
     event: Literal["error"] = "error"
     code: str
     message: str
+
+
+class ChatCreated(BaseEvent):
+    """A new chat was created. Emitted in response to `create-chat`."""
+
+    event: Literal["chat-created"] = "chat-created"
+    chat_id: str
+    created_at: datetime
+    last_active: datetime
+    archived: bool
