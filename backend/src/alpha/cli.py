@@ -11,6 +11,5 @@ def main() -> None:
         "alpha.app:create_app",
         host=settings.host,
         port=settings.port,
-        reload=settings.dev,
         factory=True,
     )

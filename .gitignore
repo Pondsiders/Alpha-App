@@ -19,6 +19,7 @@ frontend/dist/
 
 # Secrets
 .env
+settings.toml
 
 # OS
 .DS_Store
