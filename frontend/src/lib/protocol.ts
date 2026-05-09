@@ -56,11 +56,34 @@ export type Command =
 
 // -- Chat lifecycle -----------------------------------------------------------
 
+/**
+ * The chat's position in the turn lifecycle. Values:
+ *
+ * - `pending` — no Claude subprocess (reaped or never spawned).
+ * - `ready` — subprocess alive and idle, awaiting input.
+ * - `preprocessing` — backend has the message; recall/timestamp/normalize
+ *   in flight. Claude has not received the message yet.
+ * - `processing` — Claude has the message and is generating.
+ * - `postprocessing` — post-turn work (reflection, etc.) is running.
+ *
+ * The composer is open when state is `pending`, `ready`, or
+ * `postprocessing`; locked when `preprocessing` or `processing`. The
+ * state machine is implemented in `backend/src/alpha/chat.py`.
+ */
+export const ChatStateValue = z.enum([
+  "pending",
+  "ready",
+  "preprocessing",
+  "processing",
+  "postprocessing",
+]);
+export type ChatStateValue = z.infer<typeof ChatStateValue>;
+
 export const ChatSummary = z.object({
   chatId: z.string(),
   createdAt: z.iso.datetime({ offset: true }),
   lastActive: z.iso.datetime({ offset: true }),
-  state: z.enum(["idle", "busy", "dead"]),
+  state: ChatStateValue,
   tokenCount: z.number(),
   contextWindow: z.number(),
 }).strict();
@@ -102,8 +125,11 @@ export const ChatCreatedEvent = z.object({
 export const ChatStateEvent = z.object({
   event: z.literal("chat-state"),
   chatId: z.string(),
-  state: z.string(),
-});
+  state: ChatStateValue,
+  tokenCount: z.number(),
+  contextWindow: z.number(),
+  percent: z.number(),
+}).strict();
 
 // -- Turn lifecycle -----------------------------------------------------------
 

@@ -26,8 +26,8 @@ def _summarize(chat: Chat) -> ChatSummary:
     """Project a Chat into the ChatSummary the wire carries.
 
     Runtime fields (`state`, `tokenCount`) are placeholders for now — no
-    SDK process exists yet to be busy in, no token meter wired. They land
-    here as `dead` and `0` and become live when chat-state events arrive
+    SDK process exists yet to wake, no token meter wired. They land here
+    as `pending` and `0` and become live when chat-state events arrive
     from the SDK lifecycle. The wire shape stays stable across that
     transition; only the values evolve.
     """
@@ -35,7 +35,7 @@ def _summarize(chat: Chat) -> ChatSummary:
         chat_id=chat.chat_id,
         created_at=chat.created_at,
         last_active=chat.last_active,
-        state="dead",
+        state="pending",
         token_count=0,
         context_window=1_000_000,
     )

@@ -161,7 +161,7 @@ Sent by the server immediately on WebSocket connect. Also broadcast to all clien
       "chatId": "fN-8oovTiSotGEH1w242V",
       "createdAt": "2026-05-08T16:50:09.130260Z",
       "lastActive": "2026-05-08T16:50:09.130269Z",
-      "state": "dead",
+      "state": "pending",
       "tokenCount": 0,
       "contextWindow": 1000000
     }
@@ -195,9 +195,9 @@ Full message history + metadata for one chat. Sent in two situations:
   "event": "chat-loaded",
   "id": "req_1",
   "chatId": "hellopixel01",
-  "createdAt": 1775345137,
-  "lastActive": 1775345137,
-  "state": "dead",
+  "createdAt": "2026-05-08T16:50:09.130260Z",
+  "lastActive": "2026-05-08T16:50:09.130269Z",
+  "state": "ready",
   "tokenCount": 0,
   "contextWindow": 1000000,
   "messages": [
@@ -223,13 +223,13 @@ A new chat exists. Can be a response to [`create-chat`](#create-chat) (with `id`
 
 #### `chat-state`
 
-A chat's runtime state — its lifecycle status plus current context-window utilization. Sent whenever any of those values change. The server can send `chat-state` updates frequently; clients should treat each one as the new authoritative state for the chat.
+A chat's runtime state — its position in the turn lifecycle plus current context-window utilization. Sent whenever any of those values change. The server can send `chat-state` updates frequently; clients should treat each one as the new authoritative state for the chat.
 
 ```json
 {
   "event": "chat-state",
   "chatId": "xyz",
-  "state": "busy",
+  "state": "processing",
   "tokenCount": 165000,
   "contextWindow": 1000000,
   "percent": 16.5
@@ -238,10 +238,27 @@ A chat's runtime state — its lifecycle status plus current context-window util
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `state` | `"idle" \| "busy" \| "dead"` | Lifecycle status. `idle` means ready for input; `busy` means a turn is in flight; `dead` means the chat's subprocess is gone (resurrectable but not currently running). |
+| `state` | `"pending" \| "ready" \| "preprocessing" \| "processing" \| "postprocessing"` | The chat's position in the turn lifecycle. Values defined below. |
 | `tokenCount` | `number` | Current context size in tokens (input + cache_read + cache_creation). |
 | `contextWindow` | `number` | Maximum context window size for the model backing this chat. |
 | `percent` | `number` | Convenience: `tokenCount / contextWindow * 100`, rounded for display. |
+
+**State values:**
+
+`"pending"`
+: No Claude subprocess. The chat exists but has been reaped or never spawned.
+
+`"ready"`
+: Subprocess alive and idle, awaiting input.
+
+`"preprocessing"`
+: Backend has the message; recall, timestamping, and normalization are in flight. Claude has not received it yet.
+
+`"processing"`
+: Claude has the message and is generating.
+
+`"postprocessing"`
+: Post-turn work (reflection, etc.) is running.
 
 ::: info `chat-state` is the single source of truth for the context meter
 There is no separate `context-update` event. Token counts ride along on every `chat-state`. Send updates whenever they would change — at the start and end of a turn, after compaction, or any other moment the displayed meter should move.
@@ -254,8 +271,9 @@ A *turn* is a user message → Claude's response. The full event sequence:
 ```
 send (command)
   └→ send-ack                    "got it, preprocessing"
+  └→ chat-state {preprocessing}
   └→ user-message                preprocessed echo (with memories, timestamp)
-  └→ chat-state {busy}
+  └→ chat-state {processing}
   └→ thinking-delta (0..n)       extended thinking fragments
   └→ text-delta (0..n)           text response fragments
   └→ tool-call-start             Claude decided to call a tool
@@ -264,7 +282,7 @@ send (command)
      (steps above can repeat — Claude can think, text, tool, text, tool, text)
   └→ assistant-message           the complete finished message
   └→ turn-complete               done, updated token counts
-  └→ chat-state {idle}
+  └→ chat-state {ready}          (or {postprocessing} if a post-turn cycle runs)
 ```
 
 ::: info Preprocessing

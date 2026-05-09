@@ -5,7 +5,7 @@
       "chatId": "fN-8oovTiSotGEH1w242V",
       "createdAt": "2026-05-08T16:50:09.130260Z",
       "lastActive": "2026-05-08T16:50:09.130269Z",
-      "state": "dead",
+      "state": "pending",
       "tokenCount": 0,
       "contextWindow": 1000000
     },
@@ -13,7 +13,7 @@
       "chatId": "Z0u1ZKN0w-qe2A3Bb6CdE",
       "createdAt": "2026-05-08T13:02:41Z",
       "lastActive": "2026-05-08T15:18:22Z",
-      "state": "dead",
+      "state": "pending",
       "tokenCount": 0,
       "contextWindow": 1000000
     }

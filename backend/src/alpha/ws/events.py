@@ -59,6 +59,13 @@ class ChatCreated(BaseEvent):
     archived: bool
 
 
+ChatStateValue = Literal[
+    "pending", "ready", "preprocessing", "processing", "postprocessing"
+]
+"""Position of a chat in the turn lifecycle. See `Chat` for the full state
+machine — states, transitions, and the composer-input rule."""
+
+
 class ChatSummary(BaseModel):
     """One chat's summary fields, as carried in `app-state.chats`."""
 
@@ -72,7 +79,7 @@ class ChatSummary(BaseModel):
     chat_id: str
     created_at: datetime
     last_active: datetime
-    state: Literal["idle", "busy", "dead"]
+    state: ChatStateValue
     token_count: int
     context_window: int
 
@@ -83,3 +90,18 @@ class AppState(BaseEvent):
     event: Literal["app-state"] = "app-state"
     chats: list[ChatSummary]
     version: str
+
+
+class ChatState(BaseEvent):
+    """A chat's runtime state changed.
+
+    Single source of truth for the context meter and the turn-lifecycle
+    state. Sent whenever any of the carried values change.
+    """
+
+    event: Literal["chat-state"] = "chat-state"
+    chat_id: str
+    state: ChatStateValue
+    token_count: int
+    context_window: int
+    percent: float

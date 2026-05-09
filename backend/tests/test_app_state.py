@@ -35,6 +35,6 @@ def test_app_state_pushed_on_connect_with_chats(client: TestClient) -> None:
     assert len(event["chats"]) == 1
     summary = event["chats"][0]
     assert summary["chatId"] == new_chat_id
-    assert summary["state"] == "dead"
+    assert summary["state"] == "pending"
     assert summary["tokenCount"] == 0
     assert summary["contextWindow"] == 1_000_000

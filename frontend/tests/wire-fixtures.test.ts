@@ -15,6 +15,7 @@ import { z } from "zod/v4";
 import {
   AppStateEvent,
   ChatCreatedEvent,
+  ChatStateEvent,
   CreateChatCommand,
   ErrorEvent,
   InterruptCommand,
@@ -31,6 +32,7 @@ const EVENT_SCHEMAS: Record<string, z.ZodTypeAny> = {
   error: ErrorEvent,
   "chat-created": ChatCreatedEvent,
   "app-state": AppStateEvent,
+  "chat-state": ChatStateEvent,
 };
 
 const COMMAND_SCHEMAS: Record<string, z.ZodTypeAny> = {
