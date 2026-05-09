@@ -17,6 +17,7 @@ import {
 
 import {
   convertMessage,
+  isChatBusy,
   selectCurrentChat,
   useStore,
   type Message,
@@ -33,7 +34,7 @@ export function RuntimeProvider({
 }: Readonly<{ children: ReactNode }>) {
   const currentChat = useStore(selectCurrentChat);
   const messages = currentChat?.messages ?? EMPTY_MESSAGES;
-  const isRunning = currentChat?.isRunning ?? false;
+  const isRunning = isChatBusy(currentChat);
 
   const wsSend = useStore((s) => s.wsSend);
   const currentChatId = useStore((s) => s.currentChatId);

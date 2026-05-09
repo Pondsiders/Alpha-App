@@ -14,7 +14,7 @@
  */
 
 import { useCallback, useEffect, useRef } from "react";
-import { useStore, type Chat, type Message, type UserMessage, type AssistantMessage } from "@/store";
+import { useStore, type Message, type UserMessage, type AssistantMessage } from "@/store";
 import { useWebSocket } from "@/lib/useWebSocket";
 import {
   parseEvent,
@@ -34,8 +34,7 @@ export function useAlphaWebSocket() {
   const appendMessage = useStore((s) => s.appendMessage);
   const appendTextDelta = useStore((s) => s.appendTextDelta);
   const appendThinkingDelta = useStore((s) => s.appendThinkingDelta);
-  const setIsRunning = useStore((s) => s.setIsRunning);
-  const setTokenCount = useStore((s) => s.setTokenCount);
+  const setChatState = useStore((s) => s.setChatState);
   const setWsSend = useStore((s) => s.setWsSend);
   const replaceLastUserMessage = useStore((s) => s.replaceLastUserMessage);
   const ensureAssistantMessage = useStore((s) => s.ensureAssistantMessage);
@@ -55,30 +54,20 @@ export function useAlphaWebSocket() {
         // -- Chat lifecycle --
 
         case "app-state": {
-          const chats: Omit<Chat, "messages" | "isRunning">[] = event.chats.map(
-            (c) => ({
-              id: c.chatId,
-              title: c.title,
-              createdAt: c.createdAt,
-              updatedAt: c.updatedAt,
-              tokenCount: c.tokenCount,
-              contextWindow: c.contextWindow,
-              sessionUuid: c.sessionUuid,
-            }),
-          );
-          setChatList(chats);
+          // Wire summaries are already shaped exactly like Chat (modulo the
+          // locally-held messages array). Pass them through to the store.
+          setChatList(event.chats);
           break;
         }
 
         case "chat-loaded": {
           upsertChat({
-            id: event.chatId,
-            title: event.title,
+            chatId: event.chatId,
             createdAt: event.createdAt,
-            updatedAt: event.updatedAt,
+            lastActive: event.lastActive,
+            state: event.state,
             tokenCount: event.tokenCount,
             contextWindow: event.contextWindow,
-            sessionUuid: event.sessionUuid,
           });
           setMessages(event.chatId, event.messages as unknown as Message[]);
           // Select this chat and persist to localStorage for next startup.
@@ -90,10 +79,12 @@ export function useAlphaWebSocket() {
 
         case "chat-created": {
           upsertChat({
-            id: event.chatId,
-            title: event.title,
+            chatId: event.chatId,
             createdAt: event.createdAt,
-            updatedAt: event.createdAt, // No updatedAt on creation
+            lastActive: event.lastActive,
+            // A freshly created chat has no subprocess yet — it starts in
+            // pending and the first send wakes it.
+            state: "pending",
             tokenCount: 0,
             contextWindow: 1_000_000,
           });
@@ -102,9 +93,11 @@ export function useAlphaWebSocket() {
         }
 
         case "chat-state": {
-          if (event.chatId) {
-            setIsRunning(event.chatId, event.state === "busy");
-          }
+          setChatState(event.chatId, {
+            state: event.state,
+            tokenCount: event.tokenCount,
+            contextWindow: event.contextWindow,
+          });
           break;
         }
 
@@ -254,17 +247,9 @@ export function useAlphaWebSocket() {
         }
 
         case "turn-complete": {
-          // Don't set isRunning=false here — let chat-state handle it.
-          // The suggest pipeline fires a second turn after the main response,
-          // and setting false between them would disengage scroll follow.
-          setTokenCount(event.chatId, event.tokenCount);
-          break;
-        }
-
-        // -- Context --
-
-        case "context-update": {
-          setTokenCount(event.chatId, event.tokenCount);
+          // The signal that Claude finished. State and token-count updates
+          // arrive on a chat-state event that follows; nothing for the
+          // consumer to do here.
           break;
         }
 
@@ -284,8 +269,9 @@ export function useAlphaWebSocket() {
       appendMessage,
       appendTextDelta,
       appendThinkingDelta,
-      setIsRunning,
-      setTokenCount,
+      setChatState,
+      replaceLastUserMessage,
+      ensureAssistantMessage,
     ],
   );
 

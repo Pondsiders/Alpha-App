@@ -59,8 +59,8 @@ export function CopyButton({ text }: { text: string }) {
 
 const LA = "America/Los_Angeles";
 
-function toPSO8601(unixSeconds: number): string {
-  const d = new Date(unixSeconds * 1000);
+function toPSO8601(iso: string): string {
+  const d = new Date(iso);
   return (
     d.toLocaleDateString("en-US", {
       timeZone: LA,
@@ -119,25 +119,11 @@ export function ChatHoverCard({
             </div>
             <div className="flex items-center gap-1.5">
               <code className="break-all text-xs text-foreground">
-                {chat.id}
+                {chat.chatId}
               </code>
-              <CopyButton text={chat.id} />
+              <CopyButton text={chat.chatId} />
             </div>
           </div>
-
-          {chat.sessionUuid && (
-            <div className="space-y-0.5">
-              <div className="text-[10px] leading-none text-muted-foreground tracking-wide">
-                Session
-              </div>
-              <div className="flex items-center gap-1.5">
-                <code className="break-all text-xs text-foreground">
-                  {chat.sessionUuid}
-                </code>
-                <CopyButton text={chat.sessionUuid} />
-              </div>
-            </div>
-          )}
         </div>
       </HoverCardContent>
     </HoverCard>

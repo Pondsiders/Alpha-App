@@ -98,13 +98,11 @@ export const ChatLoadedEvent = z.object({
   event: z.literal("chat-loaded"),
   id: z.string().optional(),
   chatId: z.string(),
-  title: z.string(),
-  createdAt: z.number(),
-  updatedAt: z.number(),
-  state: z.string(),
+  createdAt: z.iso.datetime({ offset: true }),
+  lastActive: z.iso.datetime({ offset: true }),
+  state: ChatStateValue,
   tokenCount: z.number(),
   contextWindow: z.number(),
-  sessionUuid: z.string().optional(),
   messages: z.array(
     z.object({
       role: z.enum(["user", "assistant", "system"]),
@@ -140,31 +138,13 @@ export const SendAckEvent = z.object({
 });
 
 /**
- * Source of a user message — who initiated it.
- *
- * - `"human"` and `"buzzer"` block input: composer shows stop button,
- *   new sends are rejected until the turn completes.
- * - `"reflection"` and `"approach-light"` do NOT block input: composer
- *   stays idle and accepts input. If a new human message arrives
- *   mid-flight, the backend interrupts and the human wins.
- *
- * The `blocksInput` helper (below) is the dual of the interruptible
- * property — it derives from source via a single lookup.
+ * Source of a user message — who initiated it. The composer-input rule
+ * is a function of `chat.state` alone (see the Chat docstring in
+ * backend/src/alpha/chat.py); `source` is metadata for rendering and
+ * message-history filtering, not for input gating.
  */
-export const UserMessageSource = z.enum([
-  "human",
-  "buzzer",
-  "reflection",
-  "approach-light",
-]);
+export const UserMessageSource = z.enum(["human", "reflection"]);
 export type UserMessageSource = z.infer<typeof UserMessageSource>;
-
-const _BLOCKING_SOURCES = new Set<UserMessageSource>(["human", "buzzer"]);
-
-/** Does a user message with this source block frontend input while in flight? */
-export function blocksInput(source: UserMessageSource): boolean {
-  return _BLOCKING_SOURCES.has(source);
-}
 
 export const UserMessageEvent = z.object({
   event: z.literal("user-message"),
@@ -223,20 +203,7 @@ export const AssistantMessageEvent = z.object({
 export const TurnCompleteEvent = z.object({
   event: z.literal("turn-complete"),
   chatId: z.string(),
-  tokenCount: z.number(),
-  contextWindow: z.number(),
-  percent: z.number(),
-});
-
-// -- Context ------------------------------------------------------------------
-
-export const ContextUpdateEvent = z.object({
-  event: z.literal("context-update"),
-  chatId: z.string(),
-  tokenCount: z.number(),
-  contextWindow: z.number(),
-  percent: z.number(),
-});
+}).strict();
 
 // -- Errors -------------------------------------------------------------------
 
@@ -263,7 +230,6 @@ export const ServerEvent = z.discriminatedUnion("event", [
   ToolCallResultEvent,
   AssistantMessageEvent,
   TurnCompleteEvent,
-  ContextUpdateEvent,
   ErrorEvent,
 ]);
 
@@ -280,7 +246,6 @@ export type ToolCallDeltaEvent = z.infer<typeof ToolCallDeltaEvent>;
 export type ToolCallResultEvent = z.infer<typeof ToolCallResultEvent>;
 export type AssistantMessageEvent = z.infer<typeof AssistantMessageEvent>;
 export type TurnCompleteEvent = z.infer<typeof TurnCompleteEvent>;
-export type ContextUpdateEvent = z.infer<typeof ContextUpdateEvent>;
 export type ErrorEvent = z.infer<typeof ErrorEvent>;
 export type ServerEvent = z.infer<typeof ServerEvent>;
 

@@ -14,6 +14,7 @@
 import { create } from "zustand";
 import { immer } from "zustand/middleware/immer";
 import type { ThreadMessageLike } from "@assistant-ui/react";
+import type { ChatStateValue } from "@/lib/protocol";
 
 // ---------------------------------------------------------------------------
 // Backend message formats (must match backend/src/alpha_app/models.py)
@@ -85,16 +86,24 @@ export type Message =
 // Chat — metadata + messages for one conversation
 // ---------------------------------------------------------------------------
 
+/**
+ * One chat as the frontend tracks it. Mirrors `ChatSummary` from the wire
+ * (see backend/src/alpha/ws/events.py and docs/wire-protocol.md), plus
+ * the locally-held `messages` array.
+ *
+ * Field shapes match the wire exactly: `chatId` not `id`, ISO-8601 string
+ * timestamps not unix seconds, `state` from the five-value FSM. The
+ * composer-input rule is a function of `state` alone — see the `Chat`
+ * docstring in backend/src/alpha/chat.py for the full state machine.
+ */
 export interface Chat {
-  id: string;
-  title: string;
-  createdAt: number; // unix seconds
-  updatedAt: number; // unix seconds
-  messages: Message[];
-  isRunning: boolean;
+  chatId: string;
+  createdAt: string; // ISO 8601 with offset
+  lastActive: string; // ISO 8601 with offset
+  state: ChatStateValue;
   tokenCount: number;
   contextWindow: number;
-  sessionUuid?: string;
+  messages: Message[];
 }
 
 // ---------------------------------------------------------------------------
@@ -116,16 +125,16 @@ interface AppState {
   setCurrentChatId: (id: string | null) => void;
 
   /**
-   * Replace the entire chat list. Used on initial `chat-list` event from
-   * the WebSocket. Preserves `messages` for any chats already in the store
-   * (so switching back and forth doesn't blow away loaded history).
+   * Replace the entire chat list. Used on the connect-time `app-state`
+   * event. Preserves `messages` for any chats already in the store (so
+   * switching back and forth doesn't blow away loaded history).
    */
-  setChatList: (chats: Omit<Chat, "messages" | "isRunning">[]) => void;
+  setChatList: (chats: Omit<Chat, "messages">[]) => void;
 
-  /** Upsert a single chat (used when Dawn creates a new one at 6 AM, etc). */
-  upsertChat: (chat: Partial<Chat> & { id: string }) => void;
+  /** Upsert a single chat (used on `chat-created`, `chat-state`, etc). */
+  upsertChat: (chat: Partial<Chat> & { chatId: string }) => void;
 
-  /** Replace all messages for a chat. Used on `chat-data` event. */
+  /** Replace all messages for a chat. Used on `chat-loaded`. */
   setMessages: (chatId: string, messages: Message[]) => void;
 
   /** Append a new message to a chat (user send, or server-initiated). */
@@ -152,11 +161,11 @@ interface AppState {
     delta: string,
   ) => void;
 
-  /** Set the running flag for a chat. */
-  setIsRunning: (chatId: string, isRunning: boolean) => void;
-
-  /** Update token accounting for a chat. */
-  setTokenCount: (chatId: string, tokenCount: number) => void;
+  /** Update a chat's lifecycle state. Used on `chat-state` events. */
+  setChatState: (
+    chatId: string,
+    fields: { state: ChatStateValue; tokenCount: number; contextWindow: number },
+  ) => void;
 
   /** WebSocket send function — set by useAlphaWebSocket on connect. */
   wsSend: ((cmd: Record<string, unknown>) => void) | null;
@@ -185,11 +194,10 @@ export const useStore = create<AppState>()(
       set((state) => {
         const next: Record<string, Chat> = {};
         for (const c of incoming) {
-          const existing = state.chats[c.id];
-          next[c.id] = {
+          const existing = state.chats[c.chatId];
+          next[c.chatId] = {
             ...c,
             messages: existing?.messages ?? [],
-            isRunning: existing?.isRunning ?? false,
           };
         }
         state.chats = next;
@@ -197,20 +205,30 @@ export const useStore = create<AppState>()(
 
     upsertChat: (patch) =>
       set((state) => {
-        const existing = state.chats[patch.id];
+        const existing = state.chats[patch.chatId];
         if (existing) {
           Object.assign(existing, patch);
         } else {
-          state.chats[patch.id] = {
-            id: patch.id,
-            title: patch.title ?? "",
-            createdAt: patch.createdAt ?? Date.now() / 1000,
-            updatedAt: patch.updatedAt ?? Date.now() / 1000,
-            messages: patch.messages ?? [],
-            isRunning: patch.isRunning ?? false,
+          // Brittle-as-fuck: a chat needs every wire field to exist. Caller
+          // must supply createdAt, lastActive, and state — there's no honest
+          // default for any of them. Missing fields explode loudly here.
+          if (
+            patch.createdAt === undefined ||
+            patch.lastActive === undefined ||
+            patch.state === undefined
+          ) {
+            throw new Error(
+              `upsertChat: new chat ${patch.chatId} missing required wire fields`,
+            );
+          }
+          state.chats[patch.chatId] = {
+            chatId: patch.chatId,
+            createdAt: patch.createdAt,
+            lastActive: patch.lastActive,
+            state: patch.state,
             tokenCount: patch.tokenCount ?? 0,
             contextWindow: patch.contextWindow ?? 1_000_000,
-            sessionUuid: patch.sessionUuid,
+            messages: patch.messages ?? [],
           };
         }
       }),
@@ -337,16 +355,14 @@ export const useStore = create<AppState>()(
         parts.push({ type: "thinking", thinking: delta });
       }),
 
-    setIsRunning: (chatId, isRunning) =>
+    setChatState: (chatId, fields) =>
       set((state) => {
         const chat = state.chats[chatId];
-        if (chat) chat.isRunning = isRunning;
-      }),
-
-    setTokenCount: (chatId, tokenCount) =>
-      set((state) => {
-        const chat = state.chats[chatId];
-        if (chat) chat.tokenCount = tokenCount;
+        if (chat) {
+          chat.state = fields.state;
+          chat.tokenCount = fields.tokenCount;
+          chat.contextWindow = fields.contextWindow;
+        }
       }),
 
     setWsSend: (fn) =>
@@ -364,9 +380,29 @@ export const useStore = create<AppState>()(
 export const selectCurrentChat = (s: AppState): Chat | null =>
   s.currentChatId ? (s.chats[s.currentChatId] ?? null) : null;
 
-/** Get the ordered list of chats (newest first by updatedAt). */
+/** Get the ordered list of chats (newest first by lastActive).
+ *  ISO 8601 strings sort lexicographically when same-precision; ours are. */
 export const selectChatList = (s: AppState): Chat[] =>
-  Object.values(s.chats).sort((a, b) => b.updatedAt - a.updatedAt);
+  Object.values(s.chats).sort((a, b) => b.lastActive.localeCompare(a.lastActive));
+
+/** Derive the composer-input rule from a chat's state. The composer
+ *  accepts input when the chat is `pending`, `ready`, or
+ *  `postprocessing`; locked when `preprocessing` or `processing`. See the
+ *  `Chat` docstring in backend/src/alpha/chat.py for the full state machine. */
+export function isComposerOpen(chat: Chat | null | undefined): boolean {
+  if (!chat) return false;
+  return (
+    chat.state === "pending" ||
+    chat.state === "ready" ||
+    chat.state === "postprocessing"
+  );
+}
+
+/** Inverse of isComposerOpen for assistant-ui's `isRunning` semantics. */
+export function isChatBusy(chat: Chat | null | undefined): boolean {
+  if (!chat) return false;
+  return chat.state === "preprocessing" || chat.state === "processing";
+}
 
 // ---------------------------------------------------------------------------
 // convertMessage — our format → assistant-ui's ThreadMessageLike

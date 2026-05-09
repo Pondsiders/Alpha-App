@@ -26,7 +26,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -54,9 +53,9 @@ interface DayBucket {
 
 const LA = "America/Los_Angeles";
 
-/** Get the circadian day start (6 AM LA time) for a given unix timestamp */
-function getCircadianDay(ts: number): Date {
-  const d = new Date(ts * 1000);
+/** Get the circadian day start (6 AM LA time) for a given ISO 8601 timestamp */
+function getCircadianDay(iso: string): Date {
+  const d = new Date(iso);
   const laStr = d.toLocaleString("en-US", { timeZone: LA });
   const la = new Date(laStr);
   if (la.getHours() < 6) {
@@ -66,9 +65,9 @@ function getCircadianDay(ts: number): Date {
   return la;
 }
 
-/** Format a unix timestamp as PSO-8601: "Fri Apr 3 2026, 7:09 AM" */
-function toPSO8601(ts: number): string {
-  const d = new Date(ts * 1000);
+/** Format an ISO 8601 timestamp as PSO-8601: "Fri Apr 3 2026, 7:09 AM" */
+function toPSO8601(iso: string): string {
+  const d = new Date(iso);
   return (
     d.toLocaleDateString("en-US", {
       timeZone: LA,
@@ -87,8 +86,8 @@ function toPSO8601(ts: number): string {
 }
 
 /** Format creation time as PSO-8601 time only: "7:09 AM" */
-function toTimeOnly(ts: number): string {
-  return new Date(ts * 1000).toLocaleTimeString("en-US", {
+function toTimeOnly(iso: string): string {
+  return new Date(iso).toLocaleTimeString("en-US", {
     timeZone: LA,
     hour: "numeric",
     minute: "2-digit",
@@ -127,7 +126,8 @@ function groupChatsByDay(chats: Chat[]): DayBucket[] {
     .map(({ circadianStart, threads }) => ({
       dayLabel: getDayName(circadianStart),
       dateKey: circadianStart.toISOString(),
-      threads: threads.sort((a, b) => b.createdAt - a.createdAt),
+      // ISO 8601 strings sort lexicographically when same-precision; ours are.
+      threads: threads.sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
     }));
 }
 
@@ -177,7 +177,7 @@ function CopyRow({ label, value }: { label: string; value: string }) {
 
 function ChatItem({ chat }: { chat: Chat }) {
   const setCurrentChatId = useStore((s) => s.setCurrentChatId);
-  const isActive = useStore((s) => s.currentChatId === chat.id);
+  const isActive = useStore((s) => s.currentChatId === chat.chatId);
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const isMobile = useIsMobile();
 
@@ -188,7 +188,7 @@ function ChatItem({ chat }: { chat: Chat }) {
           <SidebarMenuButton
             className="cursor-pointer group-hover/menu-item:bg-sidebar-accent group-hover/menu-item:text-sidebar-accent-foreground data-active:bg-primary data-active:text-primary-foreground"
             isActive={isActive}
-            onClick={() => setCurrentChatId(chat.id)}
+            onClick={() => setCurrentChatId(chat.chatId)}
           >
             {toTimeOnly(chat.createdAt)}
           </SidebarMenuButton>
@@ -204,13 +204,7 @@ function ChatItem({ chat }: { chat: Chat }) {
           </SidebarMenuAction>
         </DropdownMenuTrigger>
         <DropdownMenuContent side={isMobile ? "bottom" : "right"} align="start" className="w-72">
-          <CopyRow label="Chat ID" value={chat.id} />
-          {chat.sessionUuid && (
-            <>
-              <DropdownMenuSeparator />
-              <CopyRow label="Session ID" value={chat.sessionUuid} />
-            </>
-          )}
+          <CopyRow label="Chat ID" value={chat.chatId} />
         </DropdownMenuContent>
       </DropdownMenu>
         </SidebarMenuItem>
@@ -242,7 +236,7 @@ export function GroupedThreadList() {
           <SidebarGroupContent>
             <SidebarMenu>
               {day.threads.map((chat) => (
-                <ChatItem key={chat.id} chat={chat} />
+                <ChatItem key={chat.chatId} chat={chat} />
               ))}
             </SidebarMenu>
           </SidebarGroupContent>
