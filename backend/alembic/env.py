@@ -1,9 +1,8 @@
 """Alembic environment.
 
-Reads `database_url` from `alpha.settings`, which loads from `settings.toml`.
-The same TOML file the app reads is the only source for migration targets,
-so `alembic upgrade head` and `uv run alpha` are guaranteed to be talking
-to the same cluster.
+Reads `database_url` from `alpha.settings`. Both `alembic upgrade head`
+and `uv run alpha` go through the same Settings object, so they're
+guaranteed to be talking to the same cluster.
 """
 
 from logging.config import fileConfig
