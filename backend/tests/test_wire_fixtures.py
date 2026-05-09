@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from alpha.ws.commands import BaseCommand
+from alpha.ws.commands import BaseCommand, CreateChat, Interrupt, JoinChat, Send
 from alpha.ws.events import AppState, BaseEvent, ChatCreated, Error
 
 # Map a fixture's discriminator value (the `event` or `command` field) to
@@ -24,7 +24,12 @@ _EVENT_CLASSES: dict[str, type[BaseEvent]] = {
     "app-state": AppState,
 }
 
-_COMMAND_CLASSES: dict[str, type[BaseCommand]] = {}
+_COMMAND_CLASSES: dict[str, type[BaseCommand]] = {
+    "create-chat": CreateChat,
+    "join-chat": JoinChat,
+    "send": Send,
+    "interrupt": Interrupt,
+}
 
 _FIXTURES_DIR = (
     Path(__file__).resolve().parent.parent.parent / "fixtures" / "wire-payloads"

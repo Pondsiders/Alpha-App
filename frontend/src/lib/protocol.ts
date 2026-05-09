@@ -19,44 +19,36 @@ export const JoinChatCommand = z.object({
   command: z.literal("join-chat"),
   id: z.string().optional(),
   chatId: z.string(),
-});
+}).strict();
 
 export const CreateChatCommand = z.object({
   command: z.literal("create-chat"),
   id: z.string().optional(),
-});
+}).strict();
 
 export const SendCommand = z.object({
   command: z.literal("send"),
   id: z.string().optional(),
   chatId: z.string(),
-  messageId: z.string().optional(),
   content: z.array(z.record(z.string(), z.unknown())),
-});
+}).strict();
 
 export const InterruptCommand = z.object({
   command: z.literal("interrupt"),
-  chatId: z.string(),
-});
-
-export const BuzzCommand = z.object({
-  command: z.literal("buzz"),
   id: z.string().optional(),
   chatId: z.string(),
-});
+}).strict();
 
 export type JoinChatCommand = z.infer<typeof JoinChatCommand>;
 export type CreateChatCommand = z.infer<typeof CreateChatCommand>;
 export type SendCommand = z.infer<typeof SendCommand>;
 export type InterruptCommand = z.infer<typeof InterruptCommand>;
-export type BuzzCommand = z.infer<typeof BuzzCommand>;
 
 export type Command =
   | JoinChatCommand
   | CreateChatCommand
   | SendCommand
-  | InterruptCommand
-  | BuzzCommand;
+  | InterruptCommand;
 
 // =============================================================================
 // Events (server → client)
@@ -64,23 +56,20 @@ export type Command =
 
 // -- Chat lifecycle -----------------------------------------------------------
 
+export const ChatSummary = z.object({
+  chatId: z.string(),
+  createdAt: z.iso.datetime({ offset: true }),
+  lastActive: z.iso.datetime({ offset: true }),
+  state: z.enum(["idle", "busy", "dead"]),
+  tokenCount: z.number(),
+  contextWindow: z.number(),
+}).strict();
+
 export const AppStateEvent = z.object({
   event: z.literal("app-state"),
-  chats: z.array(
-    z.object({
-      chatId: z.string(),
-      title: z.string(),
-      createdAt: z.number(),
-      updatedAt: z.number(),
-      state: z.string(),
-      tokenCount: z.number(),
-      contextWindow: z.number(),
-      sessionUuid: z.string().optional(),
-    })
-  ),
-  solitude: z.boolean().default(false),
-  version: z.string().default(""),
-});
+  chats: z.array(ChatSummary),
+  version: z.string(),
+}).strict();
 
 export const ChatLoadedEvent = z.object({
   event: z.literal("chat-loaded"),
@@ -105,9 +94,10 @@ export const ChatCreatedEvent = z.object({
   event: z.literal("chat-created"),
   id: z.string().optional(),
   chatId: z.string(),
-  title: z.string().default(""),
-  createdAt: z.number(),
-});
+  createdAt: z.iso.datetime({ offset: true }),
+  lastActive: z.iso.datetime({ offset: true }),
+  archived: z.boolean(),
+}).strict();
 
 export const ChatStateEvent = z.object({
   event: z.literal("chat-state"),
@@ -227,10 +217,9 @@ export const ContextUpdateEvent = z.object({
 export const ErrorEvent = z.object({
   event: z.literal("error"),
   id: z.string().optional(),
-  chatId: z.string().optional(),
   code: z.string(),
   message: z.string(),
-});
+}).strict();
 
 // -- Discriminated union of all events ----------------------------------------
 
