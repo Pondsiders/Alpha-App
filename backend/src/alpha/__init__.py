@@ -1,1 +1,5 @@
 """Alpha — an artificial intelligence."""
+
+from importlib.metadata import version as _pkg_version
+
+__version__ = _pkg_version("alpha")

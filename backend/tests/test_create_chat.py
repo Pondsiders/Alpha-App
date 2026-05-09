@@ -17,6 +17,7 @@ def test_create_chat_round_trip(
     """Send `create-chat`, expect `chat-created`, verify row in `app.chats`."""
     cmd = CreateChat(command="create-chat", id="req_1")
     with client.websocket_connect("/ws") as ws:
+        _ = ws.receive_json()  # connect-time app-state push
         ws.send_text(cmd.model_dump_json(by_alias=True))
         event: dict[str, Any] = ws.receive_json()
 

@@ -158,17 +158,21 @@ Sent by the server immediately on WebSocket connect. Also broadcast to all clien
   "event": "app-state",
   "chats": [
     {
-      "chatId": "hellopixel01",
-      "createdAt": 1775345137,
-      "lastActive": 1775345137,
+      "chatId": "fN-8oovTiSotGEH1w242V",
+      "createdAt": "2026-05-08T16:50:09.130260Z",
+      "lastActive": "2026-05-08T16:50:09.130269Z",
       "state": "dead",
       "tokenCount": 0,
       "contextWindow": 1000000
     }
   ],
-  "version": "0.4.1"
+  "version": "0.0.0"
 }
 ```
+:::
+
+::: tip Timestamps are ISO 8601 strings
+Every datetime on the wire is an ISO 8601 string with timezone (`"2026-05-08T16:50:09.130260Z"`), not a unix integer. Pydantic emits `datetime` fields this way by default in `mode="json"`; matches `Date(isoString)` on the JS side.
 :::
 
 | Field | Description |

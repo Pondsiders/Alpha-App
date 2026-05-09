@@ -57,3 +57,29 @@ class ChatCreated(BaseEvent):
     created_at: datetime
     last_active: datetime
     archived: bool
+
+
+class ChatSummary(BaseModel):
+    """One chat's summary fields, as carried in `app-state.chats`."""
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(
+        frozen=True,
+        extra="forbid",
+        alias_generator=to_camel,
+        populate_by_name=True,
+    )
+
+    chat_id: str
+    created_at: datetime
+    last_active: datetime
+    state: Literal["idle", "busy", "dead"]
+    token_count: int
+    context_window: int
+
+
+class AppState(BaseEvent):
+    """Global application state. Pushed unsolicited on every WebSocket connect."""
+
+    event: Literal["app-state"] = "app-state"
+    chats: list[ChatSummary]
+    version: str

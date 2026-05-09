@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 import logfire
 from fastapi import FastAPI
 
+import alpha
 from alpha import db
 from alpha.api import router as api_router
 from alpha.settings import settings
@@ -44,7 +45,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Alpha",
         description="An artificial intelligence.",
-        version="0.0.0",
+        version=alpha.__version__,
         lifespan=_lifespan,
     )
 

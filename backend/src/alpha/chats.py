@@ -4,11 +4,11 @@ Each function acquires a connection from `db.get()`, runs one statement,
 and releases. No class wrapper, no broadcasting; this module returns and
 persists data. Telling other parts of the system that something changed
 is the caller's job.
-
-Today only `create()` lives here. `get()`, `list_active()`, and `save()`
-land as their first callers do.
 """
 
+from datetime import datetime
+
+import asyncpg
 import pendulum
 
 from alpha import db
@@ -38,3 +38,53 @@ async def create() -> Chat:
             chat.archived,
         )
     return chat
+
+
+async def all(*, include_archived: bool = False) -> list[Chat]:
+    """Return chats for the sidebar, newest first.
+
+    By default, archived chats are excluded; pass `include_archived=True`
+    to get the full list (e.g. for a long-term archive view).
+    """
+    if include_archived:
+        sql = """
+            SELECT chat_id, session_id, created_at, last_active, archived
+            FROM app.chats
+            ORDER BY created_at DESC
+        """
+    else:
+        sql = """
+            SELECT chat_id, session_id, created_at, last_active, archived
+            FROM app.chats
+            WHERE archived = FALSE
+            ORDER BY created_at DESC
+        """
+    async with db.get().acquire() as conn:
+        rows = await conn.fetch(sql)
+    return [_hydrate(row) for row in rows]
+
+
+def _hydrate(row: asyncpg.Record) -> Chat:
+    """Build a Chat from one asyncpg Record. Narrows column types at the seam.
+
+    asyncpg returns Record objects whose column accessors are loosely typed.
+    The asserts narrow each column to the type Chat expects; a failure means
+    the table schema and the Python types have drifted.
+    """
+    chat_id = row["chat_id"]
+    session_id = row["session_id"]
+    created_at = row["created_at"]
+    last_active = row["last_active"]
+    archived = row["archived"]
+    assert isinstance(chat_id, str)  # noqa: S101 — type narrowing at the asyncpg→Chat seam
+    assert session_id is None or isinstance(session_id, str)  # noqa: S101
+    assert isinstance(created_at, datetime)  # noqa: S101
+    assert isinstance(last_active, datetime)  # noqa: S101
+    assert isinstance(archived, bool)  # noqa: S101
+    return Chat(
+        chat_id=chat_id,
+        session_id=session_id,
+        created_at=pendulum.instance(created_at),
+        last_active=pendulum.instance(last_active),
+        archived=archived,
+    )
