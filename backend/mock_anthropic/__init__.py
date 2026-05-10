@@ -1,13 +1,12 @@
 """MockAnthropic — a minimal stand-in for the Anthropic Messages API.
 
-Streams canned responses on POST /v1/messages so the Claude Agent SDK
-can be exercised without making real API calls. Point a client at this
-server with `ANTHROPIC_BASE_URL=http://host:port`.
+Echoes the last user message back on POST /v1/messages so the Claude
+Agent SDK can be exercised without making real API calls. Point a client
+at this server with `ANTHROPIC_BASE_URL=http://host:port`.
 """
 
 import asyncio
 import json
-import time
 import uuid
 from collections.abc import AsyncIterator
 from typing import Any
@@ -15,7 +14,7 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-CANNED_TEXT = "Hello, human."
+DEFAULT_TEXT = "Hello, human."
 CHUNK_SIZE = 60
 CHUNK_DELAY_S = 0.25
 
@@ -32,9 +31,35 @@ def _sse(event: str, data: dict[str, Any]) -> bytes:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n".encode()
 
 
-async def _stream_response(model: str) -> AsyncIterator[bytes]:
+def _extract_last_user_text(body: dict[str, Any]) -> str:
+    """Pull plain text out of the last user message in a Messages API request.
+
+    Anthropic accepts `content` as either a bare string or a list of content
+    blocks (text, image, tool_result, etc.). We concatenate the text blocks
+    of the last user-role message; everything else is ignored. Returns
+    `DEFAULT_TEXT` if no user text is found.
+    """
+    messages = body.get("messages", [])
+    for message in reversed(messages):
+        if message.get("role") != "user":
+            continue
+        content = message.get("content", "")
+        if isinstance(content, str):
+            return content or DEFAULT_TEXT
+        if isinstance(content, list):
+            parts = [
+                block.get("text", "")
+                for block in content
+                if isinstance(block, dict) and block.get("type") == "text"
+            ]
+            joined = "".join(parts)
+            if joined:
+                return joined
+    return DEFAULT_TEXT
+
+
+async def _stream_response(model: str, text: str) -> AsyncIterator[bytes]:
     message_id = _new_message_id()
-    text = CANNED_TEXT
     chunks = _chunks(text, CHUNK_SIZE)
     input_tokens = 10
     output_tokens = max(1, len(text) // 4)
@@ -99,8 +124,7 @@ async def _stream_response(model: str) -> AsyncIterator[bytes]:
     yield _sse("message_stop", {"type": "message_stop"})
 
 
-def _full_response(model: str) -> dict[str, Any]:
-    text = CANNED_TEXT
+def _full_response(model: str, text: str) -> dict[str, Any]:
     return {
         "id": _new_message_id(),
         "type": "message",
@@ -127,26 +151,13 @@ def create_app() -> FastAPI:
         body = await request.json()
         model: str = body.get("model", "mock-claude")
         stream: bool = body.get("stream", False)
+        text = _extract_last_user_text(body)
 
         if stream:
             return StreamingResponse(
-                _stream_response(model),
+                _stream_response(model, text),
                 media_type="text/event-stream",
             )
-        return JSONResponse(_full_response(model))
-
-    @app.get("/v1/models")
-    async def list_models() -> dict[str, Any]:
-        return {
-            "data": [
-                {
-                    "id": "mock-claude",
-                    "type": "model",
-                    "display_name": "Mock Claude",
-                    "created_at": int(time.time()),
-                }
-            ],
-            "has_more": False,
-        }
+        return JSONResponse(_full_response(model, text))
 
     return app
