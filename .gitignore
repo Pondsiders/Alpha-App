@@ -10,6 +10,11 @@ backend/site/
 frontend/node_modules/
 frontend/dist/
 
+# Playwright artifacts
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
+
 # IDE
 .vscode/
 .idea/
