@@ -11,6 +11,13 @@
 
 import { z } from "zod/v4";
 
+/**
+ * A 21-character nanoid using the default URL-safe alphabet. Same shape
+ * as chatId — the wire field name carries the role, the value's shape
+ * just says "nanoid."
+ */
+export const NanoId = z.string().regex(/^[A-Za-z0-9_-]{21}$/);
+
 // =============================================================================
 // Commands (client → server)
 // =============================================================================
@@ -30,6 +37,15 @@ export const SendCommand = z.object({
   command: z.literal("send"),
   id: z.string().optional(),
   chatId: z.string(),
+  /**
+   * Frontend-minted correlation token for the user message. The backend
+   * stamps this onto the broadcast `user-message` echo so the originating
+   * client can find its optimistic placeholder. Other clients see the
+   * same field and ignore it (no local placeholder to match). The ID is
+   * in-flight only — persistent IDs are owned by the SDK's session
+   * transcript, not by us.
+   */
+  messageId: NanoId,
   content: z.array(z.record(z.string(), z.unknown())),
 }).strict();
 
@@ -256,3 +272,38 @@ export type ServerEvent = z.infer<typeof ServerEvent>;
 export function parseEvent(raw: unknown): ServerEvent {
   return ServerEvent.parse(raw);
 }
+
+// =============================================================================
+// Command constructors — typed, validating builders
+// =============================================================================
+
+/**
+ * Typed factories for outbound commands. Each factory:
+ *  - Takes a named-args object (no positional ambiguity at call sites).
+ *  - Stamps the `command` discriminator string itself (callers don't write it).
+ *  - Runs the value through the matching Zod schema, throwing on bad shape.
+ *
+ * Call sites:
+ *   wsSend(Commands.send({ chatId, messageId, content }));
+ *   wsSend(Commands.createChat());
+ *
+ * Raw `wsSend({...})` still works for one-off scripts; the factories are the
+ * paved path, not a wall.
+ */
+export const Commands = {
+  send: (args: {
+    chatId: string;
+    messageId: string;
+    content: Array<Record<string, unknown>>;
+  }): SendCommand =>
+    SendCommand.parse({ command: "send", ...args }),
+
+  createChat: (): CreateChatCommand =>
+    CreateChatCommand.parse({ command: "create-chat" }),
+
+  joinChat: (args: { chatId: string }): JoinChatCommand =>
+    JoinChatCommand.parse({ command: "join-chat", ...args }),
+
+  interrupt: (args: { chatId: string }): InterruptCommand =>
+    InterruptCommand.parse({ command: "interrupt", ...args }),
+};

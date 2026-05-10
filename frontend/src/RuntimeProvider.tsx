@@ -15,6 +15,7 @@ import {
   type AppendMessage,
 } from "@assistant-ui/react";
 
+import { Commands } from "@/lib/protocol";
 import {
   convertMessage,
   isChatBusy,
@@ -61,7 +62,7 @@ export function RuntimeProvider({
     },
     onSwitchToNewThread: () => {
       const send = useStore.getState().wsSend;
-      send?.({ command: "create-chat" });
+      send?.(Commands.createChat());
     },
   }), [currentChatId, setCurrentChatId]);
 
@@ -97,12 +98,11 @@ export function RuntimeProvider({
       });
 
       // Send with the ID so the backend echoes it back for reconciliation.
-      wsSend({
-        command: "send",
+      wsSend(Commands.send({
         chatId: currentChatId,
         messageId,
         content,
-      });
+      }));
     },
   });
 

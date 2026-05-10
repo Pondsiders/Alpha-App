@@ -17,6 +17,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { useStore, type Message, type UserMessage, type AssistantMessage } from "@/store";
 import { useWebSocket } from "@/lib/useWebSocket";
 import {
+  Commands,
   parseEvent,
   type Command,
   type ServerEvent,
@@ -316,7 +317,7 @@ export function useAlphaWebSocket() {
     if (isFirstLoad) return; // Server already sent this chat.
 
     if (connected && currentChatId) {
-      send({ command: "join-chat", chatId: currentChatId });
+      send(Commands.joinChat({ chatId: currentChatId }));
     }
   }, [connected, currentChatId, send]);
 

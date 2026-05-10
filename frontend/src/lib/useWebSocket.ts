@@ -18,7 +18,7 @@
  *   const { send, connected } = useWebSocket({
  *     onEvent: (raw) => { ... },       // raw is unknown; validate it
  *   });
- *   send({ command: "join-chat", chatId: "abc123" });
+ *   send(Commands.joinChat({ chatId: "abc123" }));
  */
 
 import { useEffect, useRef, useState, useCallback } from "react";

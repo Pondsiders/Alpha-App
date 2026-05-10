@@ -20,8 +20,13 @@ Add a new command:
 
 from typing import Annotated, Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, TypeAdapter
 from pydantic.alias_generators import to_camel
+
+MessageId = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{21}$")]
+"""A 21-character nanoid using the default URL-safe alphabet. Same shape
+as `ChatId`; the wire field name carries the role, the value's shape
+just says 'nanoid.'"""
 
 
 class BaseCommand(BaseModel):
@@ -56,6 +61,13 @@ class Send(BaseCommand):
 
     command: Literal["send"]
     chat_id: str
+    message_id: MessageId
+    """Frontend-minted correlation token for the user message. The backend
+    stamps this onto the broadcast `user-message` echo so the originating
+    client can find its optimistic placeholder. Other clients see the same
+    field and ignore it (they have no local placeholder to match). The ID
+    is in-flight only — persistent message IDs are owned by the SDK's
+    session transcript, not by us."""
     content: list[dict[str, Any]]
     """Anthropic-shaped content blocks. Validation of the inner shape is
     deferred to whatever consumes the content; the wire layer only needs to

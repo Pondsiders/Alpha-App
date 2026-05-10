@@ -32,6 +32,7 @@ import { useAlphaWebSocket } from "@/hooks/useAlphaWebSocket";
 import { useStore } from "@/store";
 import { Plus } from "lucide-react";
 import { SidebarMenuButton } from "@/components/ui/sidebar";
+import { Commands } from "@/lib/protocol";
 
 // -- New Chat Button ----------------------------------------------------------
 
@@ -43,7 +44,7 @@ function NewChatButton() {
     <SidebarMenuButton
       className="w-full cursor-pointer text-muted-foreground hover:text-foreground"
       disabled={!connected || !wsSend}
-      onClick={() => wsSend?.({ command: "create-chat" })}
+      onClick={() => wsSend?.(Commands.createChat())}
     >
       <Plus className="size-4" />
       <span>New Chat</span>
