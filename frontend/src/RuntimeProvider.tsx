@@ -15,6 +15,8 @@ import {
   type AppendMessage,
 } from "@assistant-ui/react";
 
+import { nanoid } from "nanoid";
+
 import { Commands } from "@/lib/protocol";
 import {
   convertMessage,
@@ -82,8 +84,9 @@ export function RuntimeProvider({
       if (content.length === 0) return;
 
       // Generate message ID at the first instant it exists.
-      // This ID follows the message everywhere: store, WebSocket, backend, echo.
-      const messageId = `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      // 21-char URL-safe nanoid (matches the wire's NanoId pattern).
+      // The ID follows the message everywhere: store, WebSocket, backend, echo.
+      const messageId = nanoid();
 
       // Optimistic add — message appears instantly.
       const appendMessage = useStore.getState().appendMessage;
