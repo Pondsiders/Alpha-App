@@ -212,7 +212,6 @@ export const ToolCallResultEvent = z.object({
 export const AssistantMessageEvent = z.object({
   event: z.literal("assistant-message"),
   chatId: z.string(),
-  messageId: z.string(),
   content: z.array(z.record(z.string(), z.unknown())),
 });
 

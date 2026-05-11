@@ -14,7 +14,7 @@ Right now only `Error` is defined. Real events (`app-state`, `chat-loaded`,
 """
 
 from datetime import datetime
-from typing import ClassVar, Literal
+from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
@@ -105,3 +105,17 @@ class ChatState(BaseEvent):
     token_count: int
     context_window: int
     percent: float
+
+
+class AssistantMessage(BaseEvent):
+    """The complete, finished assistant message for a turn.
+
+    Carries Anthropic-shaped content blocks (`text`, `thinking`, `tool-use`,
+    `tool-result`). Sent at the end of a turn, after any streaming deltas.
+    The frontend uses this to finalize whichever placeholder the deltas were
+    accumulating into — see `useAlphaWebSocket.ts` for the seal logic.
+    """
+
+    event: Literal["assistant-message"] = "assistant-message"
+    chat_id: str
+    content: list[dict[str, Any]]

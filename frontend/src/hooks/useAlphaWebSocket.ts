@@ -14,6 +14,7 @@
  */
 
 import { useCallback, useEffect, useRef } from "react";
+import { nanoid } from "nanoid";
 import { useStore, type Message, type UserMessage, type AssistantMessage } from "@/store";
 import { useWebSocket } from "@/lib/useWebSocket";
 import {
@@ -196,16 +197,17 @@ export function useAlphaWebSocket() {
         }
 
         case "assistant-message": {
-          // assistant-message is a FINALIZATION event, not a creation event.
-          // Find the placeholder by exact messageId. If we streamed it,
-          // the placeholder already exists — finalize in place (same ID,
-          // no remount, animation continues naturally and drains the
-          // streaming ref to completion). If not (late joiner, page
-          // reload), create the message fresh with no animation.
+          // assistant-message is a FINALIZATION event. The FSM invariant
+          // (one turn in flight per chat) means there's at most one
+          // unsealed assistant message at any time — that's the
+          // placeholder the deltas were accumulating into. If we find
+          // it, finalize in place. If not (no streaming happened — late
+          // joiner, page reload, or the synthetic stretch-1 path), mint
+          // a fresh assistant message.
 
           const chatForAssist = useStore.getState().chats[event.chatId];
           const existingIdx = chatForAssist?.messages.findIndex(
-            (m) => m.role === "assistant" && (m.data as AssistantMessage).id === event.messageId,
+            (m) => m.role === "assistant" && (m.data as AssistantMessage).sealed === false,
           ) ?? -1;
 
           if (existingIdx >= 0) {
@@ -223,12 +225,13 @@ export function useAlphaWebSocket() {
               }
             });
           } else {
-            // Late joiner / page reload — no streaming happened.
-            // Create the message fresh. No animation needed.
+            // No placeholder — create the message fresh. Mint our own ID;
+            // it's frontend-local (the SDK owns persistent IDs via session
+            // transcript). nanoid is already a frontend dep.
             appendMessage(event.chatId, {
               role: "assistant",
               data: {
-                id: event.messageId,
+                id: nanoid(),
                 parts: event.content as AssistantMessage["parts"],
                 sealed: true,
                 input_tokens: 0,

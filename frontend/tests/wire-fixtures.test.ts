@@ -14,6 +14,7 @@ import { describe, expect, test } from "vitest";
 import { z } from "zod/v4";
 import {
   AppStateEvent,
+  AssistantMessageEvent,
   ChatCreatedEvent,
   ChatStateEvent,
   CreateChatCommand,
@@ -33,6 +34,7 @@ const EVENT_SCHEMAS: Record<string, z.ZodTypeAny> = {
   "chat-created": ChatCreatedEvent,
   "app-state": AppStateEvent,
   "chat-state": ChatStateEvent,
+  "assistant-message": AssistantMessageEvent,
 };
 
 const COMMAND_SCHEMAS: Record<string, z.ZodTypeAny> = {

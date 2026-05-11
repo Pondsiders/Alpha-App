@@ -13,7 +13,14 @@ from pathlib import Path
 import pytest
 
 from alpha.ws.commands import BaseCommand, CreateChat, Interrupt, JoinChat, Send
-from alpha.ws.events import AppState, BaseEvent, ChatCreated, ChatState, Error
+from alpha.ws.events import (
+    AppState,
+    AssistantMessage,
+    BaseEvent,
+    ChatCreated,
+    ChatState,
+    Error,
+)
 
 # Map a fixture's discriminator value (the `event` or `command` field) to
 # its Pydantic class. Adding a new wire shape means a class in
@@ -23,6 +30,7 @@ _EVENT_CLASSES: dict[str, type[BaseEvent]] = {
     "chat-created": ChatCreated,
     "app-state": AppState,
     "chat-state": ChatState,
+    "assistant-message": AssistantMessage,
 }
 
 _COMMAND_CLASSES: dict[str, type[BaseCommand]] = {

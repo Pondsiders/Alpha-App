@@ -418,7 +418,6 @@ The complete finished assistant message with all parts assembled. Sent at the ve
 {
   "event": "assistant-message",
   "chatId": "xyz",
-  "messageId": "msg_2",
   "content": [
     { "type": "thinking", "text": "Let me consider..." },
     { "type": "text", "text": "Hello there! Here's what I found..." },
