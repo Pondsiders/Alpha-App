@@ -18,7 +18,6 @@ Usage:
 """
 
 import json
-import os
 from datetime import datetime, timezone
 from typing import Any
 
@@ -27,6 +26,7 @@ import logfire
 
 from alpha_app.chat import Chat
 from alpha_app.constants import CONTEXT_WINDOW
+from alpha_app.env import DATABASE_URL
 
 _pool: asyncpg.Pool | None = None
 
@@ -47,11 +47,10 @@ async def _init_connection(conn: asyncpg.Connection) -> None:
 async def init_pool() -> None:
     """Initialize the connection pool. Call once at startup."""
     global _pool
-    dsn = os.environ.get("DATABASE_URL")
-    if not dsn:
+    if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is not set — cannot connect to Postgres")
 
-    _pool = await asyncpg.create_pool(dsn, min_size=2, max_size=10, init=_init_connection)
+    _pool = await asyncpg.create_pool(DATABASE_URL, min_size=2, max_size=10, init=_init_connection)
 
     async with _pool.acquire() as conn:
         # Bootstrap schema + core tables. All idempotent (IF NOT EXISTS) so

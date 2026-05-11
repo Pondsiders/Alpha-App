@@ -5,12 +5,13 @@ Ported from alpha_sdk v0.x — same schema, same queries.
 """
 
 import json
-import os
 import re
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
 import asyncpg
+
+from alpha_app.env import DATABASE_URL
 
 
 def _escape_pg_regex(text: str) -> str:
@@ -66,11 +67,10 @@ async def get_pool() -> asyncpg.Pool:
     """Get or create the connection pool."""
     global _pool
     if _pool is None:
-        dsn = os.environ.get("DATABASE_URL")
-        if not dsn:
-            raise RuntimeError("DATABASE_URL environment variable not set")
+        if not DATABASE_URL:
+            raise RuntimeError("DATABASE_URL is not set — cannot connect to Postgres")
         _pool = await asyncpg.create_pool(
-            dsn,
+            DATABASE_URL,
             min_size=2,
             max_size=10,
             init=_init_connection,
