@@ -8,15 +8,15 @@ outline: deep
 
 Alpha-App communicates over a single multiplexed WebSocket. All messages are JSON objects.
 
-The protocol is asymmetric: clients send **commands** to the server; the server sends **events** to every connected client.
+The protocol has three envelopes:
+
+- **Commands** — client to server, unicast.
+- **Responses** — server to one client, unicast, correlated to a command.
+- **Events** — server to all clients, broadcast.
 
 ## Connection
 
-The WebSocket endpoint is `/ws`. On connection, the server sends one event:
-
-- [`app-state`](#app-state) — global application state including the full chat list.
-
-Every WebSocket connection — initial load and every reconnect — triggers the same unconditional `app-state` push.
+The WebSocket endpoint is `/ws`. The server sends nothing on connect. The client opens with a [`hello`](#hello) command and the server replies with [`hi-yourself`](#hi-yourself).
 
 ## Envelope
 
@@ -35,9 +35,28 @@ Commands flow from one client to the server.
 | Field | Required | Description |
 |-------|----------|-------------|
 | `command` | always | The command name. |
-| `id` | when a response is expected | Correlation token. The server echoes this on the response event. Omit for fire-and-forget. |
+| `id` | when a response is expected | Correlation token. The server echoes this on the [response](#responses). Omit for fire-and-forget. |
 | `chatId` | when scoped to a chat | Which chat this command targets. |
 | *(other fields)* | per command | Command-specific payload fields live at the top level. No nested `payload` or `params` object. |
+
+### Server → Client: Responses (unicast)
+
+Responses flow from the server to one client — the one whose command triggered them. Every response carries the `id` of the originating command.
+
+```json
+{
+  "response": "chat-joined",
+  "id": "req_1",
+  "chatId": "xyz"
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `response` | always | The response name. |
+| `id` | always | Correlation token. Echoed from the originating command. |
+| `chatId` | when scoped to a chat | Which chat this response belongs to. |
+| *(other fields)* | per response | Response-specific payload fields live at the top level. |
 
 ### Server → Client: Events (broadcast)
 
@@ -54,21 +73,24 @@ Every event the server emits is sent to every connected client.
 | Field | Required | Description |
 |-------|----------|-------------|
 | `event` | always | The event name. |
-| `id` | when responding to a command | Echoed from the command that triggered this event. |
-| `chatId` | when scoped to a chat | Which chat this event belongs to. Absent on global events (only [`app-state`](#app-state) today). |
+| `chatId` | when scoped to a chat | Which chat this event belongs to. Absent on global events. |
 | *(other fields)* | per event | Event-specific payload fields live at the top level. |
+
+Events never carry `id`.
 
 ### Correlation
 
-If a command includes an `id`, the server **MUST** eventually emit an event that echoes that `id`. The response is either a success event (e.g., [`chat-loaded`](#chat-loaded) in response to [`join-chat`](#join-chat)) or an [`error`](#errors) event.
+If a command includes an `id`, the server **MUST** eventually emit a [response](#responses) that echoes that `id`. The response is either a successful response (e.g., [`chat-joined`](#chat-joined) in response to [`join-chat`](#join-chat)) or an [`error`](#errors) response.
 
 If a command omits `id`, no correlated response is expected.
 
 ### Errors
 
+An `error` is a response. A domain failure on a command flows back to the originator only.
+
 ```json
 {
-  "event": "error",
+  "response": "error",
   "id": "req_1",
   "chatId": "xyz",
   "code": "not-found",
@@ -77,12 +99,22 @@ If a command omits `id`, no correlated response is expected.
 ```
 
 ::: info Error codes are domain strings, not numbers
-Examples: `"not-found"`, `"invalid-state"`, `"subprocess-died"`, `"context-exceeded"`.
+Examples: `"not-found"`, `"invalid-state"`, `"context-exceeded"`.
 :::
 
-Errors carry `chatId` when the error is scoped to a chat, and `id` when they correlate to a command.
+Errors carry `chatId` when scoped to a chat. Wire-shape failures (malformed JSON, unknown commands, schema violations) are bugs — they raise on the server side and the socket closes; they don't reach `error`.
 
 ## Commands
+
+### `hello`
+
+Open a session. Sent by the client immediately after the WebSocket connects.
+
+```json
+{ "command": "hello", "id": "req_0" }
+```
+
+**Response:** [`hi-yourself`](#hi-yourself).
 
 ### `join-chat`
 
@@ -92,7 +124,7 @@ Load a chat's full history and metadata.
 { "command": "join-chat", "id": "req_1", "chatId": "hellopixel01" }
 ```
 
-**Response:** [`chat-loaded`](#chat-loaded).
+**Response:** [`chat-joined`](#chat-joined).
 
 ### `create-chat`
 
@@ -133,13 +165,68 @@ Stop Claude mid-response.
 { "command": "interrupt", "chatId": "xyz" }
 ```
 
+## Responses
+
+### `hi-yourself`
+
+Current global state. Emitted in response to [`hello`](#hello).
+
+::: details Example payload
+```json
+{
+  "response": "hi-yourself",
+  "id": "req_0",
+  "chats": [
+    {
+      "chatId": "fN-8oovTiSotGEH1w242V",
+      "createdAt": "2026-05-08T16:50:09.130260Z",
+      "lastActive": "2026-05-08T16:50:09.130269Z",
+      "state": "pending",
+      "tokenCount": 0,
+      "contextWindow": 1000000
+    }
+  ],
+  "version": "0.0.0"
+}
+```
+:::
+
+Same data shape as [`app-state`](#app-state); the response answers *"what's true?"* on demand, the event announces *"what just changed."*
+
+### `chat-joined`
+
+Full message history and metadata for one chat. Emitted in response to [`join-chat`](#join-chat).
+
+::: details Example payload
+```json
+{
+  "response": "chat-joined",
+  "id": "req_1",
+  "chatId": "hellopixel01",
+  "createdAt": "2026-05-08T16:50:09.130260Z",
+  "lastActive": "2026-05-08T16:50:09.130269Z",
+  "state": "ready",
+  "tokenCount": 0,
+  "contextWindow": 1000000,
+  "messages": [
+    { "role": "user", "data": { ... } },
+    { "role": "assistant", "data": { ... } }
+  ]
+}
+```
+:::
+
+### `error`
+
+See [Errors](#errors) above.
+
 ## Events
 
 ### Application state
 
 #### `app-state`
 
-The global state of the world. Sent on every WebSocket connect, and broadcast whenever the global state changes (chat created, deleted, renamed, etc.).
+The global state of the world. Broadcast whenever the global state changes (chat created, deleted, renamed, etc.).
 
 ::: details Example payload
 ```json
@@ -173,37 +260,13 @@ Every datetime on the wire is an ISO 8601 string with timezone (`"2026-05-08T16:
 
 ### Chat lifecycle
 
-#### `chat-loaded`
-
-Full message history and metadata for one chat. Emitted in response to [`join-chat`](#join-chat).
-
-::: details Example payload
-```json
-{
-  "event": "chat-loaded",
-  "id": "req_1",
-  "chatId": "hellopixel01",
-  "createdAt": "2026-05-08T16:50:09.130260Z",
-  "lastActive": "2026-05-08T16:50:09.130269Z",
-  "state": "ready",
-  "tokenCount": 0,
-  "contextWindow": 1000000,
-  "messages": [
-    { "role": "user", "data": { ... } },
-    { "role": "assistant", "data": { ... } }
-  ]
-}
-```
-:::
-
 #### `chat-created`
 
-A new chat exists. Emitted in response to [`create-chat`](#create-chat), or unsolicited when the server creates a chat on its own (Dawn, etc.).
+A new chat exists. Broadcast whenever a chat comes into being — in response to a client's [`create-chat`](#create-chat) command, or unsolicited when the server creates a chat on its own (Dawn, etc.).
 
 ```json
 {
   "event": "chat-created",
-  "id": "req_3",
   "chatId": "abc123",
   "createdAt": "2026-05-08T16:50:09.130260Z",
   "lastActive": "2026-05-08T16:50:09.130269Z",
@@ -418,16 +481,16 @@ Both sides validate every incoming message against a schema.
 Missing required fields are a hard failure, not a silent default. If a field is required, its absence is a bug to be caught, not a gap to be papered over.
 :::
 
-**Backend (Python):** Pydantic models per command name. Wire-shape failures are uncaught exceptions; FastAPI closes the WebSocket. The wire `error` event is reserved for *domain* failures.
+**Backend (Python):** Pydantic models per command name. Wire-shape failures are uncaught exceptions; FastAPI closes the WebSocket. The wire `error` response is reserved for *domain* failures.
 
 **Frontend (TypeScript):** Zod schemas per event name. Invalid events throw.
 
 ## Design Principles {#design-principles}
 
-1. **Commands are unicast; events are broadcast.** {#principle-asymmetric}
+1. **Three envelopes: commands, responses, events.** Commands are unicast client-to-server. Responses are unicast server-to-one-client, correlated to a command. Events are broadcast server-to-all-clients. {#principle-envelopes}
 2. **Flat payloads.** No nested `data`, `metadata`, or `params` objects. {#principle-flat}
 3. **Required fields are required.** Validation explodes on missing fields. {#principle-required}
-4. **`id` is a correlation token.** {#principle-id}
-5. **`chatId` is the relevance scope.** Events without `chatId` are global. {#principle-chatid}
+4. **`id` is a correlation token.** Carried by commands that expect a response, echoed on the response. Events never carry `id`. {#principle-id}
+5. **`chatId` is the relevance scope.** Messages without `chatId` are global. {#principle-chatid}
 6. **Domain error codes.** `"not-found"`, not `-32601`. {#principle-error-codes}
-7. **Extensible by addition.** New commands and events are added by defining a name + schema. The envelope doesn't change. {#principle-extensible}
+7. **Extensible by addition.** New commands, responses, and events are added by defining a name + schema. The envelope doesn't change. {#principle-extensible}
