@@ -1,10 +1,11 @@
 {
-  "event": "chat-created",
+  "response": "chat-joined",
+  "id": "req_1",
   "chatId": "fN-8oovTiSotGEH1w242V",
   "createdAt": "2026-05-08T16:50:09.130260Z",
   "lastActive": "2026-05-08T16:50:09.130269Z",
-  "state": "pending",
+  "state": "ready",
   "tokenCount": 0,
   "contextWindow": 1000000,
-  "archived": false
+  "messages": []
 }

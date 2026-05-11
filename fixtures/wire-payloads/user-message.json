@@ -1,0 +1,12 @@
+{
+  "event": "user-message",
+  "chatId": "fN-8oovTiSotGEH1w242V",
+  "messageId": "qK4_1zPoB8RvHm2Wn7tYa",
+  "content": [
+    { "type": "text", "text": "Hello, Alpha." }
+  ],
+  "memories": [
+    { "id": 16617, "content": "A relevant memory.", "score": 0.85 }
+  ],
+  "timestamp": "2026-05-08T16:50:09.130260Z"
+}

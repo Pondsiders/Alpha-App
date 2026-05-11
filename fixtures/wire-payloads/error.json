@@ -1,5 +1,5 @@
 {
-  "event": "error",
+  "response": "error",
   "id": "req_1",
   "code": "not-found",
   "message": "Chat fN-8oovTiSotGEH1w242V not found"

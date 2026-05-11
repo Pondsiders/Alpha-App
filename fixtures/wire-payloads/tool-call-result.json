@@ -1,0 +1,8 @@
+{
+  "event": "tool-call-result",
+  "chatId": "fN-8oovTiSotGEH1w242V",
+  "toolCallId": "tc_1",
+  "name": "store",
+  "args": { "memory": "Mon May 11 2026..." },
+  "result": "Memory stored (id: 17483)"
+}
