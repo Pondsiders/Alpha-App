@@ -8,55 +8,40 @@ outline: deep
 
 Alpha-App communicates over a single multiplexed WebSocket. All messages are JSON objects.
 
-::: tip The shape of the protocol
-The protocol is **asymmetric**: clients send **commands**, the server sends **events**. Commands optionally expect a response; events flow freely whether anyone asked for them or not. Don't force symmetry on a protocol that isn't symmetric.
-:::
+The protocol is asymmetric: clients send **commands** to the server; the server sends **events** to every connected client.
 
 ## Connection
 
-The WebSocket endpoint is `/ws`. The client MAY include a `lastChat` query parameter suggesting which chat to restore:
+The WebSocket endpoint is `/ws`. On connection, the server sends one event:
 
-```http
-GET /ws?lastChat=abc123 HTTP/1.1
-Upgrade: websocket
-```
+- [`app-state`](#app-state) — global application state including the full chat list.
 
-On connection, the server immediately sends two events — no client command required:
-
-1. [`app-state`](#app-state) — global application state including the full chat list.
-2. [`chat-loaded`](#chat-loaded) — the full message history for one chat.
-
-If `lastChat` is present and the chat exists, the server sends that chat. Otherwise it sends the most recent chat. If no chats exist at all, only `app-state` is sent (no `chat-loaded`).
-
-The client renders from these two events. No startup handshake, no request/response dance. The server pushes; the client receives and renders.
-
-::: tip Reconnect is the same as first connect
-Every WebSocket connection — initial load *and* every reconnect after a transient drop — triggers the same two-event push. So when the client reconnects after a laptop wake, a network blip, or a server restart, it automatically receives the current `app-state` (picking up any chats Dawn or other background work created while the socket was closed) and the current `chat-loaded` for the active chat.
-
-The client does not need to issue a re-sync command on reconnect. The server resyncs unconditionally.
-:::
+Every WebSocket connection — initial load and every reconnect — triggers the same unconditional `app-state` push.
 
 ## Envelope
 
-### Client → Server: Commands
+### Client → Server: Commands (unicast)
+
+Commands flow from one client to the server.
 
 ```json
 {
   "command": "join-chat",
   "id": "req_1",
-  "chatId": "xyz",
-  "content": [...]
+  "chatId": "xyz"
 }
 ```
 
 | Field | Required | Description |
 |-------|----------|-------------|
 | `command` | always | The command name. |
-| `id` | when a response is expected | Correlation ID. The server echoes this on the response event. Omit for fire-and-forget commands. |
+| `id` | when a response is expected | Correlation token. The server echoes this on the response event. Omit for fire-and-forget. |
 | `chatId` | when scoped to a chat | Which chat this command targets. |
 | *(other fields)* | per command | Command-specific payload fields live at the top level. No nested `payload` or `params` object. |
 
-### Server → Client: Events
+### Server → Client: Events (broadcast)
+
+Every event the server emits is sent to every connected client.
 
 ```json
 {
@@ -69,18 +54,15 @@ The client does not need to issue a re-sync command on reconnect. The server res
 | Field | Required | Description |
 |-------|----------|-------------|
 | `event` | always | The event name. |
-| `id` | when responding to a command | Echoed from the command that triggered this event. Absent on unsolicited events (streaming, broadcasts, server-initiated). |
-| `chatId` | when scoped to a chat | Which chat this event belongs to. |
+| `id` | when responding to a command | Echoed from the command that triggered this event. |
+| `chatId` | when scoped to a chat | Which chat this event belongs to. Absent on global events (only [`app-state`](#app-state) today). |
 | *(other fields)* | per event | Event-specific payload fields live at the top level. |
 
 ### Correlation
 
-If a command includes an `id`, the server **MUST** eventually respond with an event that echoes that `id`. The response is either:
+If a command includes an `id`, the server **MUST** eventually emit an event that echoes that `id`. The response is either a success event (e.g., [`chat-loaded`](#chat-loaded) in response to [`join-chat`](#join-chat)) or an [`error`](#errors) event.
 
-- A success event (e.g., [`chat-loaded`](#chat-loaded) in response to [`join-chat`](#join-chat))
-- An [`error`](#errors) event
-
-If a command omits `id`, no response is expected or sent.
+If a command omits `id`, no correlated response is expected.
 
 ### Errors
 
@@ -88,16 +70,17 @@ If a command omits `id`, no response is expected or sent.
 {
   "event": "error",
   "id": "req_1",
+  "chatId": "xyz",
   "code": "not-found",
   "message": "Chat xyz not found"
 }
 ```
 
 ::: info Error codes are domain strings, not numbers
-Examples: `"not-found"`, `"invalid-state"`, `"subprocess-died"`, `"context-exceeded"`. The codes mean something to us.
-
-The `id` field, if present, correlates the error to the command that caused it. Errors without `id` are unsolicited (e.g., a subprocess crash).
+Examples: `"not-found"`, `"invalid-state"`, `"subprocess-died"`, `"context-exceeded"`.
 :::
+
+Errors carry `chatId` when the error is scoped to a chat, and `id` when they correlate to a command.
 
 ## Commands
 
@@ -109,7 +92,7 @@ Load a chat's full history and metadata.
 { "command": "join-chat", "id": "req_1", "chatId": "hellopixel01" }
 ```
 
-**Response:** [`chat-loaded`](#chat-loaded) event.
+**Response:** [`chat-loaded`](#chat-loaded).
 
 ### `create-chat`
 
@@ -119,7 +102,7 @@ Create a new conversation.
 { "command": "create-chat", "id": "req_3" }
 ```
 
-**Response:** [`chat-created`](#chat-created) event.
+**Response:** [`chat-created`](#chat-created).
 
 ### `send`
 
@@ -130,15 +113,21 @@ Send a user message to Claude.
   "command": "send",
   "id": "req_4",
   "chatId": "xyz",
+  "messageId": "V1StGXR8_Z5jdHi6B-myT",
   "content": [{ "type": "text", "text": "Hello" }]
 }
 ```
 
-**Response:** [`send-ack`](#send-ack) event (confirms receipt). Then a preprocessed [`user-message`](#user-message) is echoed back, and streaming events flow: [`text-delta`](#text-delta), [`thinking-delta`](#thinking-delta), [`tool-call-start`](#tool-call-start), and finally [`turn-complete`](#turn-complete). See [Turn lifecycle](#turn-lifecycle) for the full sequence.
+| Field | Required | Description |
+|-------|----------|-------------|
+| `messageId` | always | Frontend-minted nanoid for the user message. The server stamps it onto the broadcast [`user-message`](#user-message) echo. |
+| `content` | always | Anthropic-shaped content blocks. |
+
+**Response:** the [turn lifecycle](#turn-lifecycle).
 
 ### `interrupt`
 
-Stop Claude mid-response. Fire-and-forget (no `id` needed).
+Stop Claude mid-response.
 
 ```json
 { "command": "interrupt", "chatId": "xyz" }
@@ -150,7 +139,7 @@ Stop Claude mid-response. Fire-and-forget (no `id` needed).
 
 #### `app-state`
 
-Sent by the server immediately on WebSocket connect. Also broadcast to all clients when global state changes (chat created, deleted, renamed, etc.). Never requested by the client — the server pushes it.
+The global state of the world. Sent on every WebSocket connect, and broadcast whenever the global state changes (chat created, deleted, renamed, etc.).
 
 ::: details Example payload
 ```json
@@ -172,22 +161,21 @@ Sent by the server immediately on WebSocket connect. Also broadcast to all clien
 :::
 
 ::: tip Timestamps are ISO 8601 strings
-Every datetime on the wire is an ISO 8601 string with timezone (`"2026-05-08T16:50:09.130260Z"`), not a unix integer. Pydantic emits `datetime` fields this way by default in `mode="json"`; matches `Date(isoString)` on the JS side.
+Every datetime on the wire is an ISO 8601 string with timezone (`"2026-05-08T16:50:09.130260Z"`), not a unix integer.
 :::
 
 | Field | Description |
 |-------|-------------|
-| `chats` | Full chat list for the sidebar. Chats are identified by `createdAt`, not by topic; the sidebar renders them as a date-sorted list (Apple Mail's date-column shape, not Gmail's subject-column shape). |
-| `version` | App version string. Client can compare to detect stale frontends. |
+| `chats` | Full chat list. |
+| `version` | App version string. |
+
+`app-state` is the only event that omits `chatId`.
 
 ### Chat lifecycle
 
 #### `chat-loaded`
 
-Full message history + metadata for one chat. Sent in two situations:
-
-1. Immediately after [`app-state`](#app-state) on connect (the startup chat).
-2. In response to a [`join-chat`](#join-chat) command (switching chats mid-session).
+Full message history and metadata for one chat. Emitted in response to [`join-chat`](#join-chat).
 
 ::: details Example payload
 ```json
@@ -210,20 +198,25 @@ Full message history + metadata for one chat. Sent in two situations:
 
 #### `chat-created`
 
-A new chat exists. Can be a response to [`create-chat`](#create-chat) (with `id`) or unsolicited (Dawn created one).
+A new chat exists. Emitted in response to [`create-chat`](#create-chat), or unsolicited when the server creates a chat on its own (Dawn, etc.).
 
 ```json
 {
   "event": "chat-created",
   "id": "req_3",
   "chatId": "abc123",
-  "createdAt": 1775345200
+  "createdAt": "2026-05-08T16:50:09.130260Z",
+  "lastActive": "2026-05-08T16:50:09.130269Z",
+  "state": "pending",
+  "tokenCount": 0,
+  "contextWindow": 1000000,
+  "archived": false
 }
 ```
 
 #### `chat-state`
 
-A chat's runtime state — its position in the turn lifecycle plus current context-window utilization. Sent whenever any of those values change. The server can send `chat-state` updates frequently; clients should treat each one as the new authoritative state for the chat.
+A chat's runtime state — its position in the turn lifecycle plus current context-window utilization. Broadcast whenever any of those values change.
 
 ```json
 {
@@ -231,17 +224,15 @@ A chat's runtime state — its position in the turn lifecycle plus current conte
   "chatId": "xyz",
   "state": "processing",
   "tokenCount": 165000,
-  "contextWindow": 1000000,
-  "percent": 16.5
+  "contextWindow": 1000000
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `state` | `"pending" \| "ready" \| "preprocessing" \| "processing" \| "postprocessing"` | The chat's position in the turn lifecycle. Values defined below. |
-| `tokenCount` | `number` | Current context size in tokens (input + cache_read + cache_creation). |
+| `state` | `"pending" \| "ready" \| "preprocessing" \| "processing" \| "postprocessing"` | The chat's position in the turn lifecycle. |
+| `tokenCount` | `number` | Current context size in tokens. |
 | `contextWindow` | `number` | Maximum context window size for the model backing this chat. |
-| `percent` | `number` | Convenience: `tokenCount / contextWindow * 100`, rounded for display. |
 
 **State values:**
 
@@ -260,89 +251,69 @@ A chat's runtime state — its position in the turn lifecycle plus current conte
 `"postprocessing"`
 : Post-turn work (reflection, etc.) is running.
 
-::: info `chat-state` is the single source of truth for the context meter
-There is no separate `context-update` event. Token counts ride along on every `chat-state`. Send updates whenever they would change — at the start and end of a turn, after compaction, or any other moment the displayed meter should move.
-:::
-
 ### Turn lifecycle
 
-A *turn* is a user message → Claude's response. The full event sequence:
+A *turn* is a user message → Claude's response.
 
 ```
 send (command)
-  └→ send-ack                    "got it, preprocessing"
+  └→ turn-started              edge: the turn has begun
   └→ chat-state {preprocessing}
-  └→ user-message                preprocessed echo (with memories, timestamp)
+  └→ user-message              preprocessed echo (with memories, timestamp)
   └→ chat-state {processing}
-  └→ thinking-delta (0..n)       extended thinking fragments
-  └→ text-delta (0..n)           text response fragments
-  └→ tool-call-start             Claude decided to call a tool
-  └→ tool-call-delta (0..n)      JSON args streaming
-  └→ tool-call-result            tool finished, here's the result
+  └→ thinking-delta (0..n)     extended thinking fragments
+  └→ text-delta (0..n)         text response fragments
+  └→ tool-call-start           Claude decided to call a tool
+  └→ tool-call-delta (0..n)    JSON args streaming
+  └→ tool-call-result          tool finished, here's the result
      (steps above can repeat — Claude can think, text, tool, text, tool, text)
-  └→ assistant-message           the complete finished message
-  └→ turn-complete               done, updated token counts
-  └→ chat-state {ready}          (or {postprocessing} if a post-turn cycle runs)
+  └→ assistant-message         the complete finished message
+  └→ turn-complete             edge: the turn has ended
+  └→ chat-state {ready}        (or {postprocessing} if a post-turn cycle runs)
 ```
 
 ::: info Preprocessing
-Before a user message is sent to Claude, the server *preprocesses* it — attaches a timestamp, recalls relevant memories, normalizes content. The [`user-message`](#user-message) event echoes the **preprocessed** version back to the client, replacing whatever optimistic local copy the frontend rendered when the user hit send.
+Before a user message is sent to Claude, the server *preprocesses* it — attaches a timestamp, recalls relevant memories, normalizes content. The [`user-message`](#user-message) event echoes the preprocessed version.
 :::
 
-#### `send-ack`
+#### `turn-started`
 
-Response to [`send`](#send). Means "I received it, preprocessing is running, Claude is about to respond."
+A turn has begun. Emitted after a [`send`](#send) command, before any other turn-lifecycle events.
 
 ```json
 {
-  "event": "send-ack",
-  "id": "req_4",
+  "event": "turn-started",
   "chatId": "xyz"
 }
 ```
 
 #### `user-message`
 
-The preprocessed user message echoed back from the server. Includes source, memories, timestamp, and any other preprocessing output.
-
-::: tip Authoritative
-This is the authoritative version — the frontend's optimistic local copy gets replaced by this.
-:::
+A preprocessed human-authored user message, broadcast after a [`send`](#send).
 
 ::: details Example payload
 ```json
 {
   "event": "user-message",
   "chatId": "xyz",
-  "messageId": "msg_1",
-  "source": "human",
+  "messageId": "V1StGXR8_Z5jdHi6B-myT",
   "content": [
     { "type": "text", "text": "Hello there" }
   ],
   "memories": [
     { "id": 16617, "content": "...", "score": 0.85 }
   ],
-  "timestamp": "Mon Apr 6 2026, 3:45 PM"
+  "timestamp": "2026-04-06T22:45:00Z"
 }
 ```
 :::
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `source` | `"human" \| "reflection"` | always | Who initiated this user message. Determines how the frontend renders it and whether it blocks input. |
+| `messageId` | `string` | always | Echoed from the [`send`](#send) command. |
 | `content` | `list[block]` | always | Content blocks in Messages API format. |
 | `memories` | `list[memory] \| null` | always | Recalled memories attached during preprocessing (null if none). |
-| `timestamp` | `string` | always | PSO-8601 formatted creation time, e.g. `"Fri Apr 10 2026, 11:27 AM"`. Set during preprocessing. |
-
-**Source values and their semantics:**
-
-`"human"`
-: Initiated by Jeffery typing in the composer. **Blocks input** (composer shows stop button, new sends rejected until turn completes).
-
-`"reflection"`
-: Injected by the backend as a post-turn reflection prompt. **Does not block input** (composer stays idle). If a new human message arrives mid-reflection, the backend interrupts the reflection and the human wins.
-
-The `blocks_input` property is derivable from `source` on both backend and frontend. Sources not in the blocking set are interruptible.
+| `timestamp` | `string` | always | ISO 8601 UTC timestamp, set during preprocessing. |
 
 #### `thinking-delta`
 
@@ -396,7 +367,7 @@ A JSON fragment of the tool call arguments being assembled.
 
 #### `tool-call-result`
 
-Tool finished executing. Complete args + result.
+Tool finished executing. Complete args and result.
 
 ```json
 {
@@ -411,7 +382,7 @@ Tool finished executing. Complete args + result.
 
 #### `assistant-message`
 
-The complete finished assistant message with all parts assembled. Sent at the very end of Claude's response, before [`turn-complete`](#turn-complete).
+The complete finished assistant message with all parts assembled. Sent at the end of the turn, before [`turn-complete`](#turn-complete).
 
 ::: details Example payload
 ```json
@@ -430,7 +401,7 @@ The complete finished assistant message with all parts assembled. Sent at the ve
 
 #### `turn-complete`
 
-Claude finished responding. The signal that the turn is over. A [`chat-state`](#chat-state) `{idle, ...}` event with updated token counts follows immediately.
+Claude finished responding. A [`chat-state`](#chat-state) `{ready, ...}` event with updated token counts follows immediately.
 
 ```json
 {
@@ -444,19 +415,19 @@ Claude finished responding. The signal that the turn is over. A [`chat-state`](#
 Both sides validate every incoming message against a schema.
 
 ::: warning Validation explodes; it does not paper over
-Missing required fields are a hard failure, not a silent default. No `?? 0`, no `?? Date.now()`. If a field is required, its absence is a bug to be caught, not a gap to be papered over.
+Missing required fields are a hard failure, not a silent default. If a field is required, its absence is a bug to be caught, not a gap to be papered over.
 :::
 
-**Backend (Python):** Pydantic models per command name. **Wire-shape failures are bugs, not protocol cases.** If an inbound message can't be parsed as JSON, or can't be validated against any known command shape, the backend raises an uncaught exception. FastAPI closes the WebSocket; the frontend reconnects (the connection is the recovery primitive). The exception lands in Logfire under the request span — that's the canonical pane of glass for debugging. The wire `error` event is reserved for *domain* failures — operations that were valid commands but can't be done (`not-found`, `invalid-state`, `subprocess-died`, `context-exceeded`).
+**Backend (Python):** Pydantic models per command name. Wire-shape failures are uncaught exceptions; FastAPI closes the WebSocket. The wire `error` event is reserved for *domain* failures.
 
-**Frontend (TypeScript):** Zod schemas per event name. Invalid events throw, not silently degrade.
+**Frontend (TypeScript):** Zod schemas per event name. Invalid events throw.
 
 ## Design Principles {#design-principles}
 
-1. **Commands and events are different shapes.** Don't force symmetry on an asymmetric protocol. {#principle-asymmetric}
-2. **Flat payloads.** No nested `data`, `metadata`, or `params` objects. Fields live at the top level of the message. {#principle-flat}
-3. **Required fields are required.** Validation explodes on missing fields. Silent defaults hide bugs. {#principle-required}
-4. **`id` means "I expect a response."** Absent `id` means fire-and-forget. {#principle-id}
-5. **`chatId` means "this belongs to a chat."** Events without `chatId` are global (e.g., the chat list in [`app-state`](#app-state)). {#principle-chatid}
-6. **Domain error codes.** `"not-found"`, not `-32601`. The codes mean something to us. {#principle-error-codes}
+1. **Commands are unicast; events are broadcast.** {#principle-asymmetric}
+2. **Flat payloads.** No nested `data`, `metadata`, or `params` objects. {#principle-flat}
+3. **Required fields are required.** Validation explodes on missing fields. {#principle-required}
+4. **`id` is a correlation token.** {#principle-id}
+5. **`chatId` is the relevance scope.** Events without `chatId` are global. {#principle-chatid}
+6. **Domain error codes.** `"not-found"`, not `-32601`. {#principle-error-codes}
 7. **Extensible by addition.** New commands and events are added by defining a name + schema. The envelope doesn't change. {#principle-extensible}
