@@ -12,6 +12,7 @@ dependencies = [
     "nanoid>=2.0",
     "asyncpg>=0.31.0",
     "anthropic>=0.100.0",
+    "claude-agent-sdk>=0.1.80",
 ]
 
 [project.scripts]

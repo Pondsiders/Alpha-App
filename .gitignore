@@ -28,5 +28,5 @@ frontend/blob-report/
 # OS
 .DS_Store
 
-# Scratch directory
-scratch/
+# Nonce probe scripts — kept on disk for future-us, never committed.
+backend/dev-scripts/
