@@ -1,8 +1,9 @@
 """Test fixtures for the Alpha-App integration suite.
 
-`test_db` (session-scoped) provisions a nonce `test_<nanoid>` database
-on `sandbox-db` via the `test_runner` role, runs Alembic migrations
-against it, yields its URL, and drops it after the session.
+`test_db` (function-scoped) provisions a nonce `test_<nanoid>` database
+on the cluster pointed at by `settings.test_database_url`, runs Alembic
+migrations against it, yields its URL, and drops it after the test.
+Fresh database per test means rows from one test never leak into another.
 
 `client` (function-scoped) monkey-patches `settings.database_url` to
 point at the nonce database, constructs the app via `create_app()`,
@@ -34,13 +35,13 @@ def _swap_database(url: str, dbname: str) -> str:
     return urlunparse(parts._replace(path=f"/{dbname}"))
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def test_db() -> Generator[str]:
     """Provision a nonce test database, run migrations, yield URL, drop after."""
-    if settings.test_runner_url is None:
-        pytest.skip("test_runner_url not configured in settings.toml")
+    if settings.test_database_url is None:
+        pytest.skip("test_database_url not configured")
 
-    admin_url = settings.test_runner_url
+    admin_url = settings.test_database_url
     dbname = f"test_{nanoid.generate(size=12).lower().replace('-', '_')}"
     test_url = _swap_database(admin_url, dbname)
 
