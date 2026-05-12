@@ -36,13 +36,7 @@ interface UseWebSocketOptions {
 // In production, the backend serves the frontend so same origin works.
 function getWebSocketUrl(): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  let url = `${protocol}//${window.location.host}/ws`;
-  // Suggest which chat to restore from localStorage.
-  try {
-    const lastChat = localStorage.getItem("alpha-lastChatId");
-    if (lastChat) url += `?lastChat=${encodeURIComponent(lastChat)}`;
-  } catch { /* localStorage unavailable */ }
-  return url;
+  return `${protocol}//${window.location.host}/ws`;
 }
 
 // Exponential backoff, max 16s

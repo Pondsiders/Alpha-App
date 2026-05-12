@@ -1,16 +1,18 @@
 /**
  * useAlphaWebSocket — wires the WebSocket transport to the Zustand store.
  *
- * Speaks the command/event protocol defined in PROTOCOL.md.
- * Client sends commands: { command: "join-chat", chatId: "xyz" }
- * Server sends events:  { event: "app-state", chats: [...] }
+ * Speaks the three-envelope protocol defined in docs/wire-protocol.md.
+ * - Client sends commands:  { command: "hello", id: "..." }
+ * - Server sends responses: { response: "hi-yourself", id: "...", ... }
+ * - Server sends events:    { event: "text-delta", chatId: "...", ... }
  *
- * On connect, the server immediately sends app-state + chat-loaded.
- * No client request needed for startup — the server pushes.
- * The ?lastChat= query param hints which chat to restore.
+ * On connect the server waits silently. The client opens with `hello` and
+ * the server replies with `hi-yourself` carrying the current chat list.
+ * If `?lastChat=` is in the WebSocket URL, the client then sends
+ * `join-chat` to hydrate that chat's messages.
  *
- * Every incoming event is validated through Zod (lib/protocol.ts).
- * Invalid events throw — no silent defaults, no ?? 0.
+ * Every incoming message is validated through Zod (lib/protocol.ts).
+ * Invalid messages throw — no silent defaults, no ?? 0.
  */
 
 import { useCallback, useEffect, useRef } from "react";
@@ -19,14 +21,16 @@ import { useStore, type Message, type UserMessage, type AssistantMessage } from 
 import { useWebSocket } from "@/lib/useWebSocket";
 import {
   Commands,
-  parseEvent,
+  parseMessage,
   type Command,
   type ServerEvent,
+  type ServerResponse,
 } from "@/lib/protocol";
 import {
   pushTextDelta,
   pushThinkingDelta,
 } from "@/lib/streamingText";
+
 export function useAlphaWebSocket() {
   const setConnected = useStore((s) => s.setConnected);
   const setCurrentChatId = useStore((s) => s.setCurrentChatId);
@@ -41,41 +45,43 @@ export function useAlphaWebSocket() {
   const replaceLastUserMessage = useStore((s) => s.replaceLastUserMessage);
   const ensureAssistantMessage = useStore((s) => s.ensureAssistantMessage);
 
-  const handleRawEvent = useCallback(
-    (raw: unknown) => {
-      // Validate through Zod — throws on invalid shape.
-      let event: ServerEvent;
-      try {
-        event = parseEvent(raw);
-      } catch (err) {
-        console.error("[Alpha WS] invalid event from server:", err, raw);
-        return;
-      }
-
-      switch (event.event) {
-        // -- Chat lifecycle --
-
-        case "app-state": {
-          // Wire summaries are already shaped exactly like Chat (modulo the
-          // locally-held messages array). Pass them through to the store.
-          setChatList(event.chats);
+  const handleResponse = useCallback(
+    (response: ServerResponse) => {
+      switch (response.response) {
+        case "hi-yourself": {
+          setChatList(response.chats);
           break;
         }
 
-        case "chat-loaded": {
+        case "chat-joined": {
           upsertChat({
-            chatId: event.chatId,
-            createdAt: event.createdAt,
-            lastActive: event.lastActive,
-            state: event.state,
-            tokenCount: event.tokenCount,
-            contextWindow: event.contextWindow,
+            chatId: response.chatId,
+            createdAt: response.createdAt,
+            lastActive: response.lastActive,
+            state: response.state,
+            tokenCount: response.tokenCount,
+            contextWindow: response.contextWindow,
           });
-          setMessages(event.chatId, event.messages as unknown as Message[]);
-          // Select this chat and persist to localStorage for next startup.
-          setCurrentChatId(event.chatId);
-          try { localStorage.setItem("alpha-lastChatId", event.chatId); } catch { /* noop */ }
+          setMessages(response.chatId, response.messages as unknown as Message[]);
+          setCurrentChatId(response.chatId);
+          try { localStorage.setItem("alpha-lastChatId", response.chatId); } catch { /* noop */ }
+          break;
+        }
 
+        case "error": {
+          console.error(`[Alpha WS] error (${response.code}):`, response.message);
+          break;
+        }
+      }
+    },
+    [setChatList, upsertChat, setMessages, setCurrentChatId],
+  );
+
+  const handleEvent = useCallback(
+    (event: ServerEvent) => {
+      switch (event.event) {
+        case "app-state": {
+          setChatList(event.chats);
           break;
         }
 
@@ -84,11 +90,9 @@ export function useAlphaWebSocket() {
             chatId: event.chatId,
             createdAt: event.createdAt,
             lastActive: event.lastActive,
-            // A freshly created chat has no subprocess yet — it starts in
-            // pending and the first send wakes it.
-            state: "pending",
-            tokenCount: 0,
-            contextWindow: 1_000_000,
+            state: event.state,
+            tokenCount: event.tokenCount,
+            contextWindow: event.contextWindow,
           });
           setCurrentChatId(event.chatId);
           break;
@@ -103,10 +107,7 @@ export function useAlphaWebSocket() {
           break;
         }
 
-        // -- Turn lifecycle --
-
-        case "send-ack": {
-          // Acknowledged. Could set a "sending" state here if we want.
+        case "turn-started": {
           break;
         }
 
@@ -130,24 +131,15 @@ export function useAlphaWebSocket() {
           ) ?? -1;
 
           if (existingIdx >= 0) {
-            // Found optimistic message — replace with enriched version
             replaceLastUserMessage(event.chatId, enriched);
           } else {
-            // Append in arrival order. Text-deltas now carry an explicit
-            // messageId so out-of-order rendering is impossible — there's
-            // no need to defer non-human messages until animation finishes.
             appendMessage(event.chatId, enriched);
           }
           break;
         }
 
         case "thinking-delta": {
-          // The backend stamps messageId on every delta — find or create
-          // that exact placeholder. No inferring from "last message."
           ensureAssistantMessage(event.chatId, event.messageId);
-          // Seed the Zustand part on the FIRST delta so SequentialParts
-          // sees a thinking part exists. Subsequent deltas only update
-          // the streaming ref (one Zustand write per part lifetime).
           const thinkChat = useStore.getState().chats[event.chatId];
           const thinkMsg = thinkChat?.messages.find(
             (m) => m.role === "assistant" && (m.data as AssistantMessage).id === event.messageId,
@@ -163,10 +155,6 @@ export function useAlphaWebSocket() {
 
         case "text-delta": {
           ensureAssistantMessage(event.chatId, event.messageId);
-          // Seed the Zustand part on the FIRST delta so SequentialParts
-          // sees a text part exists. AnimatedText reads from the streaming
-          // ref for live text, so Zustand only carries the seed value
-          // (replaced wholesale at assistant-message seal).
           const chat = useStore.getState().chats[event.chatId];
           const msg = chat?.messages.find(
             (m) => m.role === "assistant" && (m.data as AssistantMessage).id === event.messageId,
@@ -180,41 +168,20 @@ export function useAlphaWebSocket() {
           break;
         }
 
-        case "tool-call-start": {
-          // TODO: Phase 2. Show tool call beginning.
-          break;
-        }
-
-        case "tool-call-delta": {
-          // TODO: Phase 2. Stream tool call args.
-          break;
-        }
-
+        case "tool-call-start":
+        case "tool-call-delta":
         case "tool-call-result": {
-          // TODO: Phase 2. Show tool result.
+          // TODO: Phase 2. Render tool calls.
           break;
         }
 
         case "assistant-message": {
-          // assistant-message is a FINALIZATION event. The FSM invariant
-          // (one turn in flight per chat) means there's at most one
-          // unsealed assistant message at any time — that's the
-          // placeholder the deltas were accumulating into. If we find
-          // it, finalize in place. If not (no streaming happened — late
-          // joiner, page reload, or the synthetic stretch-1 path), mint
-          // a fresh assistant message.
-
           const chatForAssist = useStore.getState().chats[event.chatId];
           const existingIdx = chatForAssist?.messages.findIndex(
             (m) => m.role === "assistant" && (m.data as AssistantMessage).sealed === false,
           ) ?? -1;
 
           if (existingIdx >= 0) {
-            // Finalize in place. DON'T clear the streaming ref — AnimatedText
-            // is still reading from it. The ref has the complete text from
-            // accumulated deltas. Seal the message so isStreaming flips false.
-            // The ref gets cleared when AnimatedText's drain catches up and
-            // calls onDone.
             useStore.setState((state) => {
               const c = state.chats[event.chatId];
               if (c) {
@@ -224,9 +191,6 @@ export function useAlphaWebSocket() {
               }
             });
           } else {
-            // No placeholder — create the message fresh. Mint our own ID;
-            // it's frontend-local (the SDK owns persistent IDs via session
-            // transcript). nanoid is already a frontend dep.
             appendMessage(event.chatId, {
               role: "assistant",
               data: {
@@ -250,76 +214,85 @@ export function useAlphaWebSocket() {
         }
 
         case "turn-complete": {
-          // The signal that Claude finished. State and token-count updates
-          // arrive on a chat-state event that follows; nothing for the
-          // consumer to do here.
-          break;
-        }
-
-        // -- Errors --
-
-        case "error": {
-          console.error(`[Alpha WS] error (${event.code}):`, event.message);
           break;
         }
       }
     },
     [
-      setCurrentChatId,
       setChatList,
-      setMessages,
       upsertChat,
+      setCurrentChatId,
+      setChatState,
       appendMessage,
       appendTextDelta,
       appendThinkingDelta,
-      setChatState,
       replaceLastUserMessage,
       ensureAssistantMessage,
     ],
   );
 
-  const handleConnectionChange = useCallback(
-    (connected: boolean) => setConnected(connected),
-    [setConnected],
+  const handleRawMessage = useCallback(
+    (raw: unknown) => {
+      let message: ReturnType<typeof parseMessage>;
+      try {
+        message = parseMessage(raw);
+      } catch (err) {
+        console.error("[Alpha WS] invalid message from server:", err, raw);
+        return;
+      }
+      if (message.kind === "response") {
+        handleResponse(message.payload);
+      } else {
+        handleEvent(message.payload);
+      }
+    },
+    [handleResponse, handleEvent],
   );
 
   const { send: rawSend, connected } = useWebSocket({
-    onEvent: handleRawEvent,
-    onConnectionChange: handleConnectionChange,
+    onEvent: handleRawMessage,
+    onConnectionChange: useCallback(
+      (isConnected: boolean) => setConnected(isConnected),
+      [setConnected],
+    ),
   });
 
-  // Typed send: accepts a Command object, serializes to JSON. The raw
-  // transport layer takes `unknown` and JSON-serializes — protocol shape
-  // is validated on the consumer side (here), not the transport.
+  // Typed send: accepts a Command object, serializes to JSON.
   const send = useCallback(
     (cmd: Command): boolean => rawSend(cmd),
     [rawSend],
   );
 
-  // Expose send on the store so any component can send commands. The
-  // store types wsSend as (cmd: Record<string, unknown>) => void because
-  // the store itself is protocol-agnostic; we cast through `unknown`
-  // because Command is narrower than Record<string, unknown>.
+  // Expose send on the store so any component can send commands.
   useEffect(() => {
     setWsSend(send as unknown as (cmd: Record<string, unknown>) => void);
     return () => setWsSend(null);
   }, [send, setWsSend]);
 
-  // When the user switches chats manually (sidebar click), join it.
-  // On startup the server sends chat-loaded automatically — this effect
-  // only fires for subsequent switches (currentChatId changes after the
-  // initial app-state/chat-loaded pair).
+  // On every connect (first or reconnect): send hello, then if we have a
+  // remembered chat id, send join-chat for it. The server's hi-yourself
+  // response populates the sidebar; chat-joined hydrates the chosen chat.
+  useEffect(() => {
+    if (!connected) return;
+    send(Commands.hello({ id: nanoid() }));
+    let lastChat: string | null = null;
+    try { lastChat = localStorage.getItem("alpha-lastChatId"); } catch { /* noop */ }
+    if (lastChat) {
+      send(Commands.joinChat({ id: nanoid(), chatId: lastChat }));
+    }
+  }, [connected, send]);
+
+  // When the user switches chats mid-session (sidebar click), join it.
   const currentChatId = useStore((s) => s.currentChatId);
   const prevChatIdRef = useRef<string | null>(null);
   useEffect(() => {
-    // Skip the first set (from the server's auto-loaded chat).
     if (currentChatId === prevChatIdRef.current) return;
     const isFirstLoad = prevChatIdRef.current === null;
     prevChatIdRef.current = currentChatId;
-    if (isFirstLoad) return; // Server already sent this chat.
+    if (isFirstLoad) return;
 
     if (connected && currentChatId) {
-      send(Commands.joinChat({ chatId: currentChatId }));
+      send(Commands.joinChat({ id: nanoid(), chatId: currentChatId }));
     }
   }, [connected, currentChatId, send]);
 

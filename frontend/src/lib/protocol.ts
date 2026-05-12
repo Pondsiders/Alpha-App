@@ -1,12 +1,13 @@
 /**
- * Wire protocol schemas — commands (client → server) and events (server → client).
+ * Wire protocol schemas — commands (client → server), responses
+ * (server → one client, command-correlated), events (server → all clients).
  *
- * See PROTOCOL.md for the design rationale. Key principles:
- * - Commands and events are different shapes (asymmetric protocol)
- * - Flat payloads (no nested data/metadata/params)
- * - Required fields are required (Zod explodes on missing fields)
- * - id means "I expect a response" (absent = fire-and-forget)
- * - chatId means "this belongs to a chat"
+ * See docs/wire-protocol.md for the design rationale. Key principles:
+ * - Three envelopes: commands, responses, events.
+ * - Flat payloads (no nested data/metadata/params).
+ * - Required fields are required (Zod explodes on missing fields).
+ * - `id` on a command means "I expect a response"; the response echoes it.
+ * - `chatId` means "this belongs to a chat".
  */
 
 import { z } from "zod/v4";
@@ -22,15 +23,20 @@ export const NanoId = z.string().regex(/^[A-Za-z0-9_-]{21}$/);
 // Commands (client → server)
 // =============================================================================
 
+export const HelloCommand = z.object({
+  command: z.literal("hello"),
+  id: z.string(),
+}).strict();
+
 export const JoinChatCommand = z.object({
   command: z.literal("join-chat"),
-  id: z.string().optional(),
+  id: z.string(),
   chatId: z.string(),
 }).strict();
 
 export const CreateChatCommand = z.object({
   command: z.literal("create-chat"),
-  id: z.string().optional(),
+  id: z.string(),
 }).strict();
 
 export const SendCommand = z.object({
@@ -55,22 +61,22 @@ export const InterruptCommand = z.object({
   chatId: z.string(),
 }).strict();
 
+export type HelloCommand = z.infer<typeof HelloCommand>;
 export type JoinChatCommand = z.infer<typeof JoinChatCommand>;
 export type CreateChatCommand = z.infer<typeof CreateChatCommand>;
 export type SendCommand = z.infer<typeof SendCommand>;
 export type InterruptCommand = z.infer<typeof InterruptCommand>;
 
 export type Command =
+  | HelloCommand
   | JoinChatCommand
   | CreateChatCommand
   | SendCommand
   | InterruptCommand;
 
 // =============================================================================
-// Events (server → client)
+// Responses (server → one client, command-correlated)
 // =============================================================================
-
-// -- Chat lifecycle -----------------------------------------------------------
 
 /**
  * The chat's position in the turn lifecycle. Values:
@@ -104,15 +110,16 @@ export const ChatSummary = z.object({
   contextWindow: z.number(),
 }).strict();
 
-export const AppStateEvent = z.object({
-  event: z.literal("app-state"),
+export const HiYourselfResponse = z.object({
+  response: z.literal("hi-yourself"),
+  id: z.string(),
   chats: z.array(ChatSummary),
   version: z.string(),
 }).strict();
 
-export const ChatLoadedEvent = z.object({
-  event: z.literal("chat-loaded"),
-  id: z.string().optional(),
+export const ChatJoinedResponse = z.object({
+  response: z.literal("chat-joined"),
+  id: z.string(),
   chatId: z.string(),
   createdAt: z.iso.datetime({ offset: true }),
   lastActive: z.iso.datetime({ offset: true }),
@@ -126,6 +133,35 @@ export const ChatLoadedEvent = z.object({
     })
   ),
 });
+
+export const ErrorResponse = z.object({
+  response: z.literal("error"),
+  id: z.string(),
+  chatId: z.string().optional(),
+  code: z.string(),
+  message: z.string(),
+}).strict();
+
+export const ServerResponse = z.discriminatedUnion("response", [
+  HiYourselfResponse,
+  ChatJoinedResponse,
+  ErrorResponse,
+]);
+
+export type HiYourselfResponse = z.infer<typeof HiYourselfResponse>;
+export type ChatJoinedResponse = z.infer<typeof ChatJoinedResponse>;
+export type ErrorResponse = z.infer<typeof ErrorResponse>;
+export type ServerResponse = z.infer<typeof ServerResponse>;
+
+// =============================================================================
+// Events (server → all clients, broadcast)
+// =============================================================================
+
+export const AppStateEvent = z.object({
+  event: z.literal("app-state"),
+  chats: z.array(ChatSummary),
+  version: z.string(),
+}).strict();
 
 export const ChatCreatedEvent = z.object({
   event: z.literal("chat-created"),
@@ -148,11 +184,10 @@ export const ChatStateEvent = z.object({
 
 // -- Turn lifecycle -----------------------------------------------------------
 
-export const SendAckEvent = z.object({
-  event: z.literal("send-ack"),
-  id: z.string().optional(),
+export const TurnStartedEvent = z.object({
+  event: z.literal("turn-started"),
   chatId: z.string(),
-});
+}).strict();
 
 export const UserMessageEvent = z.object({
   event: z.literal("user-message"),
@@ -211,23 +246,13 @@ export const TurnCompleteEvent = z.object({
   chatId: z.string(),
 }).strict();
 
-// -- Errors -------------------------------------------------------------------
-
-export const ErrorEvent = z.object({
-  event: z.literal("error"),
-  id: z.string().optional(),
-  code: z.string(),
-  message: z.string(),
-}).strict();
-
 // -- Discriminated union of all events ----------------------------------------
 
 export const ServerEvent = z.discriminatedUnion("event", [
   AppStateEvent,
-  ChatLoadedEvent,
   ChatCreatedEvent,
   ChatStateEvent,
-  SendAckEvent,
+  TurnStartedEvent,
   UserMessageEvent,
   ThinkingDeltaEvent,
   TextDeltaEvent,
@@ -236,14 +261,12 @@ export const ServerEvent = z.discriminatedUnion("event", [
   ToolCallResultEvent,
   AssistantMessageEvent,
   TurnCompleteEvent,
-  ErrorEvent,
 ]);
 
 export type AppStateEvent = z.infer<typeof AppStateEvent>;
-export type ChatLoadedEvent = z.infer<typeof ChatLoadedEvent>;
 export type ChatCreatedEvent = z.infer<typeof ChatCreatedEvent>;
 export type ChatStateEvent = z.infer<typeof ChatStateEvent>;
-export type SendAckEvent = z.infer<typeof SendAckEvent>;
+export type TurnStartedEvent = z.infer<typeof TurnStartedEvent>;
 export type UserMessageEvent = z.infer<typeof UserMessageEvent>;
 export type ThinkingDeltaEvent = z.infer<typeof ThinkingDeltaEvent>;
 export type TextDeltaEvent = z.infer<typeof TextDeltaEvent>;
@@ -252,15 +275,34 @@ export type ToolCallDeltaEvent = z.infer<typeof ToolCallDeltaEvent>;
 export type ToolCallResultEvent = z.infer<typeof ToolCallResultEvent>;
 export type AssistantMessageEvent = z.infer<typeof AssistantMessageEvent>;
 export type TurnCompleteEvent = z.infer<typeof TurnCompleteEvent>;
-export type ErrorEvent = z.infer<typeof ErrorEvent>;
 export type ServerEvent = z.infer<typeof ServerEvent>;
 
 /**
- * Parse and validate a raw JSON object from the WebSocket as a ServerEvent.
+ * Parsed server-to-client message — either a Response (correlated to a
+ * command via `id`) or an Event (broadcast, no `id`). The transport doesn't
+ * know which; this wrapper branches on the top-level discriminator key.
+ */
+export type ServerMessage =
+  | { kind: "response"; payload: ServerResponse }
+  | { kind: "event"; payload: ServerEvent };
+
+/**
+ * Parse and validate a raw JSON object from the WebSocket. Branches on
+ * `response` vs `event` keys and dispatches to the matching union.
  * Throws ZodError if the shape is wrong or required fields are missing.
  */
-export function parseEvent(raw: unknown): ServerEvent {
-  return ServerEvent.parse(raw);
+export function parseMessage(raw: unknown): ServerMessage {
+  if (typeof raw === "object" && raw !== null) {
+    if ("response" in raw) {
+      return { kind: "response", payload: ServerResponse.parse(raw) };
+    }
+    if ("event" in raw) {
+      return { kind: "event", payload: ServerEvent.parse(raw) };
+    }
+  }
+  throw new Error(
+    "incoming message has neither `response` nor `event` discriminator",
+  );
 }
 
 // =============================================================================
@@ -275,12 +317,15 @@ export function parseEvent(raw: unknown): ServerEvent {
  *
  * Call sites:
  *   wsSend(Commands.send({ chatId, messageId, content }));
- *   wsSend(Commands.createChat());
+ *   wsSend(Commands.hello({ id }));
  *
  * Raw `wsSend({...})` still works for one-off scripts; the factories are the
  * paved path, not a wall.
  */
 export const Commands = {
+  hello: (args: { id: string }): HelloCommand =>
+    HelloCommand.parse({ command: "hello", ...args }),
+
   send: (args: {
     chatId: string;
     messageId: string;
@@ -288,10 +333,10 @@ export const Commands = {
   }): SendCommand =>
     SendCommand.parse({ command: "send", ...args }),
 
-  createChat: (): CreateChatCommand =>
-    CreateChatCommand.parse({ command: "create-chat" }),
+  createChat: (args: { id: string }): CreateChatCommand =>
+    CreateChatCommand.parse({ command: "create-chat", ...args }),
 
-  joinChat: (args: { chatId: string }): JoinChatCommand =>
+  joinChat: (args: { id: string; chatId: string }): JoinChatCommand =>
     JoinChatCommand.parse({ command: "join-chat", ...args }),
 
   interrupt: (args: { chatId: string }): InterruptCommand =>

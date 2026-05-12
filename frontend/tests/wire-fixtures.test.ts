@@ -20,11 +20,17 @@ import {
   AppStateEvent,
   AssistantMessageEvent,
   ChatCreatedEvent,
+  ChatJoinedResponse,
   ChatStateEvent,
   CreateChatCommand,
+  ErrorResponse,
+  HelloCommand,
+  HiYourselfResponse,
   InterruptCommand,
   JoinChatCommand,
   SendCommand,
+  TurnStartedEvent,
+  UserMessageEvent,
 } from "../src/lib/protocol";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -34,15 +40,22 @@ const FIXTURES_DIR = resolve(__dirname, "..", "..", "fixtures", "wire-payloads")
 // discriminator isn't in one of these objects are skipped — they describe
 // wire shapes the spec defines but the frontend hasn't implemented yet.
 const EVENT_SCHEMAS: Record<string, z.ZodTypeAny> = {
-  "chat-created": ChatCreatedEvent,
   "app-state": AppStateEvent,
-  "chat-state": ChatStateEvent,
   "assistant-message": AssistantMessageEvent,
+  "chat-created": ChatCreatedEvent,
+  "chat-state": ChatStateEvent,
+  "turn-started": TurnStartedEvent,
+  "user-message": UserMessageEvent,
 };
 
-const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny> = {};
+const RESPONSE_SCHEMAS: Record<string, z.ZodTypeAny> = {
+  "hi-yourself": HiYourselfResponse,
+  "chat-joined": ChatJoinedResponse,
+  error: ErrorResponse,
+};
 
 const COMMAND_SCHEMAS: Record<string, z.ZodTypeAny> = {
+  hello: HelloCommand,
   "create-chat": CreateChatCommand,
   "join-chat": JoinChatCommand,
   send: SendCommand,
