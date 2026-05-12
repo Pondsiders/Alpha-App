@@ -129,10 +129,12 @@ export const ChatLoadedEvent = z.object({
 
 export const ChatCreatedEvent = z.object({
   event: z.literal("chat-created"),
-  id: z.string().optional(),
   chatId: z.string(),
   createdAt: z.iso.datetime({ offset: true }),
   lastActive: z.iso.datetime({ offset: true }),
+  state: ChatStateValue,
+  tokenCount: z.number(),
+  contextWindow: z.number(),
   archived: z.boolean(),
 }).strict();
 
@@ -142,7 +144,6 @@ export const ChatStateEvent = z.object({
   state: ChatStateValue,
   tokenCount: z.number(),
   contextWindow: z.number(),
-  percent: z.number(),
 }).strict();
 
 // -- Turn lifecycle -----------------------------------------------------------
@@ -153,23 +154,13 @@ export const SendAckEvent = z.object({
   chatId: z.string(),
 });
 
-/**
- * Source of a user message — who initiated it. The composer-input rule
- * is a function of `chat.state` alone (see the Chat docstring in
- * backend/src/alpha/chat.py); `source` is metadata for rendering and
- * message-history filtering, not for input gating.
- */
-export const UserMessageSource = z.enum(["human", "reflection"]);
-export type UserMessageSource = z.infer<typeof UserMessageSource>;
-
 export const UserMessageEvent = z.object({
   event: z.literal("user-message"),
   chatId: z.string(),
   messageId: z.string(),
-  source: UserMessageSource,
   content: z.array(z.record(z.string(), z.unknown())),
   memories: z.array(z.record(z.string(), z.unknown())).nullable().default([]),
-  timestamp: z.string(),
+  timestamp: z.iso.datetime({ offset: true }),
 });
 
 export const ThinkingDeltaEvent = z.object({

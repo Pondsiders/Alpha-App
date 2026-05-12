@@ -94,7 +94,6 @@ export function RuntimeProvider({
         role: "user",
         data: {
           id: messageId,
-          source: "human",
           content,
           timestamp: null,
         } as UserMessage,

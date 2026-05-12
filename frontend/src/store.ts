@@ -29,7 +29,6 @@ export type UserContentBlock =
 /** User message as persisted by backend (UserMessage.to_db() → to_wire() shape). */
 export interface UserMessage {
   id: string;
-  source: string; // "human", "buzzer", "intro", "approach-light"
   content: UserContentBlock[];
   timestamp: string | null;
   memories?: unknown[] | null;

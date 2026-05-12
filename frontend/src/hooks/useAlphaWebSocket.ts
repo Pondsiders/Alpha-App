@@ -111,14 +111,13 @@ export function useAlphaWebSocket() {
         }
 
         case "user-message": {
-          // Server echo carries enrichment (memories, timestamp, source).
+          // Server echo carries enrichment (memories, timestamp).
           // Reconcile by messageId: find the optimistic message and replace it.
-          // If not found (reflection turns, narrator, etc.), append.
+          // If not found, append.
           const enriched: Message = {
             role: "user",
             data: {
               id: event.messageId,
-              source: event.source,
               content: event.content as UserMessage["content"],
               memories: event.memories ?? [],
               timestamp: event.timestamp,
