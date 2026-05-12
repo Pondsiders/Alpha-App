@@ -43,6 +43,12 @@ class BaseCommand(BaseModel):
     """Correlation ID. Echoed on the response when a command expects one."""
 
 
+class Hello(BaseCommand):
+    """Open a session. Sent by the client immediately after the WebSocket connects."""
+
+    command: Literal["hello"]
+
+
 class JoinChat(BaseCommand):
     """Load a chat's full history and metadata."""
 
@@ -82,7 +88,7 @@ class Interrupt(BaseCommand):
 
 
 Command = Annotated[
-    JoinChat | CreateChat | Send | Interrupt,
+    Hello | JoinChat | CreateChat | Send | Interrupt,
     Field(discriminator="command"),
 ]
 """Discriminated union of every inbound command shape."""

@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from alpha.ws.commands import BaseCommand, CreateChat, Interrupt, JoinChat, Send
+from alpha.ws.commands import BaseCommand, CreateChat, Hello, Interrupt, JoinChat, Send
 from alpha.ws.events import (
     AppState,
     AssistantMessage,
@@ -25,6 +25,7 @@ from alpha.ws.events import (
     ChatCreated,
     ChatState,
 )
+from alpha.ws.responses import BaseResponse, HiYourself
 
 # Map a fixture's discriminator value to its Pydantic class. Fixtures whose
 # discriminator isn't in one of these dicts are skipped — they describe wire
@@ -36,12 +37,12 @@ _EVENT_CLASSES: dict[str, type[BaseEvent]] = {
     "assistant-message": AssistantMessage,
 }
 
-# Response classes don't exist yet — `BaseResponse` lands when the response
-# envelope is implemented. Until then this dict stays empty and every
-# response fixture is filtered out at collection time.
-_RESPONSE_CLASSES: dict[str, type[BaseEvent]] = {}
+_RESPONSE_CLASSES: dict[str, type[BaseResponse]] = {
+    "hi-yourself": HiYourself,
+}
 
 _COMMAND_CLASSES: dict[str, type[BaseCommand]] = {
+    "hello": Hello,
     "create-chat": CreateChat,
     "join-chat": JoinChat,
     "send": Send,
@@ -49,7 +50,7 @@ _COMMAND_CLASSES: dict[str, type[BaseCommand]] = {
 }
 
 _FIXTURES_DIR = (
-    Path(__file__).resolve().parent.parent.parent / "fixtures" / "wire-payloads"
+    Path(__file__).resolve().parent.parent.parent.parent / "fixtures" / "wire-payloads"
 )
 
 
@@ -74,7 +75,7 @@ def test_wire_fixture_round_trip(fixture_path: Path) -> None:
     """Validate fixture against its Pydantic class, then re-serialize, then compare."""
     payload: dict[str, object] = json.loads(fixture_path.read_text())
 
-    cls: type[BaseEvent] | type[BaseCommand]
+    cls: type[BaseEvent] | type[BaseCommand] | type[BaseResponse]
     if "event" in payload:
         discriminator = payload["event"]
         assert isinstance(discriminator, str)
