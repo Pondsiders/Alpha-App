@@ -16,11 +16,12 @@ from fastapi import WebSocket
 from alpha.ws.commands import (
     BaseCommand,
     CreateChat,
+    Hello,
     Interrupt,
     JoinChat,
     Send,
 )
-from alpha.ws.handlers import create_chat, interrupt, join_chat, send
+from alpha.ws.handlers import create_chat, hello, interrupt, join_chat, send
 
 # Each handler accepts a concrete BaseCommand subclass. Function-parameter
 # types are contravariant in Python, so we can't tighten this to
@@ -40,6 +41,7 @@ class Dispatcher:
         construction; new commands require a code change, not runtime registration.
         """
         self._handlers: dict[type[BaseCommand], Handler] = {
+            Hello: hello.handle,
             JoinChat: join_chat.handle,
             CreateChat: create_chat.handle,
             Send: send.handle,
