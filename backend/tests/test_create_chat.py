@@ -28,6 +28,11 @@ def test_create_chat_round_trip(
     last_active = datetime.fromisoformat(event["lastActive"])
     assert created_at.tzinfo is not None
     assert last_active.tzinfo is not None
+    assert event["state"] == "pending"
+    assert event["tokenCount"] == 0
+    assert event["contextWindow"] == 1_000_000
+    assert event["archived"] is False
+    assert "id" not in event
 
     # The row landed in app.chats with the same id we got back.
     with psycopg.connect(settings.database_url) as conn, conn.cursor() as cur:

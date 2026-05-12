@@ -40,7 +40,7 @@ class BaseCommand(BaseModel):
     )
 
     id: str | None = None
-    """Correlation ID. Echoed on the response event when a command expects one."""
+    """Correlation ID. Echoed on the response when a command expects one."""
 
 
 class JoinChat(BaseCommand):

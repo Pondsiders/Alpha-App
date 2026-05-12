@@ -1,4 +1,4 @@
-"""Outbound event models — what the server sends.
+"""Outbound event models — what the server broadcasts to all clients.
 
 Each event is a Pydantic model with an `event` literal field. Models are
 frozen and forbid extras.
@@ -8,9 +8,6 @@ sets `alias_generator=to_camel`, so a Python attribute `chat_id`
 serializes as a wire field `chatId` automatically — provided callers
 serialize with `by_alias=True`. Use explicit `Field(alias=...)` only
 for irregular cases the generator can't infer.
-
-Right now only `Error` is defined. Real events (`app-state`, `chat-loaded`,
-`text-delta`, etc.) land as their handlers do.
 """
 
 from datetime import datetime
@@ -18,6 +15,12 @@ from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
+
+ChatStateValue = Literal[
+    "pending", "ready", "preprocessing", "processing", "postprocessing"
+]
+"""Position of a chat in the turn lifecycle. See `Chat` for the full state
+machine — states, transitions, and the composer-input rule."""
 
 
 class BaseEvent(BaseModel):
@@ -30,40 +33,18 @@ class BaseEvent(BaseModel):
         populate_by_name=True,
     )
 
-    id: str | None = None
-    """Correlation ID. Echoed from the command that triggered this event,
-    when the event is a response. Absent on unsolicited events."""
-
-
-class Error(BaseEvent):
-    """Domain-level error event — a valid command that couldn't be done.
-
-    Codes are domain strings: `not-found`, `invalid-state`,
-    `subprocess-died`, `context-exceeded`, etc. Wire-shape failures
-    (malformed JSON, unknown commands, validation errors) are bugs that
-    raise; they never reach this event.
-    """
-
-    event: Literal["error"] = "error"
-    code: str
-    message: str
-
 
 class ChatCreated(BaseEvent):
-    """A new chat was created. Emitted in response to `create-chat`."""
+    """A new chat exists. Broadcast on `create-chat` and on server-side creation."""
 
     event: Literal["chat-created"] = "chat-created"
     chat_id: str
     created_at: datetime
     last_active: datetime
+    state: ChatStateValue
+    token_count: int
+    context_window: int
     archived: bool
-
-
-ChatStateValue = Literal[
-    "pending", "ready", "preprocessing", "processing", "postprocessing"
-]
-"""Position of a chat in the turn lifecycle. See `Chat` for the full state
-machine — states, transitions, and the composer-input rule."""
 
 
 class ChatSummary(BaseModel):
@@ -85,7 +66,7 @@ class ChatSummary(BaseModel):
 
 
 class AppState(BaseEvent):
-    """Global application state. Pushed unsolicited on every WebSocket connect."""
+    """Global application state. Broadcast whenever the global state changes."""
 
     event: Literal["app-state"] = "app-state"
     chats: list[ChatSummary]
@@ -104,7 +85,6 @@ class ChatState(BaseEvent):
     state: ChatStateValue
     token_count: int
     context_window: int
-    percent: float
 
 
 class AssistantMessage(BaseEvent):

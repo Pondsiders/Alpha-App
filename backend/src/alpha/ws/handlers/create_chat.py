@@ -8,13 +8,16 @@ from alpha.ws.events import ChatCreated
 
 
 async def handle(command: CreateChat, websocket: WebSocket) -> None:
-    """Create a new chat and reply with `chat-created`."""
+    """Create a new chat and send `chat-created`."""
+    _ = command
     chat = await chats.create()
     event = ChatCreated(
-        id=command.id,
         chat_id=chat.chat_id,
         created_at=chat.created_at,
         last_active=chat.last_active,
+        state="pending",
+        token_count=0,
+        context_window=1_000_000,
         archived=chat.archived,
     )
     await websocket.send_json(

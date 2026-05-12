@@ -3,9 +3,11 @@
   dict({
     'archived': False,
     'chatId': '<chat-id>',
+    'contextWindow': 1000000,
     'createdAt': '<timestamp>',
     'event': 'chat-created',
-    'id': 'req_1',
     'lastActive': '<timestamp>',
+    'state': 'pending',
+    'tokenCount': 0,
   })
 # ---
