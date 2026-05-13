@@ -12,6 +12,7 @@ commands that can't be done (chat not found, subprocess died, etc.).
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+import alpha.ws.connections as connections
 from alpha.ws.commands import CommandAdapter
 from alpha.ws.dispatcher import Dispatcher
 
@@ -22,6 +23,7 @@ router = APIRouter()
 async def ws(websocket: WebSocket) -> None:
     """Accept a WebSocket and route inbound commands."""
     await websocket.accept()
+    await connections.register(websocket)
 
     dispatcher = Dispatcher()
 
@@ -32,3 +34,5 @@ async def ws(websocket: WebSocket) -> None:
             await dispatcher.dispatch(websocket, command)
     except WebSocketDisconnect:
         return
+    finally:
+        await connections.unregister(websocket)
