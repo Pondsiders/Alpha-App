@@ -28,7 +28,7 @@ def test_hello_with_a_chat(client: TestClient) -> None:
         ws.send_json({"command": "create-chat", "id": "req_1"})
         created = ws.receive_json()
 
-    assert created["event"] == "chat-created"
+    assert created["response"] == "chat-created"
     new_chat_id = created["chatId"]
 
     with client.websocket_connect("/ws") as ws:

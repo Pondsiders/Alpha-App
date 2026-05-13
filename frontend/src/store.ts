@@ -130,7 +130,7 @@ interface AppState {
    */
   setChatList: (chats: Omit<Chat, "messages">[]) => void;
 
-  /** Upsert a single chat (used on `chat-created`, `chat-state`, etc). */
+  /** Upsert a single chat (used on `chat-joined`, `chat-state`, etc). */
   upsertChat: (chat: Partial<Chat> & { chatId: string }) => void;
 
   /** Replace all messages for a chat. Used on `chat-loaded`. */

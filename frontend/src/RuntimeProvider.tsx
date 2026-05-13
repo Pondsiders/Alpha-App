@@ -101,6 +101,7 @@ export function RuntimeProvider({
 
       // Send with the ID so the backend echoes it back for reconciliation.
       wsSend(Commands.send({
+        id: nanoid(),
         chatId: currentChatId,
         messageId,
         content,

@@ -24,8 +24,6 @@ def _summarize(chat: Chat) -> ChatSummary:
 
 async def handle(command: Hello, websocket: WebSocket) -> None:
     """Reply with `hi-yourself` carrying the current chat list and version."""
-    if command.id is None:
-        raise ValueError("hello must carry an id; it expects a response")
     summaries = [_summarize(chat) for chat in await chats.all()]
     response = HiYourself(
         id=command.id,

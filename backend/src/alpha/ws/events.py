@@ -34,19 +34,6 @@ class BaseEvent(BaseModel):
     )
 
 
-class ChatCreated(BaseEvent):
-    """A new chat exists. Broadcast on `create-chat` and on server-side creation."""
-
-    event: Literal["chat-created"] = "chat-created"
-    chat_id: str
-    created_at: datetime
-    last_active: datetime
-    state: ChatStateValue
-    token_count: int
-    context_window: int
-    archived: bool
-
-
 class ChatSummary(BaseModel):
     """One chat's summary fields, as carried in `app-state.chats`."""
 

@@ -39,3 +39,22 @@ class HiYourself(BaseResponse):
     response: Literal["hi-yourself"] = "hi-yourself"
     chats: list[ChatSummary]
     version: str
+
+
+class ChatCreated(BaseResponse):
+    """Acknowledges a `create-chat` command and returns the new chat's id."""
+
+    response: Literal["chat-created"] = "chat-created"
+    chat_id: str
+
+
+class Received(BaseResponse):
+    """Acknowledges a `send` command."""
+
+    response: Literal["received"] = "received"
+
+
+class Interrupted(BaseResponse):
+    """Acknowledges an `interrupt` command."""
+
+    response: Literal["interrupted"] = "interrupted"

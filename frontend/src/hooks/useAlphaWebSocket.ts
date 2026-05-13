@@ -68,6 +68,17 @@ export function useAlphaWebSocket() {
           break;
         }
 
+        case "chat-created": {
+          setCurrentChatId(response.chatId);
+          try { localStorage.setItem("alpha-lastChatId", response.chatId); } catch { /* noop */ }
+          break;
+        }
+
+        case "received":
+        case "interrupted": {
+          break;
+        }
+
         case "error": {
           console.error(`[Alpha WS] error (${response.code}):`, response.message);
           break;
@@ -82,19 +93,6 @@ export function useAlphaWebSocket() {
       switch (event.event) {
         case "app-state": {
           setChatList(event.chats);
-          break;
-        }
-
-        case "chat-created": {
-          upsertChat({
-            chatId: event.chatId,
-            createdAt: event.createdAt,
-            lastActive: event.lastActive,
-            state: event.state,
-            tokenCount: event.tokenCount,
-            contextWindow: event.contextWindow,
-          });
-          setCurrentChatId(event.chatId);
           break;
         }
 

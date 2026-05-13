@@ -22,10 +22,9 @@ from alpha.ws.commands import CreateChat, Hello, Interrupt, JoinChat, Send
 from alpha.ws.events import (
     AppState,
     AssistantMessage,
-    ChatCreated,
     ChatState,
 )
-from alpha.ws.responses import HiYourself
+from alpha.ws.responses import ChatCreated, HiYourself, Interrupted, Received
 
 # Discriminators we round-trip through a Pydantic class. The discriminator
 # is the value of the `event` / `response` / `command` field in the fixture.
@@ -37,6 +36,8 @@ _IMPLEMENTED: dict[str, type[BaseModel]] = {
     "interrupt": Interrupt,
     "hi-yourself": HiYourself,
     "chat-created": ChatCreated,
+    "received": Received,
+    "interrupted": Interrupted,
     "app-state": AppState,
     "chat-state": ChatState,
     "assistant-message": AssistantMessage,

@@ -1,13 +1,8 @@
 # serializer version: 1
 # name: test_create_chat_round_trip
   dict({
-    'archived': False,
     'chatId': '<chat-id>',
-    'contextWindow': 1000000,
-    'createdAt': '<timestamp>',
-    'event': 'chat-created',
-    'lastActive': '<timestamp>',
-    'state': 'pending',
-    'tokenCount': 0,
+    'id': 'req_1',
+    'response': 'chat-created',
   })
 # ---

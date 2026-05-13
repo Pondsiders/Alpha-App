@@ -39,8 +39,8 @@ class BaseCommand(BaseModel):
         populate_by_name=True,
     )
 
-    id: str | None = None
-    """Correlation ID. Echoed on the response when a command expects one."""
+    id: str
+    """Correlation token. Echoed on the response."""
 
 
 class Hello(BaseCommand):

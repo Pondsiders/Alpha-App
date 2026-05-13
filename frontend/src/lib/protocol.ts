@@ -41,7 +41,7 @@ export const CreateChatCommand = z.object({
 
 export const SendCommand = z.object({
   command: z.literal("send"),
-  id: z.string().optional(),
+  id: z.string(),
   chatId: z.string(),
   /**
    * Frontend-minted correlation token for the user message. The backend
@@ -57,7 +57,7 @@ export const SendCommand = z.object({
 
 export const InterruptCommand = z.object({
   command: z.literal("interrupt"),
-  id: z.string().optional(),
+  id: z.string(),
   chatId: z.string(),
 }).strict();
 
@@ -134,6 +134,22 @@ export const ChatJoinedResponse = z.object({
   ),
 });
 
+export const ChatCreatedResponse = z.object({
+  response: z.literal("chat-created"),
+  id: z.string(),
+  chatId: z.string(),
+}).strict();
+
+export const ReceivedResponse = z.object({
+  response: z.literal("received"),
+  id: z.string(),
+}).strict();
+
+export const InterruptedResponse = z.object({
+  response: z.literal("interrupted"),
+  id: z.string(),
+}).strict();
+
 export const ErrorResponse = z.object({
   response: z.literal("error"),
   id: z.string(),
@@ -145,11 +161,17 @@ export const ErrorResponse = z.object({
 export const ServerResponse = z.discriminatedUnion("response", [
   HiYourselfResponse,
   ChatJoinedResponse,
+  ChatCreatedResponse,
+  ReceivedResponse,
+  InterruptedResponse,
   ErrorResponse,
 ]);
 
 export type HiYourselfResponse = z.infer<typeof HiYourselfResponse>;
 export type ChatJoinedResponse = z.infer<typeof ChatJoinedResponse>;
+export type ChatCreatedResponse = z.infer<typeof ChatCreatedResponse>;
+export type ReceivedResponse = z.infer<typeof ReceivedResponse>;
+export type InterruptedResponse = z.infer<typeof InterruptedResponse>;
 export type ErrorResponse = z.infer<typeof ErrorResponse>;
 export type ServerResponse = z.infer<typeof ServerResponse>;
 
@@ -161,17 +183,6 @@ export const AppStateEvent = z.object({
   event: z.literal("app-state"),
   chats: z.array(ChatSummary),
   version: z.string(),
-}).strict();
-
-export const ChatCreatedEvent = z.object({
-  event: z.literal("chat-created"),
-  chatId: z.string(),
-  createdAt: z.iso.datetime({ offset: true }),
-  lastActive: z.iso.datetime({ offset: true }),
-  state: ChatStateValue,
-  tokenCount: z.number(),
-  contextWindow: z.number(),
-  archived: z.boolean(),
 }).strict();
 
 export const ChatStateEvent = z.object({
@@ -250,7 +261,6 @@ export const TurnCompleteEvent = z.object({
 
 export const ServerEvent = z.discriminatedUnion("event", [
   AppStateEvent,
-  ChatCreatedEvent,
   ChatStateEvent,
   TurnStartedEvent,
   UserMessageEvent,
@@ -264,7 +274,6 @@ export const ServerEvent = z.discriminatedUnion("event", [
 ]);
 
 export type AppStateEvent = z.infer<typeof AppStateEvent>;
-export type ChatCreatedEvent = z.infer<typeof ChatCreatedEvent>;
 export type ChatStateEvent = z.infer<typeof ChatStateEvent>;
 export type TurnStartedEvent = z.infer<typeof TurnStartedEvent>;
 export type UserMessageEvent = z.infer<typeof UserMessageEvent>;
@@ -327,6 +336,7 @@ export const Commands = {
     HelloCommand.parse({ command: "hello", ...args }),
 
   send: (args: {
+    id: string;
     chatId: string;
     messageId: string;
     content: Array<Record<string, unknown>>;
@@ -339,6 +349,6 @@ export const Commands = {
   joinChat: (args: { id: string; chatId: string }): JoinChatCommand =>
     JoinChatCommand.parse({ command: "join-chat", ...args }),
 
-  interrupt: (args: { chatId: string }): InterruptCommand =>
+  interrupt: (args: { id: string; chatId: string }): InterruptCommand =>
     InterruptCommand.parse({ command: "interrupt", ...args }),
 };
