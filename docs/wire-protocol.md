@@ -35,7 +35,7 @@ Commands flow from one client to the server.
 | Field | Required | Description |
 |-------|----------|-------------|
 | `command` | always | The command name. |
-| `id` | when a response is expected | Correlation token. The server echoes this on the [response](#responses). Omit for fire-and-forget. |
+| `id` | always | Correlation token. The server echoes this on the [response](#responses). |
 | `chatId` | when scoped to a chat | Which chat this command targets. |
 | *(other fields)* | per command | Command-specific payload fields live at the top level. No nested `payload` or `params` object. |
 
@@ -80,9 +80,7 @@ Events never carry `id`.
 
 ### Correlation
 
-If a command includes an `id`, the server **MUST** eventually emit a [response](#responses) that echoes that `id`. The response is either a successful response (e.g., [`chat-joined`](#chat-joined) in response to [`join-chat`](#join-chat)) or an [`error`](#errors) response.
-
-If a command omits `id`, no correlated response is expected.
+Every command carries an `id`. The server **MUST** emit exactly one [response](#responses) for each command, echoing that `id` — either the command's designated success response or an [`error`](#errors) response.
 
 ### Errors
 
@@ -155,15 +153,17 @@ Send a user message to Claude.
 | `messageId` | always | Frontend-minted nanoid for the user message. The server stamps it onto the broadcast [`user-message`](#user-message) echo. |
 | `content` | always | Anthropic-shaped content blocks. |
 
-**Response:** the [turn lifecycle](#turn-lifecycle).
+**Response:** [`received`](#received). The [turn lifecycle](#turn-lifecycle) follows as a broadcast trajectory.
 
 ### `interrupt`
 
 Stop Claude mid-response.
 
 ```json
-{ "command": "interrupt", "chatId": "xyz" }
+{ "command": "interrupt", "id": "req_5", "chatId": "xyz" }
 ```
+
+**Response:** [`interrupted`](#interrupted).
 
 ## Responses
 
@@ -216,6 +216,30 @@ Full message history and metadata for one chat. Emitted in response to [`join-ch
 ```
 :::
 
+### `chat-created`
+
+Acknowledges a [`create-chat`](#create-chat) command and returns the new chat's id. The [`app-state`](#app-state) event is broadcast to all clients in the same beat.
+
+```json
+{ "response": "chat-created", "id": "req_3", "chatId": "abc123" }
+```
+
+### `received`
+
+Acknowledges a [`send`](#send) command.
+
+```json
+{ "response": "received", "id": "req_4" }
+```
+
+### `interrupted`
+
+Acknowledges an [`interrupt`](#interrupt) command.
+
+```json
+{ "response": "interrupted", "id": "req_5" }
+```
+
 ### `error`
 
 See [Errors](#errors) above.
@@ -226,7 +250,7 @@ See [Errors](#errors) above.
 
 #### `app-state`
 
-The global state of the world. Broadcast whenever the global state changes (chat created, deleted, renamed, etc.).
+The global state of the world. Broadcast whenever the global state changes (chat created, deleted, renamed, etc.). The same payload shape is also returned to a single client as the [`hi-yourself`](#hi-yourself) response.
 
 ::: details Example payload
 ```json
@@ -259,23 +283,6 @@ Every datetime on the wire is an ISO 8601 string with timezone (`"2026-05-08T16:
 `app-state` is the only event that omits `chatId`.
 
 ### Chat lifecycle
-
-#### `chat-created`
-
-A new chat exists. Broadcast whenever a chat comes into being — in response to a client's [`create-chat`](#create-chat) command, or unsolicited when the server creates a chat on its own (Dawn, etc.).
-
-```json
-{
-  "event": "chat-created",
-  "chatId": "abc123",
-  "createdAt": "2026-05-08T16:50:09.130260Z",
-  "lastActive": "2026-05-08T16:50:09.130269Z",
-  "state": "pending",
-  "tokenCount": 0,
-  "contextWindow": 1000000,
-  "archived": false
-}
-```
 
 #### `chat-state`
 
@@ -320,6 +327,7 @@ A *turn* is a user message → Claude's response.
 
 ```
 send (command)
+  └→ received (response)       command ack
   └→ turn-started              edge: the turn has begun
   └→ chat-state {preprocessing}
   └→ user-message              preprocessed echo (with memories, timestamp)
@@ -488,9 +496,10 @@ Missing required fields are a hard failure, not a silent default. If a field is 
 ## Design Principles {#design-principles}
 
 1. **Three envelopes: commands, responses, events.** Commands are unicast client-to-server. Responses are unicast server-to-one-client, correlated to a command. Events are broadcast server-to-all-clients. {#principle-envelopes}
-2. **Flat payloads.** No nested `data`, `metadata`, or `params` objects. {#principle-flat}
-3. **Required fields are required.** Validation explodes on missing fields. {#principle-required}
-4. **`id` is a correlation token.** Carried by commands that expect a response, echoed on the response. Events never carry `id`. {#principle-id}
-5. **`chatId` is the relevance scope.** Messages without `chatId` are global. {#principle-chatid}
-6. **Domain error codes.** `"not-found"`, not `-32601`. {#principle-error-codes}
-7. **Extensible by addition.** New commands, responses, and events are added by defining a name + schema. The envelope doesn't change. {#principle-extensible}
+2. **Every command gets a response.** The response is either the command's designated success response or an [`error`](#errors), never both, never neither. {#principle-every-command}
+3. **Flat payloads.** No nested `data`, `metadata`, or `params` objects. {#principle-flat}
+4. **Required fields are required.** Validation explodes on missing fields. {#principle-required}
+5. **`id` is a correlation token.** Carried by every command, echoed on its response. Events never carry `id`. {#principle-id}
+6. **`chatId` is the relevance scope.** Messages without `chatId` are global. {#principle-chatid}
+7. **Domain error codes.** `"not-found"`, not `-32601`. {#principle-error-codes}
+8. **Extensible by addition.** New commands, responses, and events are added by defining a name + schema. The envelope doesn't change. {#principle-extensible}
