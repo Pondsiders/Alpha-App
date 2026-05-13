@@ -1,0 +1,13 @@
+{
+    "lsp": {
+        "basedpyright": {
+            "settings": {
+                "basedpyright.analysis": {
+                    "diagnosticMode": "openFilesOnly",
+                    "typeCheckingMode": "recommended",
+                    "autoImportCompletions": true
+                }
+            }
+        }
+    }
+}
