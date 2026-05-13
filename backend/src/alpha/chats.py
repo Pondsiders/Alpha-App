@@ -41,6 +41,22 @@ async def create() -> Chat:
     return chat
 
 
+async def get(chat_id: str) -> Chat | None:
+    """Return the chat with this id, or None if no row matches."""
+    async with db.get().acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT chat_id, session_id, created_at, last_active, archived
+            FROM app.chats
+            WHERE chat_id = $1
+            """,
+            chat_id,
+        )
+    if row is None:
+        return None
+    return _hydrate(row)
+
+
 async def all(*, include_archived: bool = False) -> list[Chat]:
     """Return chats for the sidebar, newest first.
 

@@ -1,14 +1,12 @@
-"""End-to-end test for the send-and-reply journey."""
+"""End-to-end test for the new-chat-send-reload journey."""
 
 import re
 
 from playwright.sync_api import Page, expect
 
 
-def test_user_sends_a_message_and_gets_an_assistant_response(
-    page: Page, backend: str
-) -> None:
-    """Send a user message; assert presence of both the echo and a reply."""
+def test_new_chat_send_reload(page: Page, backend: str) -> None:
+    """Create a chat, send a message, reload, see the chat and its messages."""
     _ = page.goto(backend)
 
     new_chat = page.get_by_role("button", name="New Chat")
@@ -18,13 +16,17 @@ def test_user_sends_a_message_and_gets_an_assistant_response(
     # The new chat appears in the sidebar — chat items render their
     # creation time as a label matching "H:MM AM" or "H:MM PM".
     chat_item_pattern = re.compile(r"^\d{1,2}:\d{2}\s+(AM|PM)$")
-    expect(page.get_by_role("button", name=chat_item_pattern)).to_have_count(1)
-
-    assistant_messages = page.locator('[data-role="assistant"]')
-    expect(assistant_messages).to_have_count(0)
+    chat_item = page.get_by_role("button", name=chat_item_pattern)
+    expect(chat_item).to_have_count(1)
 
     page.get_by_label("Message input").fill("Hello, Alpha.")
     page.get_by_label("Send message").click()
 
     expect(page.locator('[data-role="user"]')).to_have_count(1)
-    expect(assistant_messages).to_have_count(1)
+    expect(page.locator('[data-role="assistant"]')).to_have_count(1)
+
+    _ = page.reload()
+
+    expect(chat_item).to_have_count(1)
+    chat_item.click()
+    expect(page.locator('[data-role="assistant"]')).to_have_count(1)

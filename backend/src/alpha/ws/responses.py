@@ -11,12 +11,13 @@ as a wire field `chatId` automatically — provided callers serialize with
 the generator can't infer.
 """
 
-from typing import ClassVar, Literal
+from datetime import datetime
+from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
 
-from alpha.ws.events import ChatSummary
+from alpha.ws.events import ChatStateValue, ChatSummary
 
 
 class BaseResponse(BaseModel):
@@ -39,6 +40,19 @@ class HiYourself(BaseResponse):
     response: Literal["hi-yourself"] = "hi-yourself"
     chats: list[ChatSummary]
     version: str
+
+
+class ChatJoined(BaseResponse):
+    """Full chat metadata and message history, sent in reply to `join-chat`."""
+
+    response: Literal["chat-joined"] = "chat-joined"
+    chat_id: str
+    created_at: datetime
+    last_active: datetime
+    state: ChatStateValue
+    token_count: int
+    context_window: int
+    messages: list[dict[str, Any]]
 
 
 class ChatCreated(BaseResponse):
