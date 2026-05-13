@@ -24,4 +24,9 @@ export default defineConfig({
       { icon: 'github', link: 'https://github.com/Pondsiders/Alpha-App' },
     ],
   },
+  vite: {
+    server: {
+      allowedHosts: true
+    }
+  }
 })
