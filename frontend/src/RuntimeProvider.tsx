@@ -64,7 +64,7 @@ export function RuntimeProvider({
     },
     onSwitchToNewThread: () => {
       const send = useStore.getState().wsSend;
-      send?.(Commands.createChat());
+      send?.(Commands.createChat({ id: nanoid() }));
     },
   }), [currentChatId, setCurrentChatId]);
 

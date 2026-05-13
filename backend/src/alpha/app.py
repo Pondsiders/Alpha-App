@@ -6,15 +6,21 @@ a fresh app per test by calling the factory.
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import logfire
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 import alpha
 from alpha import db
 from alpha.api import router as api_router
 from alpha.settings import settings
 from alpha.ws import router as ws_router
+
+_FRONTEND_DIST = (
+    Path(__file__).resolve().parent.parent.parent.parent / "frontend" / "dist"
+)
 
 
 @asynccontextmanager
@@ -55,5 +61,8 @@ def create_app() -> FastAPI:
 
     app.include_router(api_router, prefix="/api")
     app.include_router(ws_router)
+
+    if _FRONTEND_DIST.is_dir():
+        app.mount("/", StaticFiles(directory=_FRONTEND_DIST, html=True), name="spa")
 
     return app
