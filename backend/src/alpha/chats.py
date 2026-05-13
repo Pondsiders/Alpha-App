@@ -13,6 +13,7 @@ import pendulum
 
 from alpha import db
 from alpha.chat import Chat, new_chat_id
+from alpha.ws.events import ChatSummary
 
 
 async def create() -> Chat:
@@ -62,6 +63,18 @@ async def all(*, include_archived: bool = False) -> list[Chat]:
     async with db.get().acquire() as conn:
         rows = await conn.fetch(sql)
     return [_hydrate(row) for row in rows]
+
+
+def summary_of(chat: Chat) -> ChatSummary:
+    """Project a Chat into the ChatSummary the wire carries."""
+    return ChatSummary(
+        chat_id=chat.chat_id,
+        created_at=chat.created_at,
+        last_active=chat.last_active,
+        state="pending",
+        token_count=0,
+        context_window=1_000_000,
+    )
 
 
 def _hydrate(row: asyncpg.Record) -> Chat:
