@@ -24,7 +24,14 @@ from psycopg import sql
 
 from alembic import command
 from alpha.app import create_app
-from alpha.settings import settings
+from alpha.settings import Mode, settings
+
+if settings.mode != Mode.TEST:
+    msg = (
+        f"tests refuse to run unless MODE=test; got MODE={settings.mode.value}. "
+        "Run via `just test` / `just e2e`, or set MODE=test in the environment."
+    )
+    raise RuntimeError(msg)
 
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent
 

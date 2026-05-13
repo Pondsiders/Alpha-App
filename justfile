@@ -24,11 +24,11 @@ dev: build
 
 # Run every unit test in the repo.
 test:
-    cd backend && uv run pytest
+    cd backend && MODE=test uv run pytest
     cd frontend && npm test
 
 # Build the frontend, then run pytest-playwright against the served bundle.
 # Each test gets a fresh database and a freshly-spawned uvicorn on a
 # random port; the conftest fixtures own the lifecycle.
 e2e: build
-    cd backend && uv run pytest tests/e2e/ --browser webkit --browser chromium
+    cd backend && MODE=test uv run pytest tests/e2e/ --browser webkit --browser chromium

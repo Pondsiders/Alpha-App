@@ -32,6 +32,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Drop the `app.chats` table and the `app` schema."""
-    op.execute("DROP TABLE IF EXISTS app.chats")
-    op.execute("DROP SCHEMA IF EXISTS app")
+    """Migrations are forward-only; see `alembic/README`."""
+    raise NotImplementedError("downgrade is not supported")

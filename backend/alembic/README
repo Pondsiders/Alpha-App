@@ -1,1 +1,18 @@
-Generic single-database configuration.
+Alembic — forward-only migrations.
+
+Rule: every migration's `downgrade()` is implemented as
+
+    raise NotImplementedError("downgrade is not supported")
+
+Migrations move the schema forward. To undo one, write a new migration
+that does whatever undoing is required, with `DROP` statements typed
+into it by a human who has thought about which database they are
+pointed at.
+
+We had one production-data incident caused by a destructive command
+running against the wrong cluster. The script that did it has been
+removed; this rule closes off the other path that would let an
+`alembic downgrade` do the same thing.
+
+The `downgrade()` function still has to exist because Alembic expects
+it. Make it raise; do not implement it.
